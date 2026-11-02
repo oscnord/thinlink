@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 
 use sat_teleop_policy::rate::{Priority, TokenBucket};
 use sat_teleop_policy::retrieval::{self, Conditions, Hold};
+use sat_teleop_policy::sighting::Sightings;
 use sat_teleop_policy::token::Token;
 
 use crate::DetailError;
@@ -21,7 +22,8 @@ use crate::client::{Client, ClientError};
 use crate::crop::{self, Cropped};
 use crate::store::{Entry, Store};
 use crate::wire::{
-    Assignment, Complete, Failure, JobRequest, Kind, Listed, Listing, MAX_LISTED, Meta, sha256_hex,
+    Assignment, Complete, Failure, JobRequest, Kind, Listed, ListedSighting, Listing, MAX_LISTED,
+    Meta, sha256_hex,
 };
 use crate::wire::{CHUNK_HASH_HEADER, MAX_REASON};
 
@@ -34,6 +36,8 @@ const UPLOAD_TIMEOUT: Duration = Duration::from_secs(15);
 const RETRY_PAUSE: Duration = Duration::from_millis(500);
 /// A chunk is tried this often before the job is given up.
 const ATTEMPTS: u32 = 3;
+/// A sighting's snapshot is the nearest one within this: snapshots are taken every second or so.
+const SNAPSHOT_REACH_MS: u64 = 1500;
 /// A snapshot is kept from retention this long after a job picked it, while it is read.
 const PIN_FOR: Duration = Duration::from_secs(10);
 
@@ -192,6 +196,14 @@ impl RetrievalStats {
     }
 }
 
+fn listed(e: Entry) -> Listed {
+    Listed {
+        capture_ms: e.capture_ms,
+        frame_id: e.frame_id,
+        position: e.position,
+    }
+}
+
 /// How a job ended.
 #[derive(Debug, PartialEq, Eq)]
 enum End {
@@ -207,6 +219,7 @@ enum End {
 pub fn run(
     relay: &str,
     store: &Mutex<Store>,
+    sightings: &Mutex<Sightings>,
     allowance: u32,
     conditions: impl Fn() -> Conditions,
     stats: &RetrievalStats,
@@ -217,6 +230,7 @@ pub fn run(
     let worker = Worker {
         uploader: &uploader,
         store,
+        sightings,
         allowance,
         conditions: &conditions,
         stats,
@@ -254,6 +268,7 @@ fn next(poller: &Client, stats: &RetrievalStats) -> Result<Option<Assignment>, C
 struct Worker<'a, C> {
     uploader: &'a Client,
     store: &'a Mutex<Store>,
+    sightings: &'a Mutex<Sightings>,
     allowance: u32,
     conditions: &'a C,
     stats: &'a RetrievalStats,
@@ -270,7 +285,8 @@ impl<C: Fn() -> Conditions> Worker<'_, C> {
         self.stats.set(State::Working, None);
         self.stats.reserved.store(self.allowance, Ordering::Relaxed);
         let end = match assignment.request.kind {
-            Kind::Outage => self.list(assignment, deadline),
+            Kind::Outage => self.list(assignment, deadline, |at| self.outage_listing(at)),
+            Kind::Sightings => self.list(assignment, deadline, |at| self.sightings_listing(at)),
             Kind::Snapshot | Kind::Crop => self.send_picture(assignment, started, deadline),
         };
         let end = end.unwrap_or_else(End::Failed);
@@ -293,20 +309,53 @@ impl<C: Fn() -> Conditions> Worker<'_, C> {
         Ok(end)
     }
 
-    /// Answers an `Outage` job with the snapshots taken out of reach since the time asked for.
-    fn list(&self, assignment: &Assignment, deadline: Instant) -> Result<End, String> {
-        assignment.request.validate()?;
+    /// The snapshots taken out of reach since `from_ms`.
+    fn outage_listing(&self, from_ms: u64) -> Listing {
         let snapshots = self
             .store()
-            .outage_from(assignment.request.at_capture_ms, MAX_LISTED)
+            .outage_from(from_ms, MAX_LISTED)
             .into_iter()
-            .map(|e| Listed {
-                capture_ms: e.capture_ms,
-                frame_id: e.frame_id,
-                position: e.position,
+            .map(listed)
+            .collect();
+        Listing {
+            snapshots,
+            ..Listing::default()
+        }
+    }
+
+    /// The sightings first seen since `from_ms`, each with the snapshot nearest in capture time.
+    fn sightings_listing(&self, from_ms: u64) -> Listing {
+        let found = self
+            .sightings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .from(from_ms, MAX_LISTED);
+        let store = self.store();
+        let sightings = found
+            .into_iter()
+            .map(|sighting| ListedSighting {
+                sighting,
+                snapshot: store
+                    .nearest(sighting.first_ms, SNAPSHOT_REACH_MS)
+                    .map(listed),
             })
             .collect();
-        let body = serde_json::to_vec(&Listing { snapshots }).map_err(|e| e.to_string())?;
+        Listing {
+            sightings,
+            ..Listing::default()
+        }
+    }
+
+    /// Answers a listing job with what `build` lists from the time asked for.
+    fn list(
+        &self,
+        assignment: &Assignment,
+        deadline: Instant,
+        build: impl FnOnce(u64) -> Listing,
+    ) -> Result<End, String> {
+        assignment.request.validate()?;
+        let listing = build(assignment.request.at_capture_ms);
+        let body = serde_json::to_vec(&listing).map_err(|e| e.to_string())?;
         let cost = retrieval::request_wire_bytes(body.len());
         let mut bucket = TokenBucket::new(self.allowance);
         if !self.wait_to_send(&mut bucket, cost, deadline) {

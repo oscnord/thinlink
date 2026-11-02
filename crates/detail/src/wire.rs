@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use sat_teleop_policy::position::Position;
+use sat_teleop_policy::sighting::Sighting;
 
 use crate::crop::{self, Crop, Rect};
 
@@ -91,6 +92,16 @@ pub enum Kind {
     Crop,
     /// Not a picture: the snapshots taken out of reach from `at_capture_ms` on, with positions.
     Outage,
+    /// Not a picture either: the sightings first seen from `at_capture_ms` on, each with the
+    /// snapshot it is in.
+    Sightings,
+}
+
+impl Kind {
+    /// Whether the job is answered with a [`Listing`] instead of a picture.
+    pub fn is_listing(self) -> bool {
+        matches!(self, Self::Outage | Self::Sightings)
+    }
 }
 
 /// `POST /jobs`: the frame captured at or before `at_capture_ms`, whole or cropped.
@@ -118,8 +129,10 @@ impl JobRequest {
             ));
         }
         match (self.kind, self.crop) {
-            (Kind::Snapshot | Kind::Outage, None) => Ok(()),
-            (Kind::Snapshot | Kind::Outage, Some(_)) => Err("only a crop takes a crop".to_owned()),
+            (Kind::Snapshot | Kind::Outage | Kind::Sightings, None) => Ok(()),
+            (Kind::Snapshot | Kind::Outage | Kind::Sightings, Some(_)) => {
+                Err("only a crop takes a crop".to_owned())
+            }
             (Kind::Crop, None) => Err("a crop needs a crop rectangle".to_owned()),
             (Kind::Crop, Some(crop)) => crop::check(crop).map_err(|e| e.to_string()),
         }
@@ -203,17 +216,29 @@ pub struct Listed {
     pub position: Option<Position>,
 }
 
-/// `POST /jobs/{id}/listing`: the answer to an `Outage` job, oldest first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// A sighting and the retained snapshot nearest in capture time, if the store still holds one.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ListedSighting {
+    pub sighting: Sighting,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<Listed>,
+}
+
+/// `POST /jobs/{id}/listing`: the answer to an `Outage` or `Sightings` job, oldest first.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Listing {
+    #[serde(default)]
     pub snapshots: Vec<Listed>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sightings: Vec<ListedSighting>,
 }
 
 impl Listing {
     pub fn validate(&self) -> Result<(), String> {
-        if self.snapshots.len() > MAX_LISTED {
-            return Err(format!("a listing holds at most {MAX_LISTED} snapshots"));
+        if self.snapshots.len() > MAX_LISTED || self.sightings.len() > MAX_LISTED {
+            return Err(format!("a listing holds at most {MAX_LISTED} entries"));
         }
         Ok(())
     }

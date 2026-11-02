@@ -1,0 +1,25 @@
+[profile]
+name = "outage-30s"
+description = "No impairment except a 30 s total outage in both directions, starting 5 s after the timeline starts."
+provenance = "synthetic"
+source = "Synthetic. The lan profile plus a scripted blackout, not measured."
+
+[uplink]
+delay_ms = 0
+rate_kbit = 1000000
+burst_bytes = 125000
+
+[downlink]
+delay_ms = 0
+rate_kbit = 1000000
+burst_bytes = 125000
+
+[[timeline]]
+at_ms = 5000
+action = "blackout"
+direction = "both"
+
+[[timeline]]
+at_ms = 35000
+action = "restore"
+direction = "both"

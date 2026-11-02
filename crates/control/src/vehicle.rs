@@ -22,6 +22,8 @@ use mavlink::MessageData;
 use mavlink::dialects::ardupilotmega::{GLOBAL_POSITION_INT_DATA, MavMessage};
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::sighting::Sightings;
+
 use self::control::{ControlSnapshot, ControlStats};
 use crate::auth::VehicleId;
 use crate::autopilot::{Autopilot, Wire};
@@ -32,6 +34,7 @@ use crate::gate::{self, Decision};
 use crate::identity::{self, Mode};
 use crate::params::{self, Required};
 use crate::position::NewestPosition;
+use crate::sighting::Announcer;
 use crate::stats::{DropReason, DropsByMessage, Flow, FlowCounts, Link, LinkState};
 use crate::telemetry::{Admission, RateCap, Released, TelemetryLimits};
 use crate::{ControlError, timed_out};
@@ -152,6 +155,9 @@ pub struct VehicleStats {
     telemetry_cap: AtomicU32,
     /// The autopilot's newest position, for the snapshots the vehicle keeps.
     pub position: NewestPosition,
+    /// The people seen while the ground was out of reach: told to the ground when it is heard
+    /// again, listed on request.
+    pub sightings: Mutex<Sightings>,
 }
 
 #[derive(Debug, Serialize)]
@@ -197,11 +203,13 @@ impl VehicleStats {
 type SitlWriter = Arc<Mutex<Option<Box<dyn Wire>>>>;
 
 /// Runs the bridge and the control endpoint until the process ends, reconnecting to SITL with
-/// backoff. Returns only when it cannot open its UDP socket.
+/// backoff. `ground_heard` says whether the ground can be reached: the sightings are told to it
+/// only then. Returns only when it cannot open its UDP socket.
 pub fn run(
     config: VehicleConfig,
     limits: TelemetryLimits,
     control: ControlLimits,
+    ground_heard: impl Fn() -> bool,
     stats: &Arc<VehicleStats>,
 ) -> Result<(), ControlError> {
     let VehicleConfig {
@@ -237,7 +245,15 @@ pub fn run(
         match connect(&autopilot) {
             Ok(stream) => {
                 retry = FIRST_RETRY;
-                let error = serve_sitl(stream, &socket, relay, &writer, &mut cap, stats);
+                let error = serve_sitl(
+                    stream,
+                    &socket,
+                    relay,
+                    &writer,
+                    &mut cap,
+                    &ground_heard,
+                    stats,
+                );
                 stats.sitl.down(&error);
             }
             Err(error) => stats.sitl.down(&error),
@@ -258,6 +274,7 @@ fn serve_sitl(
     relay: SocketAddr,
     writer: &SitlWriter,
     cap: &mut RateCap,
+    ground_heard: &dyn Fn() -> bool,
     stats: &VehicleStats,
 ) -> io::Error {
     let clone = match stream.try_clone() {
@@ -273,9 +290,15 @@ fn serve_sitl(
     let mut last_frame = Instant::now();
     let mut autopilot = None;
     let mut probe = Probe::default();
+    let mut announcer = Announcer::default();
     let error = loop {
         cap.set_rate(stats.telemetry_cap.load(Ordering::Relaxed));
         release_waiting(cap, socket, relay, &stats.telemetry);
+        let heard = ground_heard();
+        let told = announcer.next(Instant::now(), autopilot, heard, &stats.sightings, cap);
+        if let Some(frame) = told {
+            send_up(&frame, socket, relay, &stats.telemetry);
+        }
         let needs_position = stats.position.fresh(Instant::now()).is_none();
         probe.ask_if_due(autopilot, writer, &stats.control, needs_position);
         let frame = match frames.next_frame() {

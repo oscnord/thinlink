@@ -3,13 +3,14 @@ use std::path::Path;
 
 use sat_teleop_lab::profile::{Profile, Provenance};
 
-const SHIPPED: [&str; 7] = [
+const SHIPPED: [&str; 8] = [
     "lan",
     "lte-good",
     "lte-bad",
     "geo",
     "geo-degraded",
     "outage-10s",
+    "outage-30s",
     "bandwidth-steps",
 ];
 

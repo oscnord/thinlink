@@ -11,6 +11,7 @@ pub mod rate;
 pub mod region;
 pub mod retention;
 pub mod retrieval;
+pub mod sighting;
 pub mod soften;
 pub mod stamp;
 pub mod token;

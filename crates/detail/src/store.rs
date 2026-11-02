@@ -420,6 +420,18 @@ impl Store {
             .map(|k| k.entry)
     }
 
+    /// The snapshot captured nearest to `at_ms` and within `within_ms` of it, if the store holds one.
+    pub fn nearest(&self, at_ms: u64, within_ms: u64) -> Option<Entry> {
+        let after = self.kept.partition_point(|k| k.entry.capture_ms < at_ms);
+        let before = after.checked_sub(1).and_then(|last| self.kept.get(last));
+        [before, self.kept.get(after)]
+            .into_iter()
+            .flatten()
+            .map(|k| k.entry)
+            .filter(|e| e.capture_ms.abs_diff(at_ms) <= within_ms)
+            .min_by_key(|e| e.capture_ms.abs_diff(at_ms))
+    }
+
     /// Keeps `entry` from retention until `until`.
     pub fn pin(&mut self, entry: Entry, until: Instant) {
         let key = (entry.capture_ms, entry.frame_id);
@@ -561,6 +573,29 @@ mod tests {
 
     fn found(store: &Store, at: u64) -> Entry {
         store.nearest_at_or_before(at).unwrap()
+    }
+
+    #[test]
+    fn the_nearest_snapshot_may_lie_either_side_within_reach() {
+        let (now_ms, now) = (1_000_000, Instant::now());
+        let config = config();
+        let mut store = Store::open(config.clone(), now_ms, now).unwrap();
+        for (capture_ms, frame_id) in [(999_000, 1), (999_800, 2)] {
+            let put = store.put(capture_ms, frame_id, JPEG, Tag::default(), now_ms, now);
+            put.unwrap();
+        }
+        let cases = [
+            ("after is nearer", 999_600, 500, Some(2)),
+            ("before is nearer", 999_300, 500, Some(1)),
+            ("exactly", 999_800, 0, Some(2)),
+            ("out of reach", 999_400, 300, None),
+            ("past the newest", 1_000_100, 500, Some(2)),
+        ];
+        for (name, at, within, expected) in cases {
+            let found = store.nearest(at, within).map(|e| e.frame_id);
+            assert_eq!(found, expected, "{name}");
+        }
+        fs::remove_dir_all(&config.dir).unwrap();
     }
 
     #[test]

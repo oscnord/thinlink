@@ -17,7 +17,7 @@ use sat_teleop_lab::interface::Interfaces;
 use sat_teleop_lab::profile::{self, Profile};
 use sat_teleop_lab::{
     adaptation, boot, control, ingest, mavlink, qgc_status, recording, regional, retrieval,
-    skeleton,
+    sightings, skeleton,
 };
 use sat_teleop_policy::token::Token;
 
@@ -98,13 +98,13 @@ struct CheckArgs {
     /// window; adaptation: the observation under a profile without a timeline).
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
     duration_s: u64,
-    /// skeleton, mavlink, qgc-status, adaptation, ingest: base URL of the vehicle's metrics endpoint.
+    /// skeleton, mavlink, qgc-status, adaptation, ingest, sightings: base URL of the vehicle's metrics endpoint.
     #[arg(long, default_value = "http://192.168.233.10:9100")]
     vehicle_metrics: String,
     /// skeleton: base URL of the relay's metrics endpoint.
     #[arg(long, default_value = "http://192.168.233.20:9100")]
     relay_metrics: String,
-    /// mavlink, control-freshness, sim-flight, sim-mission, qgc-status: where the ground adapter sends this ground station
+    /// mavlink, control-freshness, sim-flight, sim-mission, qgc-status, sightings: where the ground adapter sends this ground station
     /// its telemetry.
     #[arg(long, default_value = "192.168.232.40:14552")]
     gcs_listen: SocketAddr,
@@ -137,7 +137,7 @@ struct CheckArgs {
     /// recording, retrieval, regional: the vehicle's snapshot directory as this host mounts it.
     #[arg(long, default_value = "/snapshots")]
     snapshot_dir: PathBuf,
-    /// retrieval: the relay's job API for the ground, and for the vehicle on the overlay.
+    /// retrieval, sightings: the relay's job API for the ground, and for the vehicle on the overlay.
     #[arg(long, default_value = "http://192.168.232.20:8080")]
     ground_api: String,
     #[arg(long, default_value = "http://10.77.0.1:8080")]
@@ -159,6 +159,7 @@ enum Scenario {
     Retrieval,
     Ingest,
     Regional,
+    Sightings,
 }
 
 impl Scenario {
@@ -177,6 +178,7 @@ impl Scenario {
             Self::Retrieval => "retrieval",
             Self::Ingest => "ingest",
             Self::Regional => "regional",
+            Self::Sightings => "sightings",
         }
     }
 }
@@ -385,6 +387,16 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
             };
             regional::run(&agent, &text, &settings, &budgets, profile_name)
         }
+        Scenario::Sightings => sightings::run(
+            &agent,
+            &profile,
+            &text,
+            &sightings::Settings {
+                gcs_listen: args.gcs_listen,
+                vehicle_metrics: args.vehicle_metrics.clone(),
+                ground_api: args.ground_api.clone(),
+            },
+        ),
         Scenario::Retrieval => {
             let budgets = load_budgets()?;
             let settings = retrieval::Settings {

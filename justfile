@@ -463,6 +463,11 @@ detail-request-at at_ms crop="":
 detail-outage since_s="3600":
     {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail outage --since-s {{since_s}}
 
+# List the people the detector saw while the ground was out of reach in the last <since_s> seconds:
+# when, where the drone was, and the snapshot to fetch (`detail-request-at`, `detail-fetch`).
+sightings since_s="3600":
+    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail sightings --since-s {{since_s}}
+
 # Wait for the answer to a `detail-request` and save the JPEG on this machine; prints which frame it
 # is and how old, labelled as historical.
 detail-fetch id file="detail.jpg":

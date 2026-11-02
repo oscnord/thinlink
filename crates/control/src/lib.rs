@@ -20,6 +20,7 @@ pub mod ground;
 pub mod identity;
 pub mod params;
 pub mod position;
+pub mod sighting;
 pub mod stats;
 pub mod telemetry;
 pub mod vehicle;

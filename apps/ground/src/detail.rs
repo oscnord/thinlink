@@ -10,8 +10,9 @@ use clap::{Args, Subcommand};
 
 use sat_teleop_detail::client::Client;
 use sat_teleop_detail::crop::Crop;
-use sat_teleop_detail::wire::{JobId, JobRequest, Kind, MAX_LISTED};
+use sat_teleop_detail::wire::{JobId, JobRequest, Kind, ListedSighting, MAX_LISTED};
 use sat_teleop_policy::position::Position;
+use sat_teleop_policy::sighting::utc_time;
 use sat_teleop_policy::token::Token;
 
 /// The relay's job API for the ground, on `ground_net`.
@@ -26,6 +27,9 @@ pub enum Detail {
     Fetch(FetchArgs),
     /// List the snapshots the vehicle took while the ground was out of reach, with where it was.
     Outage(OutageArgs),
+    /// List the people the vehicle's detector saw while the ground was out of reach, with where it
+    /// was and the snapshot to fetch.
+    Sightings(SightingsArgs),
     /// Cancel a job: the vehicle stops at its next chunk.
     Cancel {
         id: String,
@@ -74,6 +78,22 @@ pub struct OutageArgs {
 }
 
 #[derive(Args)]
+pub struct SightingsArgs {
+    /// Sightings first seen in the last this many seconds, by this machine's clock.
+    #[arg(long, default_value_t = 3600, conflicts_with = "from_ms")]
+    since_s: u64,
+    /// Sightings first seen at or after this time, in UNIX milliseconds: the way to the rest of a
+    /// list that was full.
+    #[arg(long)]
+    from_ms: Option<u64>,
+    /// Give up waiting after this many seconds.
+    #[arg(long, default_value_t = 120)]
+    wait_s: u64,
+    #[arg(long, default_value = RELAY)]
+    relay: String,
+}
+
+#[derive(Args)]
 pub struct FetchArgs {
     id: String,
     /// Where to write the JPEG.
@@ -91,6 +111,7 @@ pub fn run(detail: Detail, token: Option<&Token>) -> Result<()> {
         Detail::Request(args) => request(&args, token),
         Detail::Fetch(args) => fetch(&args, token),
         Detail::Outage(args) => outage(&args, token),
+        Detail::Sightings(args) => sightings(&args, token),
         Detail::Cancel { id, relay } => {
             let id = parse_id(&id)?;
             Client::new(&relay, CLIENT_TIMEOUT)
@@ -200,6 +221,70 @@ fn outage(args: &OutageArgs, token: Option<&Token>) -> Result<()> {
     }
     println!("fetch one with `detail request --at-ms <capture ms>` and `detail fetch`");
     Ok(())
+}
+
+fn sightings(args: &SightingsArgs, token: Option<&Token>) -> Result<()> {
+    let now = now_ms()?;
+    let job = JobRequest {
+        kind: Kind::Sightings,
+        at_capture_ms: args
+            .from_ms
+            .unwrap_or_else(|| now.saturating_sub(args.since_s.saturating_mul(1000))),
+        crop: None,
+        max_bytes: 4096,
+        expires_in_ms: u32::try_from(args.wait_s.saturating_mul(1000)).unwrap_or(u32::MAX),
+    };
+    job.validate().map_err(anyhow::Error::msg)?;
+    let client = Client::new(&args.relay, CLIENT_TIMEOUT).with_token(token);
+    let id = client.request(&job)?;
+    let listing = client
+        .list(&id, Duration::from_secs(args.wait_s))
+        .with_context(|| format!("job {id}"));
+    client.cancel(&id)?;
+    let listing = listing?;
+    if listing.sightings.is_empty() {
+        println!("no sightings in that time");
+    }
+    for listed in &listing.sightings {
+        println!("{}", sighting_line(listed, now));
+    }
+    if let Some(last) = listing
+        .sightings
+        .last()
+        .filter(|_| listing.sightings.len() == MAX_LISTED)
+    {
+        println!(
+            "the list is full: `detail sightings --from-ms {}` shows the rest",
+            last.sighting.first_ms.saturating_add(1)
+        );
+    }
+    println!("fetch a snapshot with `detail request --at-ms <snapshot ms>` and `detail fetch`");
+    Ok(())
+}
+
+/// One sighting on one line: when, how long, the box, whether the pilot was told, where the drone
+/// was and the snapshot that shows it.
+fn sighting_line(listed: &ListedSighting, now: u64) -> String {
+    let s = &listed.sighting;
+    let age_s = now.saturating_sub(s.first_ms) / 1000;
+    let seen_for_s = s.last_ms.saturating_sub(s.first_ms) / 1000;
+    let snapshot = listed.snapshot.map_or_else(
+        || "no snapshot kept".to_owned(),
+        |p| format!("snapshot {} ms UNIX (frame {})", p.capture_ms, p.frame_id),
+    );
+    format!(
+        "{} UTC ({} ms UNIX, {age_s} s ago), seen {seen_for_s} s, score {:.2}, box {:.2},{:.2} to \
+         {:.2},{:.2}, {}, {}, {snapshot}",
+        utc_time(s.first_ms),
+        s.first_ms,
+        s.score,
+        s.rect.x0,
+        s.rect.y0,
+        s.rect.x1,
+        s.rect.y1,
+        if s.sent { "told" } else { "not told" },
+        describe(Some(s.position)),
+    )
 }
 
 /// A position in words, or that there is none.

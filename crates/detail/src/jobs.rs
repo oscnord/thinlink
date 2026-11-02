@@ -44,7 +44,7 @@ enum State {
     Queued,
     Assigned(Assembly),
     Done(Arc<Object>),
-    /// An `Outage` job's answer.
+    /// An `Outage` or `Sightings` job's answer.
     Listed(Arc<Listing>),
     Failed(String),
 }
@@ -161,8 +161,8 @@ impl Jobs {
     /// size `done.meta` says.
     pub fn complete(&mut self, id: &JobId, done: &Complete, now: Instant) -> Result<(), JobError> {
         let invalid = |what: &str| JobError::Invalid(what.to_owned());
-        if self.kind_of(id) == Some(Kind::Outage) {
-            return Err(invalid("an outage job is answered with a listing"));
+        if self.kind_of(id).is_some_and(Kind::is_listing) {
+            return Err(invalid("a listing job is answered with a listing"));
         }
         done.meta.validate().map_err(JobError::Invalid)?;
         if !is_sha256_hex(&done.sha256) {
@@ -200,13 +200,13 @@ impl Jobs {
         self.jobs.get(id).map(|job| job.request.kind)
     }
 
-    /// Ends an `Outage` job with the snapshots the vehicle lists.
+    /// Ends an `Outage` or `Sightings` job with what the vehicle lists.
     pub fn listing(&mut self, id: &JobId, listing: Listing, now: Instant) -> Result<(), JobError> {
         listing.validate().map_err(JobError::Invalid)?;
         self.assembly(id, now)?;
-        if self.kind_of(id) != Some(Kind::Outage) {
+        if !self.kind_of(id).is_some_and(Kind::is_listing) {
             return Err(JobError::Invalid(
-                "only an outage job is answered with a listing".to_owned(),
+                "only a listing job is answered with a listing".to_owned(),
             ));
         }
         if let Some(job) = self.jobs.get_mut(id) {
@@ -314,6 +314,7 @@ mod tests {
                 };
                 n
             ],
+            ..Listing::default()
         };
 
         assert!(jobs.listing(&picture, listed(1), now).is_err());

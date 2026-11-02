@@ -18,7 +18,7 @@ quality = 90
 
 [store]
 dir = "/snapshots"
-max_bytes = 524288
+max_bytes = 4194304
 max_age_s = 120
 min_free_bytes = 4194304
 gap_after_ms = 1500

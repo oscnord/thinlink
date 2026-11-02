@@ -19,6 +19,7 @@ pub mod qgc_status;
 pub mod recording;
 pub mod regional;
 pub mod retrieval;
+pub mod sightings;
 pub mod skeleton;
 pub mod tc;
 pub mod timeline;

@@ -180,6 +180,12 @@ impl RateCap {
         }
     }
 
+    /// Takes room for a frame of `bytes` that is not telemetry of the autopilot's: it uses the upper
+    /// half of the budget only, and never while replies wait.
+    pub fn take_bulk(&mut self, now: Instant, bytes: u32) -> bool {
+        self.waiting.is_empty() && self.bucket.take(now, bytes, Priority::Bulk)
+    }
+
     /// The oldest waiting reply, once it fits the budget or has waited too long.
     pub fn release(&mut self, now: Instant) -> Option<Released> {
         let (since, frame) = self.waiting.front()?;

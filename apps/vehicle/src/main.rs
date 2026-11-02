@@ -18,7 +18,7 @@ use sat_teleop_detail::store::{Store, StoreSettings, StoreSnapshot, Tag};
 use sat_teleop_detail::vehicle::{
     self as retrieval, RetrievalLimits, RetrievalSnapshot, RetrievalStats,
 };
-use sat_teleop_detect::Detector;
+use sat_teleop_detect::{Detection, Detector};
 use sat_teleop_media::adapt::{
     self, AdaptLimits, AdaptSnapshot, AdaptStats, LadderConfig, Rungs, Setup, Uplink,
 };
@@ -31,6 +31,7 @@ use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
 use sat_teleop_policy::budget::{Budget, wire_bytes};
 use sat_teleop_policy::region::NormRect;
 use sat_teleop_policy::retrieval::ground_heard;
+use sat_teleop_policy::sighting::Seen;
 
 #[cfg(feature = "testbed")]
 mod hooks;
@@ -337,19 +338,12 @@ fn run(
             Arc::clone(&adaptation),
         );
         thread::spawn(move || {
-            retained.write(&writer_queue, || {
-                let now = Instant::now();
-                let conditions = adaptation
-                    .0
-                    .retrieval_conditions(now, &adapt_limits, allowance);
-                Tag {
-                    position: bridge.position.fresh(now),
-                    outage: !ground_heard(&conditions),
-                }
+            retained.write(&writer_queue, || Tag {
+                position: bridge.position.fresh(Instant::now()),
+                outage: !heard(&adaptation, &adapt_limits, allowance),
             });
         });
     }
-    let bridge = Arc::new(VehicleStats::new(&mavlink));
     // The model loads before the sender starts, so a model that cannot load leaves the detector's
     // branch out of the pipeline altogether.
     let loaded = detector
@@ -367,7 +361,14 @@ fn run(
     match loaded {
         Some((_, Ok(detector))) => {
             let regional = Arc::clone(&regional);
-            thread::spawn(move || find_people(&regional, detector));
+            let (bridge, adaptation) = (Arc::clone(&bridge), Arc::clone(&adaptation));
+            thread::spawn(move || {
+                find_people(&regional, detector, |people, capture_ms| {
+                    if !heard(&adaptation, &adapt_limits, allowance) {
+                        note_sightings(&bridge, people, capture_ms);
+                    }
+                });
+            });
         }
         Some((_, Err(cause))) => {
             eprintln!("running without the person detector: {cause}");
@@ -386,9 +387,17 @@ fn run(
         });
     }
     {
-        let bridge = Arc::clone(&bridge);
+        let (bridge, adaptation) = (Arc::clone(&bridge), Arc::clone(&adaptation));
         thread::spawn(move || {
-            if let Err(e) = vehicle::run(mavlink, limits.telemetry, limits.control, &bridge) {
+            let ground_heard = || heard(&adaptation, &adapt_limits, allowance);
+            let run = vehicle::run(
+                mavlink,
+                limits.telemetry,
+                limits.control,
+                ground_heard,
+                &bridge,
+            );
+            if let Err(e) = run {
                 eprintln!("mavlink bridge stopped: {e}");
                 bridge.sitl.down(&e);
             }
@@ -418,8 +427,9 @@ fn run(
         });
     }
     if let (Some(retained), Some(relay)) = (&retained, detail) {
-        let (retained, adaptation, job) = (
+        let (retained, bridge, adaptation, job) = (
             Arc::clone(retained),
+            Arc::clone(&bridge),
             Arc::clone(&adaptation),
             Arc::clone(&job),
         );
@@ -432,6 +442,7 @@ fn run(
             retrieval::run(
                 &relay,
                 &retained.store,
+                &bridge.sightings,
                 allowance,
                 conditions,
                 &job,
@@ -471,29 +482,56 @@ fn run(
         .context("metrics endpoint stopped")
 }
 
+/// Whether the relay answers the vehicle's probes, so the ground can be heard.
+fn heard(adaptation: &(AdaptStats, Health), limits: &AdaptLimits, allowance: u32) -> bool {
+    let conditions = adaptation
+        .0
+        .retrieval_conditions(Instant::now(), limits, allowance);
+    ground_heard(&conditions)
+}
+
 /// Loads the detector's model; the error is the cause the metrics show.
 fn load_detector(config: &DetectorConfig) -> Result<Detector, String> {
     Detector::load(&config.model, config.input).map_err(|e| e.to_string())
 }
 
 /// Runs the detector on the newest frame the sender offers, over and over, and publishes the people
-/// it finds.
-fn find_people(regional: &Regional, mut detector: Detector) {
+/// it finds; `seen` is also told of them, with the UNIX time the frame was captured.
+fn find_people(regional: &Regional, mut detector: Detector, seen: impl Fn(&[Detection], u64)) {
     regional.detector_running();
     loop {
         let frame = regional.next_frame();
         let started = Instant::now();
-        let found: Vec<NormRect> = detector
-            .people(
-                &frame.rgb,
-                frame.width,
-                frame.height,
-                regional.detector_min_score(),
-            )
-            .into_iter()
-            .map(|person| person.rect)
-            .collect();
+        let people = detector.people(
+            &frame.rgb,
+            frame.width,
+            frame.height,
+            regional.detector_min_score(),
+        );
+        let age_ms = regional.cell.now_ms().saturating_sub(frame.at_ms);
+        seen(&people, unix_ms().saturating_sub(age_ms));
+        let found: Vec<NormRect> = people.iter().map(|person| person.rect).collect();
         regional.detected(&found, frame.at_ms, started.elapsed());
+    }
+}
+
+/// Records `people` seen in the frame captured at `capture_ms` as sightings, where the drone is now.
+/// Without a fresh position there is nowhere to say they were.
+fn note_sightings(bridge: &VehicleStats, people: &[Detection], capture_ms: u64) {
+    let Some(position) = bridge.position.fresh(Instant::now()) else {
+        return;
+    };
+    let mut sightings = bridge
+        .sightings
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    for person in people {
+        sightings.record(Seen {
+            capture_ms,
+            position,
+            rect: person.rect,
+            score: person.score,
+        });
     }
 }
 

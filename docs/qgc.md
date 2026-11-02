@@ -58,6 +58,10 @@ The adapter's camera advertises tracking (`CAMERA_CAP_FLAGS_HAS_TRACKING_RECTANG
 
 `lab check regional` plays QGC's part (the request for the status, the rectangle, the stop) against the adapter and reads the status back (`docs/testbed.md`, "Regional check"). Not looked at on screen with QGC.
 
+## Sightings out of reach
+
+With the person detector on (`docs/architecture.md`, "Sightings"), the people the drone sees while the ground cannot hear it are told to the pilot when the link returns: one message each in QGC's message list (the notification area at the top of the Fly view), at informational severity, oldest first and about two a second at most, for example `person 59.32931 18.06862 12m 14:02:31`: latitude and longitude of the drone, its altitude above home in metres and the UTC time it first saw the person. They come from the autopilot's system id, so QGC files them under the vehicle. The message is where the drone was, not where the person is. `just sightings` lists them with the box in the picture and the snapshot to fetch (`just detail-request-at <ms>`, `just detail-fetch`); a sighting stays listed after it was told, up to the newest 256.
+
 ## What QGC can and cannot do
 
 The ground adapter is QGC's only command endpoint. QGC's read-only traffic goes raw to the vehicle, lease or not, so QGC can always load the vehicle: parameters, mission download, autopilot version and stream rates. It may also set the vehicle's clock (`SYSTEM_TIME`, which ArduPilot can take its real-time clock from), the one raw message that writes something, though no flight state.

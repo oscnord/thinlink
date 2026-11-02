@@ -262,7 +262,7 @@ fn bench() -> Bench {
         let stats = Arc::clone(&stats);
         thread::spawn(move || {
             started.send(()).unwrap();
-            let _ = vehicle::run(config, limits, LIMITS, &stats);
+            let _ = vehicle::run(config, limits, LIMITS, || false, &stats);
         });
     }
     running.recv().unwrap();
