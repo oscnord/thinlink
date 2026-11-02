@@ -481,3 +481,70 @@ Allowance, `[retrieval] allowance_bytes_per_s = 4000` (wire bytes). It is chosen
 
 Limits of this evidence: the passes are 30 to 80 s, the video is a ball pattern at about 30 kB/s (a real scene fills the 48 kB/s the cut leaves and leaves less headroom, which the queue guard in `permit` then takes up by holding retrieval), the snapshots are small, nothing was run on a Pi or a real link, and the paired passes differ by their own run-to-run spread.
 
+
+## Codec at the low rungs
+
+Question (issue 4): at ladder rungs 2 to 5, do x265 or SVT-AV1 give clearly better pictures than the vehicle's x264 at the same bitrate, and can a Pi keep up encoding them? Measurement only; nothing in the product changed.
+
+### Method
+
+- Sources, 60 s each: `foreman_cif.y4m` (cropped to 16:9, played forward and backward three times so there is no scene cut, 30 fps) and ffmpeg's `testsrc2` at 1280x720 (a synthetic card with fine detail and a moving counter, called "card" below). Each is scaled to the rung's size and frame rate once; that file is both the encoders' input and the reference the scores are measured against.
+- Encoders, all with no B-frames and no lookahead, a keyframe every 2 s, and the vehicle's one-frame VBV (`encoder_kbit` and `vbv_ms` in `crates/media/src/sender.rs`; the rung's bitrate scaled so any second stays within it): x264 `ultrafast` + `zerolatency`; x265 `ultrafast` + `zerolatency`, `bframes=0`, `rc-lookahead=0`, `vbv-maxrate` and `vbv-bufsize` as x264; SVT-AV1 preset 10 (real-time), constant bitrate, `pred-struct=1` (low delay), `lookahead=0`, `buf-sz` of one frame.
+- Quality: host ffmpeg 9.0.2 (x264 core 165, x265 4.3, SVT-AV1 4.2.0), decode, `ssim` and `psnr` filters against the reference (SSIM is the all-planes value). The achieved bitrate is the sum of the packet sizes over the clip, since all three encoders undershoot the target. To compare at equal quality, each encoder was also run at 25, 50, 75, 150, 200 and 300 % of the rung's bitrate, and "bitrate for x264's SSIM" is read off that curve (log-linear) as a share of x264's achieved bitrate at the rung's setting. A `<` means the encoder's lowest point (25 % of the rung) already beat x264's SSIM; a `>` means the curve ended below it.
+- CPU: Debian 13 container (ffmpeg 7.1.5 with its own libx264, libx265 and libsvtav1) limited with `podman run --cpus 0.5` (Pi 4) and `--cpus 0.25` (Pi Zero 2 W), `-threads 4` or the encoder's equivalent. Encode time per frame is (wall time of the whole clip minus wall time of its first 5 s) over the frames in between, one run per cell. Same caveat as "Small boards" in `docs/latency.md`: a CPU-time quota on Apple cores, not a slower core.
+- Ground side, in the runtime image (GStreamer 1.26.2): `x265enc`, `svtav1enc`, `avdec_h265` (and `libde265dec`), `avdec_h264` and `av1dec` are present; `dav1ddec`, `avdec_av1` and `rtpav1depay` are not. QGroundControl never sees the uplink codec, because the ground re-encodes.
+
+x264 undershoots its rung by a wide margin because of the one-frame buffer: it uses 9.5 of the 25 kbit/s at the last rung. With a one-second buffer instead, x264 at rung 2 on Foreman spends 220 kbit/s and reaches SSIM 0.904 (0.874 with the vehicle's buffer), still well under the 0.94 of x265 and SVT-AV1 at 190 kbit/s. The buffer is what bounds the burst a satellite link can take, so it stays.
+
+### Results
+
+Encode times are milliseconds per frame, Foreman then card, at 0.5 CPU / 0.25 CPU. The frame interval is 125, 200, 500 and 1000 ms down the rungs.
+
+### 640x360, 8 fps, 250 kbit/s
+
+| Encoder | Foreman: kbit/s, SSIM, PSNR | Card: kbit/s, SSIM, PSNR | Bitrate for x264's SSIM, Foreman / card | Encode ms per frame at 0.5 / 0.25 CPU, Foreman / card |
+|---|---|---|---|---|
+| x264 | 184.5, 0.874, 32.8 | 165.4, 0.974, 36.4 | 100% / 100% | 5.2 / 7.4, 2.9 / 7.5 |
+| x265 | 190.9, 0.943, 37.7 | 206.5, 0.976, 37.0 | 35% / 113% | 22.8 / 55.6, 16.7 / 39.0 |
+| SVT-AV1 | 184.6, 0.942, 37.5 | 180.9, 0.983, 39.2 | <33% / 71% | 15.8 / 36.5, 14.0 / 41.8 |
+
+### 480x270, 5 fps, 120 kbit/s
+
+| Encoder | Foreman: kbit/s, SSIM, PSNR | Card: kbit/s, SSIM, PSNR | Bitrate for x264's SSIM, Foreman / card | Encode ms per frame at 0.5 / 0.25 CPU, Foreman / card |
+|---|---|---|---|---|
+| x264 | 79.6, 0.849, 31.4 | 75.0, 0.950, 34.5 | 100% / 100% | 1.9 / 7.2, 2.0 / 7.9 |
+| x265 | 90.8, 0.921, 35.6 | 91.9, 0.972, 37.5 | 46% / 73% | 14.0 / 31.1, 11.5 / 44.6 |
+| SVT-AV1 | 90.9, 0.922, 35.6 | 90.7, 0.974, 38.1 | <35% / 59% | 8.8 / 38.7, 9.1 / 35.5 |
+
+### 320x180, 2 fps, 50 kbit/s
+
+| Encoder | Foreman: kbit/s, SSIM, PSNR | Card: kbit/s, SSIM, PSNR | Bitrate for x264's SSIM, Foreman / card | Encode ms per frame at 0.5 / 0.25 CPU, Foreman / card |
+|---|---|---|---|---|
+| x264 | 25.5, 0.833, 30.5 | 23.9, 0.950, 34.1 | 100% / 100% | 1.3 / 5.6, 0.9 / 8.0 |
+| x265 | 34.0, 0.896, 33.3 | 31.6, 0.959, 37.0 | 79% / 120% | 7.9 / 26.4, 6.4 / 27.1 |
+| SVT-AV1 | 8.0, 0.816, 30.0 | 7.6, 0.877, 30.8 | 38% / 123% | 4.9 / 8.5, 6.3 / 28.2 |
+
+### 320x180, 1 fps, 25 kbit/s
+
+| Encoder | Foreman: kbit/s, SSIM, PSNR | Card: kbit/s, SSIM, PSNR | Bitrate for x264's SSIM, Foreman / card | Encode ms per frame at 0.5 / 0.25 CPU, Foreman / card |
+|---|---|---|---|---|
+| x264 | 9.5, 0.784, 28.5 | 8.6, 0.874, 28.5 | 100% / 100% | 0.4 / 3.9, 1.2 / 1.9 |
+| x265 | 19.3, 0.865, 31.5 | 18.0, 0.931, 34.0 | 144% / 168% | 8.4 / 34.2, 7.2 / 18.1 |
+| SVT-AV1 | 11.2, 0.873, 32.3 | 11.8, 0.947, 35.9 | 42% / 64% | 5.4 / 14.7, 12.3 / 25.9 |
+
+### Decision
+
+H.264 stays for now. The data supports a per-rung `codec` setting with SVT-AV1 as the one alternative; x265 is not worth it.
+
+- x265 at the same bitrate gives a better picture on Foreman at rungs 2 and 3, but needs more bitrate than x264 on the card at rungs 2, 4 and 5 and on both sources at rung 5 (it cannot go below about 12 kbit/s at 1 fps).
+- SVT-AV1 needs 71 % or less of x264's bitrate for the same SSIM in seven of the eight cells (33 to 71 %), a saving of 29 % or more, which is past the 25 % bar. The exception is the card at rung 4, where it needs 123 %: its constant-bitrate control spends only 8 of the 50 kbit/s there and the picture is worse.
+- Both encoders keep real time under both caps: the slowest cell is 56 ms a frame (x265, Pi Zero 2 W cap, rung 2) against a 125 ms interval, and at the Pi 4 cap the slowest is 23 ms.
+
+Before this is worth building, in order:
+
+1. The Pi 4 encodes H.264 on its hardware encoder (`encoder = "hardware"`, the deployment default). Moving a rung to SVT-AV1 means encoding on the CPU instead. The CPU cost is measured above (3 to 13 times x264's); the quality of the hardware encoder at these bitrates was not measured and is the real baseline.
+2. The runtime image has no `rtpav1depay`, so RTP for AV1 needs a payloader and depayloader added, and the relay path (depay, parse, MediaMTX) has to carry it. Not tried.
+3. The ground decodes AV1 with `av1dec`, then re-encodes for QGroundControl as it does now; the added ground CPU and delay were not measured.
+4. SVT-AV1's rate control at 2 fps needs a tune (rung 4 above), and one run per cell on two sources is a screen, not a benchmark.
+
+The leaner path (direct RTP instead of MediaMTX) is not needed: the relay and MediaMTX cost about 1 to 3 ms (`docs/latency.md`, "Per stage"), far under the plan's 10 ms threshold.
