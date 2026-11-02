@@ -29,17 +29,20 @@ FROM build AS bins-native
 ARG CARGO_FEATURES=""
 # One build cache per architecture: a cargo target directory from another host triple is rebuilt from
 # scratch, so sharing it would empty the native cache whenever the other architecture builds.
+# And one per checkout (the justfile passes its folder name), since cargo judges freshness by file times.
 ARG BUILDARCH
+ARG CHECKOUT=main
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target,id=sat-teleop-target-$BUILDARCH \
+    --mount=type=cache,target=/src/target,id=sat-teleop-target-$BUILDARCH-$CHECKOUT \
     cargo build --release --locked $CARGO_FEATURES \
  && install -D -t /out target/release/lab target/release/sat-teleop-vehicle target/release/sat-teleop-relay \
     target/release/sat-teleop-ground
 
 FROM build AS bins-cross-amd64
 ARG CARGO_FEATURES=""
+ARG CHECKOUT=main
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     dpkg --add-architecture amd64 \
@@ -54,7 +57,7 @@ ENV PKG_CONFIG_ALLOW_CROSS=1 \
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target,id=sat-teleop-target-cross-amd64 \
+    --mount=type=cache,target=/src/target,id=sat-teleop-target-cross-amd64-$CHECKOUT \
     cargo build --release --locked --target x86_64-unknown-linux-gnu $CARGO_FEATURES \
  && install -D -t /out target/x86_64-unknown-linux-gnu/release/lab target/x86_64-unknown-linux-gnu/release/sat-teleop-vehicle \
     target/x86_64-unknown-linux-gnu/release/sat-teleop-relay target/x86_64-unknown-linux-gnu/release/sat-teleop-ground

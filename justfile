@@ -25,7 +25,11 @@ compose_down := engine + " compose -p sat-teleop -f testbed/compose.yml" + engin
 # defaults fit a 2 GiB machine; a larger one can raise them (BUILD_MEMORY=4g BUILD_JOBS=4).
 build_mem := env_var_or_default("BUILD_MEMORY", "1g")
 build_jobs := env_var_or_default("BUILD_JOBS", "1")
-build_memory := (if engine == "podman" { "--memory " + build_mem } else { "" }) + " --build-arg CARGO_BUILD_JOBS=" + build_jobs
+# Each checkout (the main one, each worktree) builds into its own cargo target directory, named after
+# its folder: all of them are mounted at /src, and cargo, which judges freshness by file times, would
+# otherwise take another checkout's newer build of a file for this one's.
+checkout := file_name(justfile_directory())
+build_memory := (if engine == "podman" { "--memory " + build_mem } else { "" }) + " --build-arg CARGO_BUILD_JOBS=" + build_jobs + " --build-arg CHECKOUT=" + checkout
 
 default:
     @just --list
@@ -35,7 +39,7 @@ check: (image "build")
     {{engine}} run --rm {{user_flags}} --memory {{build_mem}} -e CARGO_BUILD_JOBS={{build_jobs}} \
         -v "{{justfile_directory()}}:/src" -w /src \
         -v sat-teleop-cargo-registry:/cache/cargo -v sat-teleop-target:/cache/target \
-        -e HOME=/tmp -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target \
+        -e HOME=/tmp -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target/{{checkout}} \
         {{build_image}} sh -ec ' \
             cargo fmt --all -- --check; \
             cargo clippy --workspace --all-targets --locked -- -D warnings; \
