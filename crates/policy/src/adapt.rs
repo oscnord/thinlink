@@ -445,6 +445,9 @@ impl Controller {
         if let Some(ceiling) = self.ceiling_kbit.filter(|c| paced && self.held_back(*c, f)) {
             return self.raise(ceiling, f, now_ms);
         }
+        if paced && self.outgrown(f) {
+            return self.forget_capacity(now_ms);
+        }
         if self.dwelled(now_ms) {
             return self.climb(f, now_ms);
         }
@@ -955,6 +958,33 @@ impl Controller {
             .is_some_and(|carried| u64::from(carried) * 100 >= u64::from(allowed) * 90)
     }
 
+    /// Whether the uplink carried clearly more than the capacity measured at the last cut: the link
+    /// has grown since. A source that fills its ceiling is raised instead (`held_back`), so this is
+    /// one that sends less than the ceiling but more than the capacity.
+    fn outgrown(&self, f: &Feedback) -> bool {
+        let (Some(capacity), Some(carried)) = (self.capacity(), f.uplink_bytes_per_s) else {
+            return false;
+        };
+        u64::from(capacity) * GROWN_PERCENT / 100 < u64::from(carried)
+    }
+
+    /// Forgets an outgrown capacity, as at a fresh start. A ceiling it set goes with it: held to
+    /// it, a picture that compresses well never fills it, and the encoder's one-frame buffer at
+    /// the ceiling squeezes every keyframe for good.
+    fn forget_capacity(&mut self, now_ms: u64) -> Decision {
+        self.capacity = None;
+        self.proven = 0;
+        if self.ceiling_kbit.take().is_none() {
+            return Decision::Hold;
+        }
+        self.last_change_ms = Some(now_ms);
+        self.healthy_since_ms = None;
+        Decision::Step {
+            to: self.current,
+            reason: Reason::Probe,
+        }
+    }
+
     /// Healthy at `ceiling` for the change interval: it goes up by `PROBE_PERCENT`, to the rung's own bitrate at
     /// most, which ends the pacing. Like a climb, one cut within a dwell of this fails the rung.
     fn raise(&mut self, ceiling: u32, f: &Feedback, now_ms: u64) -> Decision {
@@ -1273,6 +1303,29 @@ mod tests {
     }
 
     #[test]
+    fn a_link_that_carries_more_than_the_capacity_measured_outgrows_it() {
+        // The cut at 14.1 s measures 10 kB/s; afterwards the link carries 20 kB/s with no queue,
+        // less than the ceiling a climb would get and twice the capacity: the link grew.
+        let link = |sent: u64| {
+            let grown = sent.clamp(12_000, 14_100) - 12_000;
+            let drained = sent.saturating_sub(14_100);
+            let queue = (grown / 5).saturating_sub(drained);
+            let carried = if sent < 20_000 { 10_000 } else { 20_000 };
+            Some((600 + queue, 100, 0, carried))
+        };
+        let budget = Budget {
+            telemetry_percent: 100,
+            telemetry_floor: 0,
+            telemetry_cap: 0,
+            control: 0,
+        };
+        let mut controller = Controller::new(ladder(), LIMITS, budget, 0).unwrap();
+        scripted(&mut controller, link, 80_000);
+        assert_eq!(controller.capacity(), None);
+        assert_eq!(controller.ceiling_kbit(), None);
+    }
+
+    #[test]
     fn walks_the_ladder_down_fast_and_up_slowly() {
         use Change::{Drain, Resume, To};
         use Reason::{BaseShift, Healthy, Loss, QueueDelay, Recovered, Stale};
@@ -1535,10 +1588,11 @@ mod tests {
                 // The uplink grows from 20 to 200 kB/s at 40 s: once the doubled hold from the
                 // failed climb runs out, a climb past the 20 kB/s measured is held to
                 // 110 % of it and raised every 2.75 s until the rung sends its own bitrate, which
-                // takes 36 s for the 500 kbit/s rung. After a blackout from 140 to 150 s, with the
-                // 1000 kbit/s rung still held to a ceiling, the jump back stops at the rung that
-                // measurement carries, and the ladder climbs from there.
-                "the capacity measured bounds the jump back after an outage",
+                // takes 36 s for the 500 kbit/s rung. Carrying three times the 20 kB/s, the link
+                // has outgrown that measurement, which is forgotten: the climb to the 1000 kbit/s
+                // rung is not held, and after a blackout from 140 to 150 s the jump back returns
+                // to it.
+                "an outgrown capacity no longer bounds the jump back after an outage",
                 2,
                 Link::Queue {
                     base_rtt_ms: 600,
@@ -1556,8 +1610,7 @@ mod tests {
                     (71_850, To(1, Healthy)),
                     (118_350, To(0, Healthy)),
                     (143_500, To(3, Stale)),
-                    (152_600, To(2, Recovered)),
-                    (163_350, To(1, Healthy)),
+                    (152_600, To(0, Recovered)),
                 ],
             ),
             (
