@@ -9,13 +9,17 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use mavlink::dialects::ardupilotmega::{
-    CAMERA_INFORMATION_DATA, COMMAND_ACK_DATA, CameraCapFlags, HEARTBEAT_DATA, MavAutopilot,
-    MavCmd, MavMessage, MavModeFlag, MavResult, MavState, MavType, VIDEO_STREAM_INFORMATION_DATA,
+    CAMERA_INFORMATION_DATA, CAMERA_TRACKING_IMAGE_STATUS_DATA, COMMAND_ACK_DATA, CameraCapFlags,
+    CameraTrackingMode, CameraTrackingStatusFlags, HEARTBEAT_DATA, MavAutopilot, MavCmd,
+    MavMessage, MavModeFlag, MavResult, MavState, MavType, VIDEO_STREAM_INFORMATION_DATA,
     VIDEO_STREAM_STATUS_DATA, VideoStreamStatusFlags, VideoStreamType,
 };
 use mavlink::{MavHeader, Message};
 use serde::Serialize;
 
+use sat_teleop_policy::region::NormRect;
+
+use crate::envelope::TrackingLimits;
 use crate::frame::Frame;
 
 /// `MAV_COMP_ID_CAMERA`.
@@ -32,6 +36,11 @@ const STREAM_ID: u8 = 1;
 const STREAM_NAME: &str = "overview";
 const VENDOR: &str = "sat-teleop";
 const MODEL: &str = "ground freshness output";
+/// `CAMERA_TRACKING_IMAGE_STATUS`.
+const TRACKING_STATUS_ID: f32 = 275.0;
+/// How often the tracking status goes out when a station asks for the default rate (interval 0).
+const DEFAULT_STATUS_EVERY: Duration = Duration::from_millis(500);
+const MIN_STATUS_EVERY: Duration = Duration::from_millis(50);
 
 /// The stream the camera announces: the freshness output's encoding and its URI.
 #[derive(Debug, Clone)]
@@ -53,11 +62,16 @@ pub struct CameraCounts {
     pub unsupported: u64,
     /// Messages to the camera dropped: not a command, or sent while the vehicle was not heard.
     pub dropped: u64,
+    /// Tracking commands refused: a box too small to keep sharp.
+    pub tracking_denied: u64,
 }
 
 pub struct Camera {
     stream: CameraStream,
     started: Instant,
+    /// How long a box the vehicle confirmed counts as applied.
+    pilot_ttl: Duration,
+    refresh_every: Duration,
     state: Mutex<State>,
 }
 
@@ -67,6 +81,13 @@ struct State {
     heard: Option<(u8, Instant)>,
     sequence: u8,
     counts: CameraCounts,
+    /// The box a station asked for.
+    tracking: Option<NormRect>,
+    /// The box the vehicle last said it applies, and when it said so.
+    applied: Option<(NormRect, Instant)>,
+    /// How often a station asked for the tracking status, and when it last went out.
+    status_every: Option<Duration>,
+    status_sent: Option<Instant>,
 }
 
 /// What a camera command asks for.
@@ -93,12 +114,29 @@ pub(super) fn addressed(message: &MavMessage) -> bool {
 }
 
 impl Camera {
-    pub fn new(stream: CameraStream) -> Self {
+    pub fn new(stream: CameraStream, tracking: TrackingLimits) -> Self {
         Self {
             stream,
             started: Instant::now(),
+            pilot_ttl: Duration::from_millis(tracking.pilot_ttl_ms),
+            refresh_every: Duration::from_millis(tracking.pilot_refresh_ms),
             state: Mutex::new(State::default()),
         }
+    }
+
+    /// The box a station asked for: what the ground keeps sending to the vehicle.
+    pub fn tracking(&self) -> Option<NormRect> {
+        self.lock().tracking
+    }
+
+    /// How often the box is sent while tracking.
+    pub fn refresh_every(&self) -> Duration {
+        self.refresh_every
+    }
+
+    /// What the vehicle reports it applies, as of `now`.
+    pub fn applied(&self, region: Option<NormRect>, now: Instant) {
+        self.lock().applied = region.map(|rect| (rect, now));
     }
 
     pub fn counts(&self) -> CameraCounts {
@@ -126,14 +164,17 @@ impl Camera {
     pub(super) fn answer(&self, message: &MavMessage) -> Vec<Vec<u8>> {
         let mut state = self.lock();
         let heard = state.heard.filter(|(_, at)| at.elapsed() <= HEARD_FOR);
-        let (Some((system, _)), Some((command, param1, param2))) = (heard, command(message)) else {
+        let (Some((system, _)), Some((command, params))) = (heard, command(message)) else {
             state.counts.dropped += 1;
             return Vec::new();
         };
-        let Some(requested) = requested(command, param1, param2) else {
-            state.counts.unsupported += 1;
+        let Some(requested) = requested(command, params) else {
+            let result = self
+                .change(&mut state, command, params)
+                .unwrap_or(MavResult::MAV_RESULT_UNSUPPORTED);
+            state.counts.unsupported += u64::from(result == MavResult::MAV_RESULT_UNSUPPORTED);
             return state
-                .bytes(system, &ack(command, MavResult::MAV_RESULT_UNSUPPORTED))
+                .bytes(system, &ack(command, result))
                 .into_iter()
                 .collect();
         };
@@ -143,6 +184,58 @@ impl Camera {
             .iter()
             .filter_map(|message| state.bytes(system, message))
             .collect()
+    }
+
+    /// Runs a command that changes the camera's tracking or what it streams; `None` for any other.
+    fn change(&self, state: &mut State, command: MavCmd, params: Params) -> Option<MavResult> {
+        let wanted = match command {
+            MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE => {
+                let [x0, y0, x1, y1] = params;
+                NormRect::new(x0, y0, x1, y1)
+            }
+            MavCmd::MAV_CMD_CAMERA_TRACK_POINT => {
+                let [x, y, radius, _] = params;
+                NormRect::around(x, y, radius, self.aspect())
+            }
+            MavCmd::MAV_CMD_CAMERA_STOP_TRACKING => {
+                state.tracking = None;
+                return Some(MavResult::MAV_RESULT_ACCEPTED);
+            }
+            MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL if is_tracking_status(params[0]) => {
+                state.status_every = status_interval(params[1]);
+                return Some(MavResult::MAV_RESULT_ACCEPTED);
+            }
+            _ => return None,
+        };
+        let Some(rect) = wanted else {
+            state.counts.tracking_denied += 1;
+            return Some(MavResult::MAV_RESULT_DENIED);
+        };
+        state.tracking = Some(rect);
+        Some(MavResult::MAV_RESULT_ACCEPTED)
+    }
+
+    /// The stream's width over its height.
+    fn aspect(&self) -> f32 {
+        f32::from(self.stream.width) / f32::from(self.stream.height.max(1))
+    }
+
+    /// The tracking status for a station that asked for it, once per interval it asked for, while
+    /// the vehicle is heard.
+    pub(super) fn status_frame(&self, now: Instant) -> Option<Vec<u8>> {
+        let mut state = self.lock();
+        let every = state.status_every?;
+        let (system, heard_at) = state.heard?;
+        let heard = now.saturating_duration_since(heard_at) <= HEARD_FOR;
+        let due = state
+            .status_sent
+            .is_none_or(|sent| now.saturating_duration_since(sent) >= every);
+        if !(heard && due) {
+            return None;
+        }
+        state.status_sent = Some(now);
+        let status = tracking_status(state.applied, self.pilot_ttl, now);
+        state.bytes(system, &status)
     }
 
     fn message(&self, requested: Requested) -> MavMessage {
@@ -155,7 +248,9 @@ impl Camera {
                 time_boot_ms: u32::try_from(self.started.elapsed().as_millis()).unwrap_or(u32::MAX),
                 vendor_name: name(VENDOR),
                 model_name: name(MODEL),
-                flags: CameraCapFlags::CAMERA_CAP_FLAGS_HAS_VIDEO_STREAM,
+                flags: CameraCapFlags::CAMERA_CAP_FLAGS_HAS_VIDEO_STREAM
+                    | CameraCapFlags::CAMERA_CAP_FLAGS_HAS_TRACKING_RECTANGLE
+                    | CameraCapFlags::CAMERA_CAP_FLAGS_HAS_TRACKING_POINT,
                 resolution_h: s.width,
                 resolution_v: s.height,
                 ..CAMERA_INFORMATION_DATA::default()
@@ -207,13 +302,59 @@ impl State {
     }
 }
 
-/// A command's id and first two parameters.
-fn command(message: &MavMessage) -> Option<(MavCmd, f32, f32)> {
+/// A command's first four parameters.
+type Params = [f32; 4];
+
+/// A command's id and first four parameters.
+fn command(message: &MavMessage) -> Option<(MavCmd, Params)> {
     match message {
-        MavMessage::COMMAND_LONG(c) => Some((c.command, c.param1, c.param2)),
-        MavMessage::COMMAND_INT(c) => Some((c.command, c.param1, c.param2)),
+        MavMessage::COMMAND_LONG(c) => Some((c.command, [c.param1, c.param2, c.param3, c.param4])),
+        MavMessage::COMMAND_INT(c) => Some((c.command, [c.param1, c.param2, c.param3, c.param4])),
         _ => None,
     }
+}
+
+fn is_tracking_status(message_id: f32) -> bool {
+    (message_id - TRACKING_STATUS_ID).abs() < 0.5
+}
+
+/// The interval a station asked for in microseconds: none to stop (-1), the default for 0 or
+/// anything unreadable, never faster than 50 ms.
+fn status_interval(micros: f32) -> Option<Duration> {
+    if micros < 0.0 {
+        return None;
+    }
+    let asked = Duration::try_from_secs_f32(micros / 1_000_000.0).ok();
+    match asked {
+        Some(every) if !every.is_zero() => Some(every.max(MIN_STATUS_EVERY)),
+        _ => Some(DEFAULT_STATUS_EVERY),
+    }
+}
+
+/// `CAMERA_TRACKING_IMAGE_STATUS`: active with the box while the vehicle said it applies it within
+/// `ttl` of `now`, idle otherwise, so a lost link takes the pilot's red box away.
+fn tracking_status(
+    applied: Option<(NormRect, Instant)>,
+    ttl: Duration,
+    now: Instant,
+) -> MavMessage {
+    let live = applied.filter(|(_, at)| now.saturating_duration_since(*at) <= ttl);
+    let Some((rect, _)) = live else {
+        return MavMessage::CAMERA_TRACKING_IMAGE_STATUS(CAMERA_TRACKING_IMAGE_STATUS_DATA {
+            tracking_status: CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_IDLE,
+            tracking_mode: CameraTrackingMode::CAMERA_TRACKING_MODE_NONE,
+            ..CAMERA_TRACKING_IMAGE_STATUS_DATA::default()
+        });
+    };
+    MavMessage::CAMERA_TRACKING_IMAGE_STATUS(CAMERA_TRACKING_IMAGE_STATUS_DATA {
+        tracking_status: CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_ACTIVE,
+        tracking_mode: CameraTrackingMode::CAMERA_TRACKING_MODE_RECTANGLE,
+        rec_top_x: rect.x0,
+        rec_top_y: rect.y0,
+        rec_bottom_x: rect.x1,
+        rec_bottom_y: rect.y1,
+        ..CAMERA_TRACKING_IMAGE_STATUS_DATA::default()
+    })
 }
 
 /// What a camera command asks for: `REQUEST_MESSAGE` for the camera information or the stream's
@@ -227,7 +368,7 @@ fn command(message: &MavMessage) -> Option<(MavCmd, f32, f32)> {
     deprecated,
     reason = "QGroundControl 5.1.5 still sends them on a retry"
 )]
-fn requested(command: MavCmd, param1: f32, param2: f32) -> Option<Requested> {
+fn requested(command: MavCmd, [param1, param2, ..]: Params) -> Option<Requested> {
     let ours = |stream: f32| stream == 0.0 || stream == f32::from(STREAM_ID);
     let wanted = match command {
         MavCmd::MAV_CMD_REQUEST_MESSAGE if param1 == 259.0 => Requested::Information,
@@ -273,4 +414,184 @@ fn name(text: &str) -> [u8; 32] {
         *slot = byte;
     }
     field
+}
+
+#[cfg(test)]
+mod tests {
+    use mavlink::dialects::ardupilotmega::COMMAND_LONG_DATA;
+
+    use super::*;
+    use crate::frame::encoded;
+
+    const TTL: Duration = Duration::from_millis(3000);
+
+    fn camera() -> Camera {
+        let stream = CameraStream {
+            width: 1280,
+            height: 720,
+            fps: 15,
+            bitrate_kbit: 400,
+            uri: "rtp://127.0.0.1:5600".to_owned(),
+        };
+        let tracking = TrackingLimits {
+            pilot_refresh_ms: 500,
+            pilot_ttl_ms: 3000,
+        };
+        let camera = Camera::new(stream, tracking);
+        camera.follow(&encoded(&MavMessage::HEARTBEAT(HEARTBEAT_DATA::default())));
+        camera
+    }
+
+    fn command_long(command: MavCmd, params: Params) -> MavMessage {
+        let [param1, param2, param3, param4] = params;
+        MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+            command,
+            param1,
+            param2,
+            param3,
+            param4,
+            target_component: CAMERA,
+            ..COMMAND_LONG_DATA::default()
+        })
+    }
+
+    fn decoded(bytes: &[u8]) -> MavMessage {
+        crate::frame::datagram_frames(bytes)
+            .next()
+            .unwrap()
+            .decode()
+            .unwrap()
+    }
+
+    /// The result the camera acked the command with.
+    fn result(camera: &Camera, command: MavCmd, params: Params) -> MavResult {
+        let answers = camera.answer(&command_long(command, params));
+        match answers.first().map(|bytes| decoded(bytes)) {
+            Some(MavMessage::COMMAND_ACK(ack)) => ack.result,
+            other => panic!("no ack: {other:?}"),
+        }
+    }
+
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> NormRect {
+        NormRect { x0, y0, x1, y1 }
+    }
+
+    #[test]
+    fn information_advertises_tracking() {
+        let camera = camera();
+        let message = camera.message(Requested::Information);
+        let MavMessage::CAMERA_INFORMATION(info) = message else {
+            panic!("not camera information");
+        };
+        let wanted = CameraCapFlags::CAMERA_CAP_FLAGS_HAS_VIDEO_STREAM
+            | CameraCapFlags::CAMERA_CAP_FLAGS_HAS_TRACKING_RECTANGLE
+            | CameraCapFlags::CAMERA_CAP_FLAGS_HAS_TRACKING_POINT;
+        assert!(info.flags.contains(wanted));
+    }
+
+    #[test]
+    fn tracking_commands_set_and_clear_the_box() {
+        let camera = camera();
+        let accepted = MavResult::MAV_RESULT_ACCEPTED;
+        let rectangle = MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE;
+        // QGroundControl 5.1.5 sends top-left x, y and bottom-right x, y; either corner order works.
+        assert_eq!(result(&camera, rectangle, [0.6, 0.7, 0.2, 0.1]), accepted);
+        assert_eq!(camera.tracking(), Some(rect(0.2, 0.1, 0.6, 0.7)));
+
+        let point = MavCmd::MAV_CMD_CAMERA_TRACK_POINT;
+        assert_eq!(result(&camera, point, [0.5, 0.5, 0.1, 0.0]), accepted);
+        assert_eq!(
+            camera.tracking(),
+            NormRect::around(0.5, 0.5, 0.1, 1280.0 / 720.0)
+        );
+
+        let stop = MavCmd::MAV_CMD_CAMERA_STOP_TRACKING;
+        assert_eq!(result(&camera, stop, [0.0; 4]), accepted);
+        assert_eq!(camera.tracking(), None);
+    }
+
+    #[test]
+    fn degenerate_rectangle_keeps_the_box() {
+        let camera = camera();
+        let rectangle = MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE;
+        result(&camera, rectangle, [0.2, 0.1, 0.6, 0.7]);
+        let denied = result(&camera, rectangle, [0.5, 0.5, 0.5, 0.9]);
+        assert_eq!(denied, MavResult::MAV_RESULT_DENIED);
+        assert_eq!(camera.tracking(), Some(rect(0.2, 0.1, 0.6, 0.7)));
+    }
+
+    #[test]
+    fn status_reports_what_the_vehicle_applies() {
+        let camera = camera();
+        let (_, now) = camera.lock().heard.expect("the vehicle was heard");
+        let interval = MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL;
+        let set = |micros| result(&camera, interval, [TRACKING_STATUS_ID, micros, 0.0, 0.0]);
+        let status = |at| match decoded(&camera.status_frame(at).expect("a status is due")) {
+            MavMessage::CAMERA_TRACKING_IMAGE_STATUS(status) => status,
+            other => panic!("not a tracking status: {other:?}"),
+        };
+        assert_eq!(set(500_000.0), MavResult::MAV_RESULT_ACCEPTED);
+
+        // A box asked for but not confirmed is not reported.
+        result(
+            &camera,
+            MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE,
+            [0.2, 0.1, 0.6, 0.7],
+        );
+        let idle = status(now);
+        assert_eq!(
+            idle.tracking_status,
+            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_IDLE
+        );
+
+        let applied = rect(0.2, 0.1, 0.6, 0.7);
+        camera.applied(Some(applied), now);
+        let active = status(now + Duration::from_millis(600));
+        assert_eq!(
+            active.tracking_status,
+            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_ACTIVE
+        );
+        assert_eq!(
+            active.tracking_mode,
+            CameraTrackingMode::CAMERA_TRACKING_MODE_RECTANGLE
+        );
+        assert_eq!(
+            (
+                active.rec_top_x,
+                active.rec_top_y,
+                active.rec_bottom_x,
+                active.rec_bottom_y
+            ),
+            (0.2, 0.1, 0.6, 0.7)
+        );
+
+        camera.applied(None, now);
+        let cleared = status(now + Duration::from_millis(1100));
+        assert_eq!(
+            cleared.tracking_status,
+            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_IDLE
+        );
+
+        // -1 stops the stream.
+        set(-1.0);
+        assert!(camera.status_frame(now + Duration::from_secs(5)).is_none());
+    }
+
+    #[test]
+    fn status_goes_idle_without_confirmation() {
+        let now = Instant::now();
+        let applied = Some((rect(0.2, 0.1, 0.6, 0.7), now));
+        let flags = |at| match tracking_status(applied, TTL, at) {
+            MavMessage::CAMERA_TRACKING_IMAGE_STATUS(status) => status.tracking_status,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            flags(now + TTL),
+            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_ACTIVE
+        );
+        assert_eq!(
+            flags(now + TTL + Duration::from_millis(1)),
+            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_IDLE
+        );
+    }
 }

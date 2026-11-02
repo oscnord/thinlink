@@ -143,3 +143,7 @@ status = "calibration"
 
 [retrieval.outage-10s]
 status = "calibration"
+
+[regional.geo]
+status = "calibration"
+rationale = """Runs 1793659443040 (PI=pi4, pilot only, rung 0), 1793659540404 (PI=pi4, pilot only, rung 2), 1793658108235 (PI=pi4, detector on, CPU and memory) and 1793658230853 (PI=pi-zero-2w, pilot only), one each, 20 s windows after 8 s of settling, the test card at 1280x720, geo. Pilot-only region SSIM gain -0.001 (rung 0), +0.003 (rung 2) and -0.016 (Pi Zero 2 W); outside SSIM against the rung below -0.042 (Pi 4) and -0.005 (Pi Zero 2 W), not scored at rung 2; vehicle CPU 6.6 % and 4.8 % of a host core, memory 67 and 38 MB, softening p95 0.8 and 2.0 ms, detector p95 29.4 ms (Pi 4 limits). The gain and outside checks do not pass on this card (docs/measurement.md, "Regional video check"). No three-run series yet, so no limits."""

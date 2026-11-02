@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gz-sim8-cli=8.15.0-1~jammy libgz-sim8=8.15.0-1~jammy libgz-sim8-plugins=8.15.0-1~jammy \
         libgz-rendering8-ogre2=8.3.0-1~jammy libgz-rendering8-ogre2-dev=8.3.0-1~jammy \
         libgz-physics7-dartsim=7.9.0-1~jammy libgz-physics7-dartsim-dev=7.9.0-1~jammy \
-        libegl1 libgl1-mesa-dri libglx-mesa0 xvfb libdebuginfod1 gz-transport13-cli \
+        libegl1 libgl1-mesa-dri libglx-mesa0 xvfb libdebuginfod1 gz-transport13-cli unzip \
         libopencv-core4.5d libopencv-imgproc4.5d libopencv-imgcodecs4.5d \
         gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
     && rm -rf /var/lib/apt/lists/* \
@@ -50,6 +50,15 @@ COPY --from=build /src/build/*.so /opt/ardupilot_gazebo/plugins/
 COPY --from=build /src/models /opt/ardupilot_gazebo/models
 COPY testbed/sim/world.sdf /opt/sim/world.sdf
 COPY testbed/sim/models /opt/sim/models
+# Two people for the regional video demo: OpenRobotics' "Standing person" 3 and "Casual female" 4
+# from Gazebo Fuel (CC0 1.0), pinned by version and hash. The first names itself in its mesh URIs, so
+# its folder must be person_standing.
+ADD --checksum=sha256:385c4c518662f75b6c719849a4f47100bac7617058407c7d6db41bf802fc5c5e \
+    "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Standing%20person/3/Standing%20person.zip" /tmp/person_standing.zip
+ADD --checksum=sha256:e03944df8f010c7d6cf85fe61b2a9bf2899eed971e73fb76461f4705edeffe5d \
+    "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Casual%20female/4/Casual%20female.zip" /tmp/casual_female.zip
+RUN for m in person_standing casual_female; do unzip -q /tmp/$m.zip -d /opt/sim/models/$m; done \
+    && rm /tmp/person_standing.zip /tmp/casual_female.zip
 # The camera: the copter's gimbal camera streams RTP/H.264 to the companion's ingest port. It is the
 # stock gimbal model with its stream pointed at the vehicle's ingest address, 640x360 at 15 frames
 # per second. Each substitution is checked, so a model that changed under a new pin fails the build.

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use sat_teleop_control::auth::Signer;
-use sat_teleop_control::envelope::ControlLimits;
+use sat_teleop_control::envelope::{ControlLimits, TrackingLimits};
 use sat_teleop_control::ground::{
     self, Camera, CameraCounts, CameraStream, ClockView, ControlSnapshot, Controller, GroundConfig,
     GroundSnapshot, GroundStats, TakeError,
@@ -111,6 +111,8 @@ struct Config {
 struct Limits {
     control: ControlLimits,
     freshness: FreshnessLimits,
+    /// The ground reads two keys of it; the vehicle's sender validates the whole table.
+    region: TrackingLimits,
 }
 
 fn main() -> Result<ExitCode> {
@@ -143,11 +145,11 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
         video,
         camera: camera_config,
     } = load(config)?;
-    let (control_limits, thresholds) = load_limits(limits)?;
+    let (control_limits, thresholds, tracking) = load_limits(limits)?;
     let stations = ground::resolve(&ground.gcs).context("ground stations")?;
     let destinations = ground::resolve(&video.destinations).context("video destinations")?;
     sat_teleop_media::init().context("GStreamer")?;
-    let camera = camera_stream(&video).map(|stream| Arc::new(Camera::new(stream)));
+    let camera = camera_stream(&video).map(|stream| Arc::new(Camera::new(stream, tracking)));
     let output_stats = Arc::new(OutputStats::default());
     let stats = Arc::new(GroundStats::new(ground.clock.clone()));
     let signer = Signer::load(&ground.control_key, &ground.vehicle_id).context("control key")?;
@@ -271,13 +273,13 @@ fn load(path: &Path) -> Result<Config> {
     })
 }
 
-/// `[control]` and `[freshness]` of the limits file, validated.
-fn load_limits(path: &Path) -> Result<(ControlLimits, Thresholds)> {
+/// `[control]`, `[freshness]` and the ground's keys of `[region]` of the limits file, validated.
+fn load_limits(path: &Path) -> Result<(ControlLimits, Thresholds, TrackingLimits)> {
     let text =
         fs::read_to_string(path).with_context(|| format!("cannot read {}", path.display()))?;
     let limits: Limits = toml::from_str(&text).with_context(|| {
         format!(
-            "{} has no valid [control] and [freshness] tables",
+            "{} has no valid [control], [freshness] and [region] tables",
             path.display()
         )
     })?;
@@ -289,7 +291,11 @@ fn load_limits(path: &Path) -> Result<(ControlLimits, Thresholds)> {
         .freshness
         .validate()
         .with_context(|| format!("{} has invalid freshness limits", path.display()))?;
-    Ok((control, freshness))
+    let tracking = limits
+        .region
+        .validate()
+        .with_context(|| format!("{} has invalid region limits", path.display()))?;
+    Ok((control, freshness, tracking))
 }
 
 #[derive(Clone, Copy)]

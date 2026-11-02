@@ -8,12 +8,14 @@ use serde_json::{Value, json};
 
 use sat_teleop_control::clock::{Clock, Injection};
 use sat_teleop_control::vehicle::VehicleStats;
-use sat_teleop_media::sender::{SenderStats, SourceMode};
+use sat_teleop_media::sender::{Rung, SenderStats, SourceMode};
 
 use super::{Retained, SLOW_WRITE};
 
 /// The test-only hooks: `POST /video/pause`, `/video/freeze` and `/video/resume` set the sender's
-/// source mode, for testing the ground's freshness output; `POST /snapshots/slow` and
+/// source mode, for testing the ground's freshness output; `POST /video/rung/<index>` asks the
+/// sender for that rung of the ladder (the adaptation loop only acts on a change, so on a steady
+/// link it stays there); `POST /snapshots/slow` and
 /// `/snapshots/normal` set how long each snapshot write waits, `POST /clock/inject/<ms|missing|off>` replaces
 /// the clock's bound (testing that the ground follows it and that real mode needs one),
 /// `POST /real/allow-sitl/<on|off>` and `/real/require/<name>/<value>|reset` change what real mode
@@ -25,6 +27,8 @@ pub struct Hooks<'a> {
     pub retained: Option<&'a Retained>,
     pub clock: Option<&'a Clock>,
     pub bridge: &'a VehicleStats,
+    /// The adaptation ladder's encodings, best first.
+    pub ladder: &'a [Rung],
 }
 
 impl Hooks<'_> {
@@ -37,6 +41,9 @@ impl Hooks<'_> {
                 let injection = injection(p.trim_start_matches("/clock/inject/"));
                 injection.map_or(Hook::Invalid, Hook::Clock)
             }
+            ("POST", p) if p.starts_with("/video/rung/") => self
+                .rung(p.trim_start_matches("/video/rung/"))
+                .map_or(Hook::Invalid, Hook::Rung),
             ("POST", "/video/pause") => Hook::Mode(SourceMode::Paused),
             ("POST", "/video/freeze") => Hook::Mode(SourceMode::Frozen),
             ("POST", "/video/resume") => Hook::Mode(SourceMode::Live),
@@ -51,8 +58,18 @@ impl Hooks<'_> {
         Some(self.apply(hook))
     }
 
+    /// The ladder's encoding at the index in the path.
+    fn rung(&self, index: &str) -> Option<(usize, Rung)> {
+        let index: usize = index.parse().ok()?;
+        Some((index, *self.ladder.get(index)?))
+    }
+
     fn apply(&self, hook: Hook) -> (u16, Value) {
         match hook {
+            Hook::Rung((index, rung)) => {
+                self.video.request(rung);
+                (200, json!({ "rung": index }))
+            }
             Hook::Mode(mode) => {
                 self.video.set_mode(mode);
                 (200, json!({ "mode": mode }))
@@ -88,6 +105,7 @@ impl Hooks<'_> {
 
 enum Hook {
     Mode(SourceMode),
+    Rung((usize, Rung)),
     WriteDelay(Duration),
     Clock(Injection),
     Real(RealHook),

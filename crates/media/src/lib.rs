@@ -18,12 +18,14 @@ use sat_teleop_policy::stamp::{PlaneGeometry, StampError};
 
 pub mod adapt;
 pub mod camera;
+pub mod card;
 pub mod feedback;
 pub mod ingest;
 pub mod ingress;
 pub mod metrics;
 pub mod output;
 pub mod receiver;
+pub mod region;
 pub mod sender;
 pub mod stages;
 
@@ -202,11 +204,20 @@ fn failure(message: &gst::Message) -> Option<MediaError> {
 
 /// Geometry of the luma plane of a mapped I420 frame.
 fn luma_geometry(frame: &impl VideoFrameExt) -> Result<PlaneGeometry, MediaError> {
-    let stride = frame.plane_stride().first().copied().unwrap_or(0);
-    let invalid = |_| MediaError::Missing("valid luma plane geometry");
+    plane_geometry(frame, 0)
+}
+
+/// Geometry of plane `plane` of a mapped planar frame, where each plane is one component (I420).
+fn plane_geometry(frame: &impl VideoFrameExt, plane: u32) -> Result<PlaneGeometry, MediaError> {
+    let stride = frame
+        .plane_stride()
+        .get(plane as usize)
+        .copied()
+        .unwrap_or(0);
+    let invalid = |_| MediaError::Missing("valid plane geometry");
     Ok(PlaneGeometry {
-        width: usize::try_from(frame.width()).map_err(invalid)?,
-        height: usize::try_from(frame.height()).map_err(invalid)?,
+        width: usize::try_from(frame.comp_width(plane)).map_err(invalid)?,
+        height: usize::try_from(frame.comp_height(plane)).map_err(invalid)?,
         stride: usize::try_from(stride).map_err(invalid)?,
     })
 }

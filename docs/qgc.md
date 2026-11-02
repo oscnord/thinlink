@@ -52,6 +52,12 @@ Read from QGC 5.1.5's source (tag v5.1.5):
 3. `just video-hook freeze` makes the vehicle send one frame again and again: `FROZEN` after about 0.5 s, the picture still. `just video-hook resume`.
 4. Without the hooks, `lab impair` with `testbed/profiles/geo.toml` (`docs/testbed.md`) shows an age of about 0.33 s, still `LIVE`.
 
+## Regional video: drawing a box
+
+The adapter's camera advertises tracking (`CAMERA_CAP_FLAGS_HAS_TRACKING_RECTANGLE` and `_POINT`). QGC then lets you draw a rectangle on the video (or click a point) and sends `MAV_CMD_CAMERA_TRACK_RECTANGLE` (`..._POINT`) to the camera; `MAV_CMD_CAMERA_STOP_TRACKING` ends it. QGC asks for the tracking status with `MAV_CMD_SET_MESSAGE_INTERVAL` for `CAMERA_TRACKING_IMAGE_STATUS` and draws the red box from it. The adapter keeps the box and, while it holds the control lease (`just take-control`), sends it to the vehicle every 500 ms. The status turns active only with softening on (`soften_factor` 2 to 4 in `[region]` of the vehicle config; off by default, and then the status stays idle) and only when the vehicle confirmed a box it keeps sharp, and idle again 3 s after the last confirmation, so the red box never shows a region the vehicle is not using. A click, or a rectangle under 1 % of the picture on either side, is ignored and the previous box stays. The vehicle's picture outside the box is softened (`docs/architecture.md`, "Regional video").
+
+`lab check regional` plays QGC's part (the request for the status, the rectangle, the stop) against the adapter and reads the status back (`docs/testbed.md`, "Regional check"). Not looked at on screen with QGC.
+
 ## What QGC can and cannot do
 
 The ground adapter is QGC's only command endpoint. QGC's read-only traffic goes raw to the vehicle, lease or not, so QGC can always load the vehicle: parameters, mission download, autopilot version and stream rates. It may also set the vehicle's clock (`SYSTEM_TIME`, which ArduPilot can take its real-time clock from), the one raw message that writes something, though no flight state.

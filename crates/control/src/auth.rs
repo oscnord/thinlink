@@ -290,6 +290,8 @@ fn write(path: &Path, text: &str, mode: u32) -> Result<(), KeyError> {
 
 #[cfg(test)]
 mod tests {
+    use sat_teleop_policy::region::NormRect;
+
     use crate::envelope::Kind;
 
     use super::*;
@@ -306,6 +308,7 @@ mod tests {
             challenge: 9,
             kind: Kind::Continuous,
             mavlink: Some("AAAA".to_owned()),
+            region: None,
             sent_unix_ms: 1000,
             sig: None,
         }
@@ -331,6 +334,10 @@ mod tests {
             },
             Envelope {
                 kind: Kind::Liveness,
+                ..signed.clone()
+            },
+            Envelope {
+                region: NormRect::new(0.1, 0.1, 0.5, 0.5),
                 ..signed.clone()
             },
         ];

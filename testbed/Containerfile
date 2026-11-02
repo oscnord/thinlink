@@ -86,6 +86,12 @@ RUN case "$TARGETARCH" in \
     "https://github.com/mavlink-router/mavlink-router/releases/download/v4/$name" \
  && echo "$sum  /usr/local/bin/mavlink-routerd" | sha256sum -c - \
  && chmod 755 /usr/local/bin/mavlink-routerd
+# The person detector's model (NanoDet-Plus-m 320, Apache-2.0), pinned by revision and SHA-256 like
+# the justfile's `model` recipe.
+RUN mkdir -p /usr/share/sat-teleop \
+ && curl -fsSL -o /usr/share/sat-teleop/person.onnx \
+    "https://huggingface.co/nouman/nanodet-plus-onnx/resolve/1c71d967632f4b5cdfbc08326328df6def7a6ecc/plus-m-320/nanodet-plus-m_320.onnx" \
+ && echo "4f12723cce3d48e47ca92cb925ba74d97a965c069208edca660bbb9f7ce2c610  /usr/share/sat-teleop/person.onnx" | sha256sum -c -
 
 # `runtime` carries the binaries built for the build host's own architecture (arm64 on Apple Silicon,
 # which is also the Pi's), `runtime-amd64` the cross-built ones (`just image-for amd64`).

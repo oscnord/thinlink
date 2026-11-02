@@ -21,6 +21,7 @@ use sat_teleop_control::envelope::{
 };
 use sat_teleop_control::frame::{Frame, MAX_DATAGRAM, datagram_frames};
 use sat_teleop_control::unix_ms;
+use sat_teleop_policy::region::NormRect;
 
 use super::throttle;
 use crate::mavlink::command;
@@ -91,6 +92,7 @@ struct Seqs {
     liveness: u64,
     continuous: u64,
     discrete: u64,
+    region: u64,
 }
 
 impl Seqs {
@@ -99,6 +101,7 @@ impl Seqs {
             Kind::Liveness => &mut self.liveness,
             Kind::Continuous => &mut self.continuous,
             Kind::Discrete { .. } => &mut self.discrete,
+            Kind::Region => &mut self.region,
         };
         *last += 1;
         *last
@@ -205,6 +208,7 @@ impl Intruder {
                 challenge: 1,
                 kind,
                 mavlink: Some(encode_frame(&frame(&arm())?)),
+                region: None,
                 sent_unix_ms: unix_ms(),
                 sig: None,
             })
@@ -257,6 +261,10 @@ impl Intruder {
             probe
                 .cases
                 .push(self.refused("reused transaction", &[Refusal::TxnConflict], &e));
+        }
+        self.liveness(&mut probe);
+        if let Some(case) = self.replayed_region() {
+            probe.cases.push(case);
         }
         self.liveness(&mut probe);
         let stale = self.aged_challenge(limits);
@@ -355,10 +363,49 @@ impl Intruder {
         cases
     }
 
-    /// An envelope with the lease `checks` held before, now that another controller holds it.
-    pub(super) fn after_handover(&mut self) -> Option<Case> {
-        let e = self.forced_arm()?;
-        Some(self.refused("from a former holder", &[Refusal::NotHolder], &e))
+    /// Envelopes with the lease `checks` held before, now that another controller holds it: a
+    /// forced arm and a region.
+    pub(super) fn after_handover(&mut self) -> Vec<Case> {
+        let arm = self.forced_arm();
+        let region = self.region_envelope();
+        let arm = arm.map(|e| self.refused("from a former holder", &[Refusal::NotHolder], &e));
+        let region =
+            region.map(|e| self.refused("region from a former holder", &[Refusal::NotHolder], &e));
+        arm.into_iter().chain(region).collect()
+    }
+
+    /// A valid region envelope, which the vehicle takes, sent again: it must refuse the copy and
+    /// keep the region.
+    fn replayed_region(&mut self) -> Option<Case> {
+        let e = self.region_envelope()?;
+        if !self.send(&ToVehicle::Envelope(e.clone())) {
+            return None;
+        }
+        self.pump_until(Instant::now() + SETTLE, |_| false);
+        Some(self.refused(
+            "replayed region",
+            &[Refusal::DuplicateSeq, Refusal::ReorderedSeq],
+            &e,
+        ))
+    }
+
+    /// The next region envelope under the held lease: a box, and no frame.
+    fn region_envelope(&mut self) -> Option<Envelope> {
+        let (lease, epoch) = self.lease?;
+        let (challenge, _) = self.challenge()?;
+        self.signer
+            .sign(Envelope {
+                epoch,
+                lease,
+                seq: self.seqs.next(Kind::Region),
+                challenge,
+                kind: Kind::Region,
+                mavlink: None,
+                region: NormRect::new(0.2, 0.2, 0.6, 0.6),
+                sent_unix_ms: unix_ms(),
+                sig: None,
+            })
+            .ok()
     }
 
     /// The newest challenge, once it is older than its lifetime: expired, or no longer one of the
@@ -481,6 +528,7 @@ impl Intruder {
                 challenge,
                 kind,
                 mavlink: Some(encode_frame(&frame(message)?)),
+                region: None,
                 sent_unix_ms: unix_ms(),
                 sig: None,
             })

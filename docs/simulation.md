@@ -14,6 +14,8 @@ Start QGroundControl (nothing to set up, `docs/qgc.md`). About two minutes after
 
 The images are an ArduCopter 4.7.2 SITL (`testbed/Containerfile.sitl-copter`, the same ArduPilot commit as the rover's) and Gazebo Harmonic with a camera (`testbed/Containerfile.sim`). `testbed/compose.sim.yml` adds them to the testbed; the topology, the link and every other service are the default testbed's.
 
+`just regional=1 sim-up` starts the vehicle with the person detector and softening (`soften_factor = 2`) on (`testbed/config/vehicle-sim-regional.toml`). The world has two standing people (Gazebo Fuel's "Standing person" and "Casual female" by OpenRobotics, CC0 1.0, fetched by version and hash in `testbed/Containerfile.sim`) and a white landing pad with an H, all in front of the copter's camera at the take-off point. At rest the camera sits on the runway and sees the people standing 5 and 6.5 m ahead, and the pad only as a sliver on the horizon; it shows from the air. The detector found both people in every run (100 runs, 200 people, one run 30.7 ms at p50 and 52.8 ms at p95 on the build container's CPU) and outlines them in amber, and a box drawn on the pad in QGC (`docs/qgc.md`, "Regional video: drawing a box") keeps it sharp.
+
 ## Flying it from QGC
 
 The vehicle accepts QGC's joystick (`MANUAL_CONTROL`) only from the lease holder. Take the lease first (`just take-control`; `just release-control` gives it back; `docs/qgc.md`, "Taking control").

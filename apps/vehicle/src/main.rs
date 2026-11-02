@@ -18,17 +18,23 @@ use sat_teleop_detail::store::{Store, StoreSettings, StoreSnapshot, Tag};
 use sat_teleop_detail::vehicle::{
     self as retrieval, RetrievalLimits, RetrievalSnapshot, RetrievalStats,
 };
+use sat_teleop_detect::Detector;
 use sat_teleop_media::adapt::{
     self, AdaptLimits, AdaptSnapshot, AdaptStats, LadderConfig, Rungs, Setup, Uplink,
 };
 use sat_teleop_media::camera;
+use sat_teleop_media::region::{
+    RegionSettings, Regional, RegionalSnapshot, validate_soften_factor,
+};
 use sat_teleop_media::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
 use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
 use sat_teleop_policy::budget::{Budget, wire_bytes};
+use sat_teleop_policy::region::NormRect;
 use sat_teleop_policy::retrieval::ground_heard;
 
 #[cfg(feature = "testbed")]
 mod hooks;
+mod process;
 
 #[derive(Parser)]
 #[command(
@@ -92,6 +98,45 @@ struct Config {
     store: Option<StoreSettings>,
     /// The relay's job API (`http://host:port`); without it nothing is retrieved.
     detail: Option<String>,
+    /// The person detector; without it nobody is outlined.
+    detector: Option<DetectorConfig>,
+    /// Block size of the softened area outside the pilot's box and the people found; 1 is off.
+    soften_factor: u8,
+}
+
+/// `[region]` of the vehicle config. The limits are in `[region]` of the limits file.
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct RegionConfig {
+    detector: Option<DetectorConfig>,
+    /// 1 (the default) is off: the pilot's box is not kept and nothing is softened. 2 to 4 soften.
+    soften_factor: Option<u8>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DetectorConfig {
+    /// The ONNX model, for example /usr/share/sat-teleop/person.onnx.
+    model: PathBuf,
+    /// The model's square input size in pixels, `DETECTOR_INPUT`.
+    input: u32,
+}
+
+/// What a model's input may be: the capsfilter and each frame's buffer are built from it.
+const DETECTOR_INPUT: std::ops::RangeInclusive<u32> = 32..=1280;
+
+impl DetectorConfig {
+    fn validate(&self) -> Result<()> {
+        if !DETECTOR_INPUT.contains(&self.input) {
+            anyhow::bail!(
+                "the detector's input must be {}-{} pixels, not {}",
+                DETECTOR_INPUT.start(),
+                DETECTOR_INPUT.end(),
+                self.input
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Snapshots the sender may have waiting for the writer; more are dropped, never the live frames.
@@ -159,12 +204,16 @@ struct Limits {
     control: ControlLimits,
     adapt: AdaptLimits,
     retrieval: RetrievalLimits,
+    region: RegionSettings,
 }
 
 #[derive(Serialize)]
 struct Metrics {
     #[serde(flatten)]
     video: SenderSnapshot,
+    #[serde(flatten)]
+    regional: RegionalSnapshot,
+    process: Option<process::ProcessSnapshot>,
     mavlink: VehicleSnapshot,
     adapt: AdaptMetrics,
     retained: Option<RetainedMetrics>,
@@ -234,6 +283,8 @@ fn run(
         debug_hooks,
         store,
         detail,
+        detector,
+        soften_factor,
     } = load(config)?;
     let token = tokens
         .metrics
@@ -248,6 +299,8 @@ fn run(
     let limits = load_limits(limits)?;
     let mut rungs = load_ladder(ladder)?;
     rungs.start = start_rung.unwrap_or(rungs.start);
+    #[cfg(feature = "testbed")]
+    let ladder = rungs.encodings.clone();
     let allowance = limits.retrieval.allowance_bytes_per_s;
     let adapt_limits = limits.adapt;
     let (probe_every, thresholds) = limits
@@ -296,12 +349,40 @@ fn run(
             });
         });
     }
+    let bridge = Arc::new(VehicleStats::new(&mavlink));
+    // The model loads before the sender starts, so a model that cannot load leaves the detector's
+    // branch out of the pipeline altogether.
+    let loaded = detector
+        .as_ref()
+        .map(|config| (config.input, load_detector(config)));
+    let input = loaded
+        .as_ref()
+        .and_then(|(input, loaded)| loaded.is_ok().then_some(*input));
+    let regional = Regional::new(
+        limits.region,
+        bridge.control.region.clone(),
+        input,
+        soften_factor,
+    );
+    match loaded {
+        Some((_, Ok(detector))) => {
+            let regional = Arc::clone(&regional);
+            thread::spawn(move || find_people(&regional, detector));
+        }
+        Some((_, Err(cause))) => {
+            eprintln!("running without the person detector: {cause}");
+            regional.detector_failed(&cause);
+        }
+        None => {}
+    }
     let video = Arc::new(SenderStats::default());
     video.request(start);
     {
-        let video = Arc::clone(&video);
+        let (video, regional) = (Arc::clone(&video), Arc::clone(&regional));
         thread::spawn(move || {
-            supervise(&video.health, || sender::run(&sender, &video, &snapshots));
+            supervise(&video.health, || {
+                sender::run(&sender, &video, &regional, &snapshots)
+            });
         });
     }
     {
@@ -360,6 +441,8 @@ fn run(
     }
     let snapshot = || Metrics {
         video: video.snapshot(),
+        regional: regional.snapshot(),
+        process: process::snapshot(),
         mavlink: bridge.snapshot(),
         adapt: AdaptMetrics {
             state: adaptation.0.snapshot(),
@@ -378,6 +461,7 @@ fn run(
             retained: retained.as_deref(),
             clock: clock.as_deref(),
             bridge: &bridge,
+            ladder: &ladder,
         };
         hooks.answer(method, path)
     };
@@ -385,6 +469,32 @@ fn run(
     let route = |_: &str, _: &str| None;
     metrics::serve_with(metrics_addr, token.as_ref(), snapshot, route)
         .context("metrics endpoint stopped")
+}
+
+/// Loads the detector's model; the error is the cause the metrics show.
+fn load_detector(config: &DetectorConfig) -> Result<Detector, String> {
+    Detector::load(&config.model, config.input).map_err(|e| e.to_string())
+}
+
+/// Runs the detector on the newest frame the sender offers, over and over, and publishes the people
+/// it finds.
+fn find_people(regional: &Regional, mut detector: Detector) {
+    regional.detector_running();
+    loop {
+        let frame = regional.next_frame();
+        let started = Instant::now();
+        let found: Vec<NormRect> = detector
+            .people(
+                &frame.rgb,
+                frame.width,
+                frame.height,
+                regional.detector_min_score(),
+            )
+            .into_iter()
+            .map(|person| person.rect)
+            .collect();
+        regional.detected(&found, frame.at_ms, started.elapsed());
+    }
 }
 
 /// The probes and the control endpoint's challenges on the wire, per second: reserved in the uplink
@@ -487,6 +597,19 @@ fn load(path: &Path) -> Result<Config> {
             )
         })?),
     };
+    let region: RegionConfig = table
+        .remove("region")
+        .map(toml::Value::try_into)
+        .transpose()
+        .with_context(|| format!("{} has an invalid [region] table", path.display()))?
+        .unwrap_or_default();
+    if let Some(detector) = &region.detector {
+        detector
+            .validate()
+            .with_context(|| format!("{} has an invalid [region] table", path.display()))?;
+    }
+    let soften_factor = validate_soften_factor(region.soften_factor.unwrap_or(1))
+        .with_context(|| format!("{} has an invalid [region] table", path.display()))?;
     let sender: SenderConfig = table
         .try_into()
         .with_context(|| format!("{} is not a sender config", path.display()))?;
@@ -501,6 +624,8 @@ fn load(path: &Path) -> Result<Config> {
         debug_hooks,
         store,
         detail,
+        detector: region.detector,
+        soften_factor,
     })
 }
 
@@ -582,6 +707,10 @@ fn load_limits(path: &Path) -> Result<Limits> {
             .retrieval
             .validate()
             .with_context(|| format!("{} has invalid retrieval limits", path.display()))?,
+        region: limits
+            .region
+            .validate()
+            .with_context(|| format!("{} has invalid [region] limits", path.display()))?,
     })
 }
 
@@ -618,6 +747,42 @@ mod tests {
         let limits = load_limits(&testbed.join("limits.toml")).unwrap();
         limits.adapt.validate().unwrap();
         load_ladder(&testbed.join("ladder.toml")).unwrap();
+    }
+
+    #[test]
+    fn a_detector_input_outside_32_to_1280_is_refused() {
+        let base = config("deploy/vehicle/vehicle.toml");
+        for (input, accepted) in [(0, false), (31, false), (320, true), (5000, false)] {
+            let text = format!(
+                "{base}\n[region]\ndetector = {{ model = \"/m.onnx\", input = {input} }}\n"
+            );
+            assert_eq!(load_text(&text).is_ok(), accepted, "input {input}");
+        }
+    }
+
+    #[test]
+    fn soften_factor_is_off_by_default_and_refused_above_4() {
+        let base = config("deploy/vehicle/vehicle.toml");
+        for (table, accepted) in [
+            ("", true),
+            ("soften_factor = 2", true),
+            ("soften_factor = 5", false),
+            ("soften_factor = 0", false),
+        ] {
+            let text = format!("{base}\n[region]\n{table}\n");
+            assert_eq!(load_text(&text).is_ok(), accepted, "{table}");
+        }
+        assert_eq!(load_text(&base).unwrap().soften_factor, 1);
+    }
+
+    #[test]
+    fn a_missing_model_is_reported_with_its_path() {
+        let config = DetectorConfig {
+            model: PathBuf::from("/nonexistent/person.onnx"),
+            input: 320,
+        };
+        let cause = load_detector(&config).err().unwrap();
+        assert!(cause.contains("/nonexistent/person.onnx"), "{cause}");
     }
 
     #[cfg(feature = "testbed")]

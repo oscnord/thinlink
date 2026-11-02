@@ -189,6 +189,7 @@ impl Controller {
                 challenge: self.challenge,
                 kind,
                 mavlink: Some(encode_frame(&frame)),
+                region: None,
                 sent_unix_ms: 0,
                 sig: None,
             })

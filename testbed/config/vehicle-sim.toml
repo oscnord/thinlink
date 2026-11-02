@@ -23,6 +23,11 @@ max_age_s = 120
 min_free_bytes = 4194304
 gap_after_ms = 1500
 
+# Regional video (see vehicle.toml): off unless this is set.
+# [region]
+# soften_factor = 2
+# detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+
 [mavlink]
 autopilot = "tcpout:127.0.0.1:5760"
 relay = "10.77.0.1:14550"

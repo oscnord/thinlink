@@ -15,6 +15,8 @@ just demo-stop           # stop the camera, then the testbed
 
 `just demo` brings the testbed up with the vehicle taking its video from the camera ingest (`testbed/config/vehicle-ingest.toml`), applies the profile, starts the camera and waits for its first frame. It takes about a minute with built images. If anything fails after the camera started, it stops the camera again but leaves the testbed up (`just lab-down` or `just demo-stop` takes it down); otherwise the camera runs until `just demo-stop`. A process already using UDP 5700 on the Mac stops `just lab-up`, because the testbed cannot publish the port. A plain `just lab-up` afterwards goes back to the test pattern.
 
+`just regional=1 demo geo` also turns the person detector and softening (`soften_factor = 2`) on (`testbed/config/vehicle-ingest-regional.toml`): people the webcam sees are outlined in amber and kept sharp, the rest is softened when you box a region or a person is found. Draw a box in QGroundControl after `just take-control` (`docs/qgc.md`, "Regional video: drawing a box").
+
 ### Camera permission on macOS
 
 The first run asks whether the terminal app (the one `just` runs in) may use the camera. Say yes. If it was refused, or the prompt never appeared, the recipe reports that the camera delivered no frames, prints what ffmpeg said and where to allow it: System Settings, Privacy & Security, Camera, then your terminal app. It does not try to work around a refusal. Another app holding the camera can fail the same way.

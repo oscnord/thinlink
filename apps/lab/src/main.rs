@@ -16,7 +16,8 @@ use sat_teleop_lab::client::{self, AgentClient};
 use sat_teleop_lab::interface::Interfaces;
 use sat_teleop_lab::profile::{self, Profile};
 use sat_teleop_lab::{
-    adaptation, boot, control, ingest, mavlink, qgc_status, recording, retrieval, skeleton,
+    adaptation, boot, control, ingest, mavlink, qgc_status, recording, regional, retrieval,
+    skeleton,
 };
 use sat_teleop_policy::token::Token;
 
@@ -126,10 +127,14 @@ struct CheckArgs {
     /// control-freshness: the vehicle's control endpoint.
     #[arg(long, default_value = "10.77.0.2:7700")]
     vehicle_control: SocketAddr,
-    /// qgc-status, sim-flight: where the ground adapter sends this host its video output.
+    /// qgc-status, sim-flight, regional: where the ground adapter sends this host its video output.
     #[arg(long, default_value = "192.168.232.40:5602")]
     output_listen: SocketAddr,
-    /// recording, retrieval: the vehicle's snapshot directory as this host mounts it.
+    /// regional: the ladder rung (counted from the best, 0) the first two windows run at; the third
+    /// is the rung below.
+    #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=3))]
+    rung: u64,
+    /// recording, retrieval, regional: the vehicle's snapshot directory as this host mounts it.
     #[arg(long, default_value = "/snapshots")]
     snapshot_dir: PathBuf,
     /// retrieval: the relay's job API for the ground, and for the vehicle on the overlay.
@@ -153,6 +158,7 @@ enum Scenario {
     Recording,
     Retrieval,
     Ingest,
+    Regional,
 }
 
 impl Scenario {
@@ -170,6 +176,7 @@ impl Scenario {
             Self::Recording => "recording",
             Self::Retrieval => "retrieval",
             Self::Ingest => "ingest",
+            Self::Regional => "regional",
         }
     }
 }
@@ -364,6 +371,20 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
                 vehicle_metrics: args.vehicle_metrics.clone(),
             },
         ),
+        Scenario::Regional => {
+            let budgets = load_budgets()?;
+            let settings = regional::Settings {
+                output_listen: args.output_listen,
+                gcs_listen: args.gcs_listen,
+                rung: usize::try_from(args.rung).unwrap_or(0),
+                snapshot_dir: args.snapshot_dir.clone(),
+                warmup: Duration::from_secs(args.warmup_s),
+                duration: Duration::from_secs(args.duration_s),
+                vehicle_metrics: args.vehicle_metrics.clone(),
+                ground_metrics: args.ground_metrics.clone(),
+            };
+            regional::run(&agent, &text, &settings, &budgets, profile_name)
+        }
         Scenario::Retrieval => {
             let budgets = load_budgets()?;
             let settings = retrieval::Settings {

@@ -17,6 +17,7 @@ pub mod ping;
 pub mod profile;
 pub mod qgc_status;
 pub mod recording;
+pub mod regional;
 pub mod retrieval;
 pub mod skeleton;
 pub mod tc;

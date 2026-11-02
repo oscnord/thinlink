@@ -23,6 +23,10 @@ compose_down := engine + " compose -p sat-teleop -f testbed/compose.yml" + engin
 # Builds and `check` run in a cgroup capped below the shared Podman machine's memory, so running out of
 # memory kills the build, not another project's containers. BuildKit has no build memory limit. The
 # defaults fit a 2 GiB machine; a larger one can raise them (BUILD_MEMORY=4g BUILD_JOBS=4).
+# `just regional=1 sim-up` or `just regional=1 demo` (or REGIONAL=1) runs the vehicle with the person
+# detector on (vehicle-sim-regional.toml, vehicle-ingest-regional.toml).
+regional := env_var_or_default("REGIONAL", "")
+regional_suffix := if regional == "1" { "-regional" } else { "" }
 build_mem := env_var_or_default("BUILD_MEMORY", "1g")
 build_jobs := env_var_or_default("BUILD_JOBS", "1")
 # Each checkout (the main one, each worktree) builds into its own cargo target directory, named after
@@ -103,6 +107,20 @@ sim-image: vm-memory
 
 fmt:
     cargo fmt --all
+
+# The person detector's model (NanoDet-Plus-m 320, Apache-2.0) in models/person.onnx, pinned by SHA-256.
+# An existing file is only checked; a mismatch fails and removes nothing.
+model_url := "https://huggingface.co/nouman/nanodet-plus-onnx/resolve/1c71d967632f4b5cdfbc08326328df6def7a6ecc/plus-m-320/nanodet-plus-m_320.onnx"
+model_sha256 := "4f12723cce3d48e47ca92cb925ba74d97a965c069208edca660bbb9f7ce2c610"
+model:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p models
+    if [ ! -f models/person.onnx ]; then
+        curl -fsSL -o models/person.onnx.part "{{model_url}}"
+        mv models/person.onnx.part models/person.onnx
+    fi
+    echo "{{model_sha256}}  models/person.onnx" | shasum -a 256 -c -
 
 # WireGuard key pairs and configs in testbed/secrets/ (gitignored). Existing keys are kept.
 lab-keys: (image "runtime")
@@ -348,7 +366,7 @@ demo profile="lan" camera=env_var_or_default("CAMERA", "0"):
     [[ {{camera}} =~ ^[0-9]+$ ]] || { echo "demo: the camera is an index, see just demo-cameras" >&2; exit 1; }
     [ -f testbed/profiles/{{profile}}.toml ] || { echo "demo: no profile testbed/profiles/{{profile}}.toml" >&2; exit 1; }
     just demo-camera-stop
-    VEHICLE_CONFIG=vehicle-ingest.toml just lab-up
+    VEHICLE_CONFIG=vehicle-ingest{{regional_suffix}}.toml just lab-up
     just impair {{profile}}
     mkdir -p .cache
     : > {{camera_log}}
@@ -458,7 +476,7 @@ video-hook action:
 # The simulated flight: the testbed with an ArduCopter flown in Gazebo, its rendered camera as the
 # vehicle's video. Builds first, so the testbed goes down first. `just lab-up` brings the default
 # rover testbed back. docs/simulation.md.
-sim-up config="vehicle-sim.toml":
+sim-up config=("vehicle-sim" + regional_suffix + ".toml"):
     just lab-down
     just sim-image
     SIM=1 VEHICLE_CONFIG={{config}} just lab-up

@@ -208,6 +208,25 @@ Failures. An error in the snapshot branch (`jpegenc` or the appsink) propagates 
 
 On a Pi, `jpegenc` at full resolution once a second runs next to the H.264 encoder and costs CPU there. `docs/measurement.md` records its cost in the testbed, which is not a Pi; it is unmeasured on one (`docs/pi.md`, "Snapshot cost"). The branch holds at most one camera buffer: a leaky queue of one, and a copy of the one frame a second that is kept.
 
+## Regional video
+
+The link carries a fixed number of bits a second, so the picture is spent where it matters: the part the pilot boxed in QGroundControl, and any person a small detector finds, stay sharp, and the rest is softened before it is encoded. The softened area costs the encoder fewer bits, which the sharp regions get.
+
+```text
+QGC: TRACK_RECTANGLE to camera 100 -> ground adapter -> signed Region envelope (own sequence counter, lease and challenge as liveness)
+                                                              | overlay
+vehicle control loop: sets the pilot's box in RegionCell (never forwarded to the autopilot)
+                                                              |
+sender: source -> tee -> scale/rate -> I420 rung -> soften outside RegionCell::regions(), outline detections -> stamp -> encoder
+                     \-> (every 500 ms) scale to 320x320 RGB -> detector thread (vehicle app) -> RegionCell detections
+```
+
+- Pilot's box. QGroundControl asks the adapter's camera for a tracked rectangle; the adapter sends it to the vehicle every 500 ms in a `Kind::Region` envelope (`docs/qgc.md`). The vehicle answers with the box the sender actually keeps sharp, or none: a box too large (over `max_area_percent` of the picture), crowded out by detections, older than `pilot_ttl_ms` or with softening off (`soften_factor` 1, the default) is not confirmed, and the tracking status stays idle. The box is dropped at once when the lease is released, expires or is granted again.
+- Detector. Off unless the vehicle config has `[region] detector`; it works with softening off, when it only outlines the people. NanoDet-Plus-m 320 through `tract-onnx` runs at `detector_fps` on frames from a third branch of the tee that is leaky and holds one buffer, so it can only drop its own frames. Its people count as regions for `detection_ttl_ms`; the sender outlines them in amber. A model that does not load shows as `detector.state` `failed: <cause>` and the video is unaffected.
+- Softening. Off by default; `[region] soften_factor` of the vehicle config turns it on (2 to 4). Blocks of `soften_factor` x `soften_factor` luma pixels (half of it on chroma) outside every region are replaced by their average, on the rung-sized frame, before the stamp is drawn: the stamp, and so the age, is exact. A region keeps its place across rung changes because it is a fraction of the picture.
+- Bound. Softening takes detail away and adds none; at most `max_regions` regions are kept, and when they cover more than `max_area_percent` of the picture nothing is softened. A region envelope carries no MAVLink frame (one that does is refused `not_allowlisted`) and nothing in this feature adds a path to the autopilot. Cost on emulated hardware (`docs/measurement.md`, "Regional video check"): softening a frame took 0.8 to 2.0 ms at p95, one detector run 29.4 ms at p95 at the Pi 4's limits, and the vehicle process used 4.8 to 6.6 % of a host core with the box tracked.
+- Measured: cost is small (above), but on the lab's test card the box did not gain: its SSIM changed by -0.016 to +0.003 pilot only, and the outside scored 0.005 to 0.042 below the plain picture one rung down at the top rung (`docs/measurement.md`, "Regional video check"). The V4L2 hardware encoder has no testbed path, so its gain is unmeasured.
+
 ## Deployments
 
 Real deployment (`docs/deploy.md`; unverified on hardware): the relay is a public VPS. Vehicle and ground both initiate outbound WireGuard connections to it. The vehicle is a native binary under systemd, the relay's three processes run in containers with host networking, and the ground adapter runs in a container next to QGroundControl.

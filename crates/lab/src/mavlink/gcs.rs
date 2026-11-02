@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 
 use mavlink::MavHeader;
 use mavlink::dialects::ardupilotmega::{
-    CameraCapFlags, HEARTBEAT_DATA, MavAutopilot, MavCmd, MavMessage, MavMissionResult,
-    MavModeFlag, MavResult, MavState, MavType, VideoStreamStatusFlags, VideoStreamType,
+    CameraCapFlags, CameraTrackingStatusFlags, HEARTBEAT_DATA, MavAutopilot, MavCmd, MavMessage,
+    MavMissionResult, MavModeFlag, MavResult, MavState, MavType, VideoStreamStatusFlags,
+    VideoStreamType,
 };
 use mavlink::types::CharArray;
 
@@ -85,6 +86,11 @@ pub(crate) enum Kind {
     },
     VideoStreamStatus {
         thermal: bool,
+    },
+    /// `CAMERA_TRACKING_IMAGE_STATUS`: whether a box is tracked, and its corners (x0, y0, x1, y1).
+    TrackingStatus {
+        active: bool,
+        rect: [f32; 4],
     },
     Other,
 }
@@ -297,6 +303,12 @@ fn kind(message: &MavMessage) -> Kind {
         },
         MavMessage::VIDEO_STREAM_STATUS(v) => Kind::VideoStreamStatus {
             thermal: v.flags.contains(THERMAL),
+        },
+        MavMessage::CAMERA_TRACKING_IMAGE_STATUS(t) => Kind::TrackingStatus {
+            active: t
+                .tracking_status
+                .contains(CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_ACTIVE),
+            rect: [t.rec_top_x, t.rec_top_y, t.rec_bottom_x, t.rec_bottom_y],
         },
         _ => Kind::Other,
     }

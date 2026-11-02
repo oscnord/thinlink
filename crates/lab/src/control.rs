@@ -279,7 +279,7 @@ struct Handover {
     ground: Option<LeaseStatus>,
     /// The vehicle's answer to `checks` asking again: granted, or denied for a reason.
     asked: Option<Result<(), Refusal>>,
-    former_holder: Option<Case>,
+    former_holder: Vec<Case>,
 }
 
 /// The adapter asks for the lease once the vehicle shows `checks`' release landed (a release has
@@ -300,7 +300,7 @@ fn hand_over(parts: &mut Parts) -> Handover {
 }
 
 /// `POST /lease` on the adapter: its lease afterwards, if it took it.
-fn take_lease(ground: &AgentClient) -> Option<LeaseStatus> {
+pub(crate) fn take_lease(ground: &AgentClient) -> Option<LeaseStatus> {
     let body = ground.post("/lease", "").ok()?;
     let status: Status = serde_json::from_str(&body).ok()?;
     Some(status.lease)

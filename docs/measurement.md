@@ -215,6 +215,31 @@ The settling deadline of 6 s: the vehicle sees a rising queue about a round trip
 
 The 150 ms margin of `step_<n>_age_recovered` is the controller's own queue threshold: older than that, a frame waited in a queue. The phase's final level, not the base, is the reference, because a lower rate also serializes each frame more slowly; `age_over_base_max_ms` shows how much that is.
 
+## Regional video check
+
+`lab check regional` (`docs/testbed.md`) scores the ground's output against the test card in three windows. The card (`crates/lab/src/regional/card.rs`) is 1280x720 on a plain background with a mild 4x4-cell texture. Inside the tracked box: a landing-pad mark and a person-sized figure. Outside it: a second figure, thin vertical lines 1, 2 and 4 px wide in dark and light, and 8 px checkerboard blocks at a high and a low contrast. It is rendered by the lab, written as a one-frame y4m clip to the vehicle's volume and held by the vehicle's `still` file source; the reference is the same bytes scaled by `videoscale` to the output's 640x360, like the video. SSIM is computed on luma in 8x8 windows every 4 pixels; rows under the vehicle's stamp and over the ground's label are left out, and so are windows within 16 pixels of the box's edge.
+
+| Metric | Definition |
+|---|---|
+| `region_ssim_with`, `region_ssim_without` | Mean SSIM of the windows inside the tracked box (35-65 % of the width, 30-70 % of the height) with the box tracked and after tracking stopped, at the top rung (1280x720, 15 fps, 1200 kbit/s). |
+| `region_ssim_gain` | The first minus the second. |
+| `outside_ssim_vs_lower_rung` | Mean SSIM outside the box with the box tracked, minus the same for the plain picture at the rung below (640x360, 15 fps, 500 kbit/s). |
+| `test_object_contrast_ratio` | Fine-detail contrast kept outside the box: the sum of the received windows' standard deviations over the reference's, with the box tracked, divided by the same for the rung below. |
+| `vehicle_cpu_percent`, `vehicle_rss_mb`, `soften_ms_p95`, `detector_ms_p95` | The vehicle process's CPU time over the first window as a share of one host core, its resident memory, and the p95 of softening a frame and of one detector run. |
+
+Emulated hardware, `geo`, x264, one run each (`perf/budgets.toml`, `regional.geo`, calibration). The gain is graded only from a pilot-only run: with the detector on its amber outlines are drawn inside the box and count against the card, so the check leaves `region_ssim_gain` incomplete then (the detector-on run is for CPU and memory). `--rung 2` pins the first two windows to rung 2 (640x360, 8 fps, 250 kbit/s) through the vehicle's test hook; the window one rung down is rung 3 (480x270, 5 fps, 120 kbit/s), whose stamp the encoder blurs past reading, so it scored no frames.
+
+| Run | Board, rung | Box SSIM with / without (gain) | Outside SSIM with / without / one rung down | Contrast kept with / without / one rung down | CPU, memory | Soften p95 | Detector p95 |
+|---|---|---|---|---|---|---|---|
+| 1793659443040 | Pi 4 limits, pilot only, rung 0 | 0.892 / 0.893 (-0.001) | 0.742 / 0.749 / 0.784 | 0.815 / 0.872 / 0.913 | n/a | n/a | none |
+| 1793659540404 | Pi 4 limits, pilot only, rung 2 | 0.894 / 0.891 (+0.003) | 0.744 / 0.749 / not scored | 0.825 / 0.868 / not scored | n/a | n/a | none |
+| 1793658108235 | Pi 4 limits, detector on, rung 0 | 0.896 / 0.953 (-0.057, outlines in the box) | 0.747 / 0.801 / 0.783 | 0.801 / 0.951 / 0.887 | 6.6 %, 67 MB | 0.8 ms | 29.4 ms |
+| 1793658230853 | Pi Zero 2 W limits, pilot only, rung 0 | 0.933 / 0.949 (-0.016) | 0.778 / 0.804 / 0.782 | 0.918 / 0.986 / 0.907 | 4.8 %, 38 MB | 2.0 ms | none |
+
+x264's adaptive quantization is not a cause: the sender's `speed-preset=ultrafast` already sets `aq-mode=0`, and every `x264 options:` line of the vehicle's log shows `aq=0`.
+
+What they show: on this card the top rung is not starved (the plain picture scores 0.89 to 0.95 inside the box), so there is no spare quality for softening to move into the box. Tracking a box changed the SSIM inside it by between -0.016 and +0.003 pilot-only (no gain), and lowered the SSIM outside it by 0.005 to 0.007 against the same rung plain; at rung 0 the outside with regional video was 0.005 to 0.042 below the plain picture one rung down and the fine-detail contrast kept was 0.89 to 1.01 of the rung below's. So `region_ssim_gain` is not above 0 in any run, and `outside_ssim_vs_lower_rung` fails at rung 0. The cause was not found; no threshold or softening setting was changed. The vehicle's frame age with the box was 365 to 455 ms at p95, within the skeleton's `geo` budget plus the output's hops. Not measured: rung 2 against the rung below, the V4L2 hardware encoder (the testbed has no path to one), people in the picture (the card's figures are shapes, so the detector found nobody and its cost, not its accuracy, is measured), a moving picture and a real Pi.
+
 ## Recording check
 
 `lab check recording --profile lan` runs in `checks`, which mounts the vehicle's snapshot volume and reads the store's limits from the vehicle's config (`docs/testbed.md`, "Recording check"):

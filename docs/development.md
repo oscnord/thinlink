@@ -10,6 +10,7 @@ Toolchain, builds, gates and the `just` recipes. The plan is [issue #2](https://
 | `crates/media/` | GStreamer pipelines: sender (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder), relay ingress, receivers and the labelled ground output |
 | `crates/control/` | MAVLink: vehicle bridge (SITL over TCP or a flight controller over serial), SITL identification and the command gate, telemetry budget, the ground's camera component |
 | `crates/detail/` | Retained snapshots: the vehicle's store, the relay's job API, retrieval at low priority |
+| `crates/detect/` | The person detector: a small ONNX model run with `tract-onnx` (pure Rust), fetched by `just model` |
 | `crates/lab/`, `apps/lab/` | The testbed runner: impairment profiles, the router agent and `lab check` |
 | `apps/vehicle/`, `apps/relay/`, `apps/ground/` | `sat-teleop-vehicle`, `sat-teleop-relay` and `sat-teleop-ground` |
 | `xtask/` | `cargo xtask layers` and `cargo xtask fixtures` |
@@ -45,7 +46,7 @@ Do not rewrite your global toolchain setup just for this project.
 
 ## Native and container builds
 
-Pure crates (`sat-teleop-policy`, `sat-teleop-control`, `sat-teleop-xtask`, and other crates without native dependencies) build and test natively. Crates that link GStreamer (`sat-teleop-media`, `sat-teleop-lab`, whose skeleton check runs `sat-teleop-media`'s headless receiver, and the applications) build only in the build container, so the host never needs GStreamer.
+Pure crates (`sat-teleop-policy`, `sat-teleop-control`, `sat-teleop-detect`, `sat-teleop-xtask`, and other crates without native dependencies) build and test natively. Crates that link GStreamer (`sat-teleop-media`, `sat-teleop-lab`, whose skeleton check runs `sat-teleop-media`'s headless receiver, and the applications) build only in the build container, so the host never needs GStreamer.
 
 Recipes:
 

@@ -20,11 +20,13 @@ use serde::{Deserialize, Serialize};
 
 use sat_teleop_policy::clock::{self, Reading};
 use sat_teleop_policy::control::Kind as Class;
+use sat_teleop_policy::region::NormRect;
 
-use super::Station;
+use super::{Camera, Station};
 use crate::auth::Signer;
 use crate::envelope::{
-    self, ControlLimits, Envelope, Kind, Outcome, Refusal, ToGround, ToVehicle, encode_frame,
+    self, ControlLimits, Envelope, Kind, Outcome, Refusal, TRACKING_TICK, ToGround, ToVehicle,
+    encode_frame,
 };
 use crate::frame::{Frame, MAX_DATAGRAM};
 use crate::gate::CommandKey;
@@ -103,6 +105,7 @@ pub struct Wrapped {
     pub liveness: u64,
     pub continuous: u64,
     pub discrete: u64,
+    pub region: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize)]
@@ -130,6 +133,8 @@ pub struct Controller {
     /// The control socket, once `wg0` is up.
     socket: OnceLock<UdpSocket>,
     state: Mutex<State>,
+    /// The camera component whose tracking this sends to the vehicle and whose status it feeds.
+    camera: OnceLock<Arc<Camera>>,
     /// Signalled when a lease request is answered.
     answered: Condvar,
     link: Link,
@@ -180,6 +185,7 @@ struct NextSeq {
     liveness: u64,
     continuous: u64,
     discrete: u64,
+    region: u64,
 }
 
 impl NextSeq {
@@ -188,6 +194,7 @@ impl NextSeq {
             Class::Liveness => &mut self.liveness,
             Class::Continuous => &mut self.continuous,
             Class::Discrete => &mut self.discrete,
+            Class::Region => &mut self.region,
         };
         *last += 1;
         *last
@@ -238,6 +245,7 @@ impl Controller {
             signer,
             socket: OnceLock::new(),
             state: Mutex::new(State::default()),
+            camera: OnceLock::new(),
             answered: Condvar::new(),
             link: Link::default(),
         }
@@ -351,6 +359,35 @@ impl Controller {
         }
     }
 
+    /// Sends the pilot's box to the vehicle whenever it changes and every `refresh_every` while
+    /// tracking, and a clear when tracking stops, until the process ends. Nothing is sent without
+    /// the lease; the next tick tries again.
+    pub(super) fn keep_region(&self, camera: &Arc<Camera>) {
+        let _ = self.camera.set(Arc::clone(camera));
+        let every_ms = u64::try_from(camera.refresh_every().as_millis()).unwrap_or(u64::MAX);
+        let started = Instant::now();
+        let mut sent: Option<NormRect> = None;
+        let mut last_sent_ms: Option<u64> = None;
+        loop {
+            let wanted = camera.tracking();
+            let now_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+            if region_needed(wanted, sent, last_sent_ms, now_ms, every_ms)
+                && self.send_region(wanted)
+            {
+                (sent, last_sent_ms) = (wanted, Some(now_ms));
+            }
+            thread::sleep(TRACKING_TICK);
+        }
+    }
+
+    /// Sends `region` (none clears it) in a region envelope; false without the lease and a fresh
+    /// challenge.
+    fn send_region(&self, region: Option<NormRect>) -> bool {
+        let mut state = self.lock();
+        state.expire(self.limits);
+        state.fresh(self.limits) && self.wrap(&mut state, Kind::Region, None, region)
+    }
+
     /// Binds the control socket and handles the vehicle's messages until the process ends.
     pub(super) fn serve(&self, stations: &[Arc<Station>]) {
         let socket = self
@@ -421,9 +458,9 @@ impl Controller {
             (Class::Discrete, Some(ack), command) => Kind::Discrete {
                 txn: state.txn(station, command, ack, confirmation(message), window),
             },
-            (Class::Discrete, None, _) => return None,
+            (Class::Discrete | Class::Region, ..) => return None,
         };
-        if self.wrap(&mut state, kind, Some(frame)) || class != Class::Discrete {
+        if self.wrap(&mut state, kind, Some(frame), None) || class != Class::Discrete {
             return None;
         }
         state.answer(ack, MavResult::MAV_RESULT_DENIED)
@@ -481,6 +518,11 @@ impl Controller {
                     state.clock_rtt = state.clock_sent.map(|sent| sent.elapsed());
                 }
             }
+            ToGround::Region { region } => {
+                if let Some(camera) = self.camera.get() {
+                    camera.applied(region, Instant::now());
+                }
+            }
             ToGround::Rejected { reason, .. } => state.vehicle_rejected(reason),
         }
     }
@@ -500,12 +542,19 @@ impl Controller {
         held.heard_at = Instant::now();
         let idle = held.last_sent.elapsed() >= ms(self.limits.liveness_interval_ms);
         if idle {
-            self.wrap(state, Kind::Liveness, None);
+            self.wrap(state, Kind::Liveness, None, None);
         }
     }
 
-    /// Sends `frame` (or, for liveness, nothing) in the next envelope of the held lease.
-    fn wrap(&self, state: &mut State, kind: Kind, frame: Option<&Frame>) -> bool {
+    /// Sends `frame` (or, for liveness and region envelopes, nothing) and `region` in the next
+    /// envelope of the held lease.
+    fn wrap(
+        &self,
+        state: &mut State,
+        kind: Kind,
+        frame: Option<&Frame>,
+        region: Option<NormRect>,
+    ) -> bool {
         let Lease::Held(held) = &mut state.lease else {
             return false;
         };
@@ -519,6 +568,7 @@ impl Controller {
             challenge,
             kind,
             mavlink: frame.map(encode_frame),
+            region,
             sent_unix_ms: unix_ms(),
             sig: None,
         });
@@ -534,6 +584,7 @@ impl Controller {
             (Kind::Liveness, Some(_)) => &mut w.liveness,
             (Kind::Continuous, _) => &mut w.continuous,
             (Kind::Discrete { .. }, _) => &mut w.discrete,
+            (Kind::Region, _) => &mut w.region,
         };
         *counter += 1;
         true
@@ -824,6 +875,23 @@ fn resent(
         .map(|s| s.txn)
 }
 
+/// Whether the box must go to the vehicle now: it changed (or tracking stopped), or it is the one
+/// being kept and `every_ms` passed since the last send.
+fn region_needed(
+    wanted: Option<NormRect>,
+    sent: Option<NormRect>,
+    last_sent_ms: Option<u64>,
+    now_ms: u64,
+    every_ms: u64,
+) -> bool {
+    wanted != sent || (wanted.is_some() && region_due(last_sent_ms, now_ms, every_ms))
+}
+
+/// Whether a refresh is due: at once when none was sent, then every `every_ms`.
+fn region_due(last_sent_ms: Option<u64>, now_ms: u64, every_ms: u64) -> bool {
+    last_sent_ms.is_none_or(|last| now_ms.saturating_sub(last) >= every_ms)
+}
+
 #[cfg(test)]
 mod tests {
     use mavlink::dialects::ardupilotmega::{COMMAND_LONG_DATA, MISSION_COUNT_DATA};
@@ -839,6 +907,28 @@ mod tests {
             confirmation,
             ..COMMAND_LONG_DATA::default()
         })
+    }
+
+    #[test]
+    fn the_box_goes_when_it_changes_stops_or_is_due() {
+        let a = NormRect::new(0.2, 0.1, 0.6, 0.7);
+        let b = NormRect::new(0.1, 0.1, 0.3, 0.3);
+        // (wanted, sent, last sent, now, needed)
+        let cases = [
+            (a, None, None, 0, true),
+            (a, a, Some(0), 499, false),
+            (a, a, Some(0), 500, true),
+            (b, a, Some(0), 10, true),
+            (None, a, Some(0), 10, true),
+            (None, None, Some(0), 10_000, false),
+        ];
+        for (wanted, sent, last, now, needed) in cases {
+            assert_eq!(
+                region_needed(wanted, sent, last, now, 500),
+                needed,
+                "{wanted:?} after {sent:?} at {now}"
+            );
+        }
     }
 
     #[test]

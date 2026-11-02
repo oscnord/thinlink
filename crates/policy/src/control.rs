@@ -101,6 +101,8 @@ pub enum Kind {
     Liveness,
     Continuous,
     Discrete,
+    /// The pilot's region for the picture: judged like liveness, never carries a command.
+    Region,
 }
 
 /// The last admitted sequence number of each kind.
@@ -109,6 +111,7 @@ struct LastSeq {
     liveness: Option<Seq>,
     continuous: Option<Seq>,
     discrete: Option<Seq>,
+    region: Option<Seq>,
 }
 
 impl LastSeq {
@@ -117,6 +120,7 @@ impl LastSeq {
             Kind::Liveness => &mut self.liveness,
             Kind::Continuous => &mut self.continuous,
             Kind::Discrete => &mut self.discrete,
+            Kind::Region => &mut self.region,
         }
     }
 }

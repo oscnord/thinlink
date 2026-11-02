@@ -130,3 +130,24 @@ capacity_hold_max_ms = 300000
 # fitted to it. 0 switches retrieval off. A chunk is half a second of it, so 4000 B/s sends chunks
 # of 2000 bytes.
 allowance_bytes_per_s = 4000
+
+[region]
+# Regional video: the picture outside the regions that matter can be softened before it is encoded
+# (`soften_factor` in [region] of the vehicle config; off unless it is 2 to 4).
+# The ground reads pilot_refresh_ms and pilot_ttl_ms, the vehicle's sender the whole table.
+# While tracking, the ground sends the pilot's box this often (a GEO round trip is about 600 ms, so
+# one lost refresh does not drop the box).
+pilot_refresh_ms = 500
+# The vehicle drops the pilot's box this long after its last refresh (six refreshes), and the ground
+# stops reporting it active after as long without the vehicle's confirmation.
+pilot_ttl_ms = 3000
+# A detected person counts as a region this long after the frame it was found in.
+detection_ttl_ms = 1000
+# At most this many regions are kept sharp, the pilot's box first.
+max_regions = 4
+# When the regions together cover more than this share of the picture, nothing is softened:
+# softening the rest would gain nothing.
+max_area_percent = 50
+# The detector's rate and the lowest score that counts as a person.
+detector_fps = 2
+detector_min_score = 0.4

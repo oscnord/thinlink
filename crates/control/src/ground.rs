@@ -31,6 +31,8 @@ use crate::stats::{DropReason, Flow, FlowCounts, Link, LinkState};
 use crate::{ControlError, bind_overlay};
 
 const RECV_ERROR_PAUSE: Duration = Duration::from_millis(100);
+/// The camera's tracking status is due this often at most.
+const STATUS_TICK: Duration = Duration::from_millis(50);
 /// How often the vehicle is asked for its clock bound: well inside the 15 s a reading lives.
 const CLOCK_QUERY_EVERY: Duration = Duration::from_secs(2);
 /// How often the sum of the two bounds is worked out again for the video output: a bound that
@@ -293,6 +295,14 @@ pub fn run(
             );
         });
     }
+    if let Some(camera) = camera {
+        {
+            let (controller, camera) = (Arc::clone(controller), Arc::clone(camera));
+            thread::spawn(move || controller.keep_region(&camera));
+        }
+        let (camera, stations) = (Arc::clone(camera), stations.clone());
+        thread::spawn(move || send_tracking_status(&camera, &stations));
+    }
     relay_to_stations(
         &overlay,
         config.relay,
@@ -301,6 +311,18 @@ pub fn run(
         camera.map(Arc::as_ref),
     );
     Ok(())
+}
+
+/// Sends the camera's tracking status to every station at the interval it asked for.
+fn send_tracking_status(camera: &Camera, stations: &[Arc<Station>]) {
+    loop {
+        if let Some(status) = camera.status_frame(Instant::now()) {
+            for station in stations {
+                let _ = station.socket.send_to(&status, station.address);
+            }
+        }
+        thread::sleep(STATUS_TICK);
+    }
 }
 
 /// Telemetry from mavlink-router to every ground station, each vehicle heartbeat followed by the

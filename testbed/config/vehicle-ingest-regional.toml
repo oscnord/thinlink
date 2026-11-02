@@ -1,0 +1,49 @@
+# The same companion with its video from an external camera (just demo, just ingest-check): the
+# Mac's webcam, or the feeder container, sending RTP/H.264 to the ingest port (docs/demo.md).
+# Everything else is as in vehicle.toml.
+destination = "10.77.0.1:5004"
+feedback = "10.77.0.1:5006"
+debug_hooks = true
+detail = "http://10.77.0.1:8080"
+
+[source]
+kind = "ingest"
+listen = "192.168.234.10:5700"
+# Datagrams from any other address are dropped and counted. A Podman machine's gateway to the Mac
+# (gvproxy, 192.168.127.1) is the address the Mac's camera arrives from through the published
+# port; a Linux host arrives from the ingest network's gateway, 192.168.234.1; the feeder container
+# is 192.168.234.5.
+from = ["192.168.127.1", "192.168.234.1", "192.168.234.5"]
+
+[snapshot]
+fps = 1
+quality = 90
+
+[store]
+dir = "/snapshots"
+max_bytes = 524288
+max_age_s = 120
+min_free_bytes = 4194304
+gap_after_ms = 1500
+
+# Regional video: the picture outside the pilot's box and the people found is softened in blocks of
+# this many pixels on a side (2 to 4); without it (1) nothing is softened and the pilot's box is not
+# kept. The limits (how long a region lasts, the detector's rate and score) are [region] of limits.toml.
+[region]
+soften_factor = 2
+detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+
+[mavlink]
+autopilot = "tcpout:127.0.0.1:5760"
+relay = "10.77.0.1:14550"
+control = "10.77.0.2:7700"
+# This vehicle's name. Every signed control message is made for it, so one signed for another vehicle
+# is refused; the ground adapter's config (testbed/config/ground.toml) names the same one.
+vehicle_id = "testbed"
+controllers = [
+    { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
+    { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
+]
+# The testbed's containers read one kernel clock, so its bound is 0 (docs/measurement.md, "Clock
+# assumption"). A vehicle on its own clock says "chrony".
+clock = "shared"

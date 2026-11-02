@@ -67,7 +67,7 @@ fn registry(name: &str) -> Option<Layer> {
     match name {
         "sat-teleop-policy" => Some(Layer::Policy),
         "sat-teleop-media" => Some(Layer::Media),
-        "sat-teleop-control" | "sat-teleop-detail" => Some(Layer::Sibling),
+        "sat-teleop-control" | "sat-teleop-detail" | "sat-teleop-detect" => Some(Layer::Sibling),
         "sat-teleop-lab" => Some(Layer::Lab),
         "sat-teleop-testkit" => Some(Layer::Testkit),
         "sat-teleop-vehicle" | "sat-teleop-relay" | "sat-teleop-ground" | "sat-teleop-lab-cli" => {

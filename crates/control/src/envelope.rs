@@ -12,6 +12,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use sat_teleop_policy::control::{self as policy, Limits, Reason};
+use sat_teleop_policy::region::NormRect;
 
 use crate::ControlError;
 use crate::frame::{Frame, datagram_frames};
@@ -25,6 +26,8 @@ pub const REFRESH_EVERY: Duration = Duration::from_millis(200);
 /// The vehicle's control endpoint looks at its timers at least this often: the granularity of its
 /// challenges and refreshes.
 pub const TICK: Duration = Duration::from_millis(20);
+/// The ground looks at what the stations asked to track, and sends the box, this often.
+pub const TRACKING_TICK: Duration = Duration::from_millis(100);
 /// Bounds every lifetime: a stale command must die within seconds, not minutes.
 const MAX_LIFETIME_MS: u64 = 60_000;
 
@@ -64,6 +67,9 @@ pub struct Envelope {
     /// One `MAVLink` 2 frame, base64. A liveness envelope without one only keeps the lease.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mavlink: Option<String>,
+    /// A `Kind::Region` envelope's box; none clears it. Covered by the signature like every field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<NormRect>,
     /// The controller's wall clock when it sent the envelope. Measurement only, never freshness.
     pub sent_unix_ms: u64,
     /// The controller's Ed25519 signature over every other field (`auth`), base64.
@@ -80,6 +86,8 @@ pub enum Kind {
     Continuous,
     /// A command run at most once per transaction id.
     Discrete { txn: u64 },
+    /// The pilot's box on the picture: carries no `MAVLink`, never reaches the autopilot.
+    Region,
 }
 
 impl From<Kind> for policy::Kind {
@@ -88,6 +96,7 @@ impl From<Kind> for policy::Kind {
             Kind::Liveness => Self::Liveness,
             Kind::Continuous => Self::Continuous,
             Kind::Discrete { .. } => Self::Discrete,
+            Kind::Region => Self::Region,
         }
     }
 }
@@ -121,7 +130,12 @@ pub enum ToGround {
         nonce: u64,
         bound_ms: Option<u64>,
     },
-    /// A refused liveness or continuous envelope, lease release or unreadable datagram; `seq` when
+    /// What the vehicle now applies as the pilot's box, `None` when it has none: the answer to every
+    /// accepted region envelope, and sent whenever the box is cleared.
+    Region {
+        region: Option<NormRect>,
+    },
+    /// A refused liveness, continuous or region envelope, lease release or unreadable datagram; `seq` when
     /// it could be read.
     Rejected {
         seq: Option<u64>,
@@ -343,6 +357,38 @@ impl ControlLimits {
             challenge_ms: self.challenge_lifetime_ms,
             setpoint_ms: self.setpoint_lifetime_ms,
             lease_ms: self.lease_lifetime_ms,
+        }
+    }
+}
+
+/// What the ground reads of `[region]` in `testbed/limits.toml`: how often the pilot's box is sent
+/// while tracking, and how long a box the vehicle confirmed counts as applied. The vehicle's
+/// sender reads the rest of the table.
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct TrackingLimits {
+    pub pilot_refresh_ms: u64,
+    pub pilot_ttl_ms: u64,
+}
+
+impl TrackingLimits {
+    pub fn validate(self) -> Result<Self, ControlError> {
+        let rules = [
+            (
+                self.pilot_refresh_ms >= duration_ms(TRACKING_TICK),
+                "pilot_refresh_ms must be at least the 100 ms tracking tick",
+            ),
+            (
+                self.pilot_ttl_ms >= self.pilot_refresh_ms.saturating_mul(2),
+                "pilot_ttl_ms must cover two refreshes",
+            ),
+            (
+                self.pilot_ttl_ms <= MAX_LIFETIME_MS,
+                "pilot_ttl_ms must be at most 60000 ms",
+            ),
+        ];
+        match rules.iter().find(|(holds, _)| !holds) {
+            Some((_, rule)) => Err(ControlError::Limits(rule)),
+            None => Ok(self),
         }
     }
 }

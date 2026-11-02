@@ -16,6 +16,7 @@ use serde::Serialize;
 use sat_teleop_policy::control::{
     Admitted, ChallengeToken, Epoch, Header, LeaseId, LeaseState, PeerId, Seq, Txn, TxnId,
 };
+use sat_teleop_policy::region::{NormRect, RegionCell, Timed};
 
 use super::{ControllerConfig, SitlWriter, VehicleConfig, write_to_sitl};
 use crate::auth::{VehicleId, Verifier};
@@ -39,6 +40,8 @@ pub struct ControlStats {
     pub link: Link,
     /// Frames from envelopes and refreshes written to SITL; receive errors of the control socket.
     pub sitl: Flow,
+    /// The pilot's box, set by `Kind::Region` envelopes; the sender reads it. Never forwarded.
+    pub region: RegionCell,
     counts: Mutex<ControlCounts>,
     keys: Mutex<Keys>,
     real: Mutex<Real>,
@@ -154,6 +157,8 @@ pub struct Applied {
     pub liveness: u64,
     pub continuous: u64,
     pub discrete: u64,
+    /// Region envelopes that set or cleared the pilot's box: nothing of them reaches SITL.
+    pub region: u64,
 }
 
 /// One applied envelope, in UNIX milliseconds: when the controller sent it (its clock), when it
@@ -594,6 +599,7 @@ impl Endpoint<'_> {
         *last = nonce;
         match self.state.request(PeerId(from.ip()), now) {
             Ok(grant) => {
+                self.clear_region();
                 self.holder = Some(from);
                 self.next_challenge_ms = now;
                 self.stats.update(|c| c.grants += 1);
@@ -623,7 +629,10 @@ impl Endpoint<'_> {
             return self.refuse(from, None, None, reason);
         }
         match self.state.release(PeerId(from.ip()), LeaseId(lease), now) {
-            Ok(()) => self.holder = None,
+            Ok(()) => {
+                self.clear_region();
+                self.holder = None;
+            }
             Err(reason) => self.refuse(from, None, None, reason.into()),
         }
     }
@@ -646,9 +655,12 @@ impl Endpoint<'_> {
         let Ok(carried) = carried(envelope) else {
             return refuse(self, Refusal::Malformed);
         };
+        let Ok(region) = region_of(envelope) else {
+            return refuse(self, Refusal::Malformed);
+        };
         let allowed = match &carried {
             Some((_, message)) => gate::admits(envelope.kind, message),
-            None => envelope.kind == Kind::Liveness,
+            None => matches!(envelope.kind, Kind::Liveness | Kind::Region),
         };
         if !allowed {
             return self.not_allowed(envelope, from);
@@ -670,6 +682,9 @@ impl Endpoint<'_> {
             received: received_unix_ms,
             applied,
         };
+        if envelope.kind == Kind::Region {
+            return self.set_region(region, from);
+        }
         let Some(carried) = carried else {
             return self.stats.update(|c| c.applied.keepalive += 1);
         };
@@ -682,6 +697,33 @@ impl Endpoint<'_> {
         };
         if let Err(refusal) = applied {
             refuse(self, refusal);
+        }
+    }
+
+    /// Makes `region` the pilot's box, or clears it for `None`, and tells the holder which box the
+    /// sender keeps sharp now: none when it was dropped for its size or the detections', or when
+    /// regional video is off, so the ground never reports tracking of a box that is not used.
+    fn set_region(&mut self, region: Option<NormRect>, to: SocketAddr) {
+        match region {
+            Some(rect) => self.stats.region.set(Timed {
+                rect,
+                at_ms: self.stats.region.now_ms(),
+            }),
+            None => self.stats.region.clear(),
+        }
+        self.stats.update(|c| c.applied.region += 1);
+        let region = self.stats.region.pilot_in_use();
+        self.reply(to, &ToGround::Region { region });
+    }
+
+    /// Drops the pilot's box when the lease it came with is gone, and tells the holder.
+    fn clear_region(&mut self) {
+        if self.stats.region.latest().is_none() {
+            return;
+        }
+        self.stats.region.clear();
+        if let Some(holder) = self.holder {
+            self.reply(holder, &ToGround::Region { region: None });
         }
     }
 
@@ -812,6 +854,9 @@ impl Endpoint<'_> {
         if now.saturating_sub(self.last_setpoint_ms) >= ms(REFRESH_EVERY) {
             self.refresh(now);
         }
+        if self.state.holder(now).is_none() {
+            self.clear_region();
+        }
         let lease = self
             .state
             .holder(now)
@@ -850,6 +895,18 @@ impl Endpoint<'_> {
             c.last_refresh_unix_ms = Some(at);
         });
     }
+}
+
+/// The box a region envelope carries, normalised; `Err` when it is not a valid rectangle. Other
+/// kinds carry none.
+fn region_of(envelope: &Envelope) -> Result<Option<NormRect>, Refusal> {
+    if envelope.kind != Kind::Region {
+        return Ok(None);
+    }
+    envelope
+        .region
+        .map(|r| NormRect::new(r.x0, r.y0, r.x1, r.y1).ok_or(Refusal::Malformed))
+        .transpose()
 }
 
 /// The frame an envelope carries, decoded; `Err` when it carries something that is not one
@@ -891,7 +948,7 @@ fn discrete_txn(kind: Kind, carried: Option<&(Frame, MavMessage)>) -> Option<Txn
 fn txn(kind: Kind) -> Option<TxnId> {
     match kind {
         Kind::Discrete { txn } => Some(TxnId(txn)),
-        Kind::Liveness | Kind::Continuous => None,
+        Kind::Liveness | Kind::Continuous | Kind::Region => None,
     }
 }
 
@@ -901,10 +958,13 @@ fn ms(duration: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use mavlink::dialects::ardupilotmega::{MavParamType, PARAM_VALUE_DATA};
+    use mavlink::dialects::ardupilotmega::{
+        HEARTBEAT_DATA, MavParamType, MavType, PARAM_VALUE_DATA,
+    };
 
     use super::*;
     use crate::params::ParamType;
+    use sat_teleop_policy::region::RegionLimits;
 
     fn said(name: &str, value: f32, kind: MavParamType) -> MavMessage {
         MavMessage::PARAM_VALUE(PARAM_VALUE_DATA {
@@ -946,5 +1006,316 @@ mod tests {
         assert_eq!(failure(), None, "another component changed the reading");
         stats.param_value(autopilot, &wrong);
         assert!(failure().is_some_and(|f| f.contains("is 0")));
+    }
+
+    /// A controller on loopback with a key, and a vehicle endpoint it talks to. Without an
+    /// autopilot every frame that would reach one goes to the logging sink and is counted in `sunk`.
+    struct Rig {
+        stats: ControlStats,
+        writer: SitlWriter,
+        signer: crate::auth::Signer,
+        controller: UdpSocket,
+    }
+
+    struct Taken {
+        epoch: u64,
+        lease: u64,
+        challenge: u64,
+    }
+
+    const EPOCH: u64 = 7;
+    const REGION_LIMITS: RegionLimits = RegionLimits {
+        pilot_ttl_ms: 3000,
+        detection_ttl_ms: 1000,
+        max_regions: 4,
+        max_area_percent: 50,
+    };
+    const OTHER_CONTROLLER: [u8; 4] = [127, 0, 0, 2];
+
+    fn rig() -> Rig {
+        let vehicle = "v1".parse().unwrap();
+        let signer = crate::auth::Signer::random(&vehicle).unwrap();
+        let stats = ControlStats::default();
+        stats.region.configure(REGION_LIMITS);
+        let ip = IpAddr::from([127, 0, 0, 1]);
+        stats
+            .keys
+            .lock()
+            .unwrap()
+            .verifiers
+            .insert(ip, signer.verifier());
+        stats
+            .keys
+            .lock()
+            .unwrap()
+            .verifiers
+            .insert(IpAddr::from(OTHER_CONTROLLER), signer.verifier());
+        let controller = UdpSocket::bind("127.0.0.1:0").unwrap();
+        controller
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        Rig {
+            stats,
+            writer: SitlWriter::default(),
+            signer,
+            controller,
+        }
+    }
+
+    impl Rig {
+        fn endpoint(&self) -> Endpoint<'_> {
+            let limits = sat_teleop_policy::control::Limits {
+                challenge_ms: 5000,
+                setpoint_ms: 1000,
+                lease_ms: 10_000,
+            };
+            Endpoint {
+                socket: UdpSocket::bind("127.0.0.1:0").unwrap(),
+                writer: &self.writer,
+                stats: &self.stats,
+                started: Instant::now(),
+                challenge_lifetime_ms: limits.challenge_ms,
+                state: LeaseState::new(
+                    Epoch(EPOCH),
+                    limits,
+                    vec![
+                        PeerId(IpAddr::from([127, 0, 0, 1])),
+                        PeerId(IpAddr::from(OTHER_CONTROLLER)),
+                    ],
+                ),
+                holder: None,
+                next_challenge_ms: 0,
+                last_setpoint_ms: 0,
+                last_nonce: HashMap::new(),
+            }
+        }
+
+        fn send(&self, endpoint: &mut Endpoint<'_>, message: &ToVehicle) {
+            let from = self.controller.local_addr().unwrap();
+            endpoint.receive(&envelope::encode(message).unwrap(), from);
+        }
+
+        fn reply(&self) -> Option<ToGround> {
+            let mut buf = [0_u8; 2048];
+            let len = self.controller.recv(&mut buf).ok()?;
+            envelope::decode(buf.get(..len)?).ok()
+        }
+
+        /// Requests the lease and takes the first challenge.
+        fn take(&self, endpoint: &mut Endpoint<'_>) -> Taken {
+            let sig = self.signer.sign_request(1).unwrap();
+            let request = ToVehicle::LeaseRequest {
+                peer: "test".to_owned(),
+                nonce: 1,
+                sig: Some(sig),
+            };
+            self.send(endpoint, &request);
+            let Some(ToGround::LeaseGrant { lease, epoch, .. }) = self.reply() else {
+                panic!("no grant");
+            };
+            endpoint.tick();
+            let Some(ToGround::Challenge { token, .. }) = self.reply() else {
+                panic!("no challenge");
+            };
+            Taken {
+                epoch,
+                lease,
+                challenge: token,
+            }
+        }
+
+        fn region_envelope(
+            &self,
+            taken: &Taken,
+            seq: u64,
+            region: Option<NormRect>,
+            mavlink: Option<String>,
+        ) -> ToVehicle {
+            let envelope = Envelope {
+                epoch: taken.epoch,
+                lease: taken.lease,
+                seq,
+                challenge: taken.challenge,
+                kind: Kind::Region,
+                mavlink,
+                region,
+                sent_unix_ms: 0,
+                sig: None,
+            };
+            ToVehicle::Envelope(self.signer.sign(envelope).unwrap())
+        }
+
+        fn nothing_reached_the_autopilot(&self) {
+            assert_eq!(self.stats.snapshot().counts.sunk, 0);
+            assert_eq!(self.stats.sitl.snapshot().messages_in, 0);
+        }
+    }
+
+    fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> NormRect {
+        NormRect { x0, y0, x1, y1 }
+    }
+
+    #[test]
+    fn region_envelope_sets_the_region_and_reaches_no_autopilot() {
+        let rig = rig();
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let wanted = rect(0.2, 0.1, 0.6, 0.7);
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 1, Some(wanted), None),
+        );
+        assert!(matches!(rig.reply(), Some(ToGround::Region { region: Some(r) }) if r == wanted));
+        assert_eq!(rig.stats.region.latest().map(|t| t.rect), Some(wanted));
+        rig.nothing_reached_the_autopilot();
+    }
+
+    #[test]
+    fn a_region_the_sender_does_not_keep_is_confirmed_as_none() {
+        let rig = rig();
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let most_of_the_picture = rect(0.0, 0.0, 0.9, 0.9);
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 1, Some(most_of_the_picture), None),
+        );
+        assert!(matches!(
+            rig.reply(),
+            Some(ToGround::Region { region: None })
+        ));
+        assert!(rig.stats.region.latest().is_some());
+    }
+
+    #[test]
+    fn region_envelope_with_a_mavlink_frame_is_refused() {
+        let rig = rig();
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let first = rect(0.2, 0.1, 0.6, 0.7);
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 1, Some(first), None),
+        );
+        rig.reply();
+        let frame = crate::frame::encoded(&MavMessage::HEARTBEAT(HEARTBEAT_DATA {
+            mavtype: MavType::MAV_TYPE_GCS,
+            ..HEARTBEAT_DATA::default()
+        }));
+        let carrying = rig.region_envelope(
+            &taken,
+            2,
+            Some(rect(0.5, 0.5, 0.9, 0.9)),
+            Some(envelope::encode_frame(&frame)),
+        );
+        rig.send(&mut endpoint, &carrying);
+        assert!(matches!(
+            rig.reply(),
+            Some(ToGround::Rejected {
+                reason: Refusal::NotAllowlisted,
+                ..
+            })
+        ));
+        assert_eq!(rig.stats.region.latest().map(|t| t.rect), Some(first));
+        rig.nothing_reached_the_autopilot();
+    }
+
+    #[test]
+    fn a_degenerate_region_is_refused_and_the_old_one_stays() {
+        let rig = rig();
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let first = rect(0.2, 0.1, 0.6, 0.7);
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 1, Some(first), None),
+        );
+        rig.reply();
+        let sliver = rect(0.5, 0.5, 0.5, 0.9);
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 2, Some(sliver), None),
+        );
+        assert!(matches!(
+            rig.reply(),
+            Some(ToGround::Rejected {
+                reason: Refusal::Malformed,
+                ..
+            })
+        ));
+        assert_eq!(rig.stats.region.latest().map(|t| t.rect), Some(first));
+        let next = rect(0.1, 0.1, 0.3, 0.3);
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 2, Some(next), None),
+        );
+        assert!(matches!(rig.reply(), Some(ToGround::Region { region: Some(r) }) if r == next));
+    }
+
+    #[test]
+    fn region_needs_the_lease() {
+        let rig = rig();
+        let mut endpoint = rig.endpoint();
+        let wanted = Some(rect(0.2, 0.1, 0.6, 0.7));
+        let refused = |reason| {
+            let counts = rig.stats.snapshot().counts;
+            counts.rejected.get(&reason).copied().unwrap_or_default()
+        };
+
+        let unheld = Taken {
+            epoch: EPOCH,
+            lease: 1,
+            challenge: 1,
+        };
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&unheld, 1, wanted, None),
+        );
+        rig.reply();
+        assert_eq!(refused(Refusal::NoLease), 1);
+
+        // A listed controller that is not the holder.
+        let taken = rig.take(&mut endpoint);
+        let other = SocketAddr::from((OTHER_CONTROLLER, 9));
+        let envelope = rig.region_envelope(&taken, 1, wanted, None);
+        endpoint.receive(&envelope::encode(&envelope).unwrap(), other);
+        assert_eq!(refused(Refusal::NotHolder), 1);
+        assert!(rig.stats.region.latest().is_none());
+    }
+
+    #[test]
+    fn lease_change_clears_the_region() {
+        let rig = rig();
+        let cleared = |rig: &Rig| {
+            assert!(matches!(
+                rig.reply(),
+                Some(ToGround::Region { region: None })
+            ));
+            assert!(rig.stats.region.latest().is_none());
+        };
+
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let envelope = rig.region_envelope(&taken, 1, Some(rect(0.2, 0.1, 0.6, 0.7)), None);
+        rig.send(&mut endpoint, &envelope);
+        rig.reply();
+        let sig = rig.signer.sign_release(taken.epoch, taken.lease).unwrap();
+        rig.send(
+            &mut endpoint,
+            &ToVehicle::LeaseRelease {
+                lease: taken.lease,
+                sig: Some(sig),
+            },
+        );
+        cleared(&rig);
+
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let envelope = rig.region_envelope(&taken, 1, Some(rect(0.2, 0.1, 0.6, 0.7)), None);
+        rig.send(&mut endpoint, &envelope);
+        rig.reply();
+        endpoint.started -= Duration::from_secs(60);
+        endpoint.tick();
+        cleared(&rig);
     }
 }

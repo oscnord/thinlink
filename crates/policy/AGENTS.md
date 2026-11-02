@@ -68,6 +68,16 @@ A `Ladder` of `Rung`s (size, frame rate, bitrate, `Group`: normal, constrained, 
 - `ContinuousSlot` keeps only the newest setpoint. It is fresh until `setpoint_ms` after it arrived or until its challenge expires, whichever comes first, and only while the lease is; `setpoint` returns it only then, so refreshing stops on its own.
 - A discrete envelope's `Header` carries its `Txn` (id and a digest of its command). `TxnCache` remembers the last 64 transactions applied per lease with their digests, least recently used dropped first. `admit` refuses a known id with another digest (`TxnConflict`, before changing anything) and marks a known id with the same digest `Admitted::repeated`: the caller answers it without applying it again. `record` remembers a transaction after it was applied (or used again).
 
+## Regions (`region`)
+
+`NormRect` is a rectangle in fractions of the picture, so a region means the same part of the picture at any rung. `NormRect::new` normalises corner order, clamps to the picture and returns `None` for a non-finite corner or a side under 1 %: a degenerate box is ignored, never an error. `pixels` rounds outwards, so the pixels always cover the box.
+
+`active(pilot, detections, now_ms, limits)` gives the regions to keep sharp: the pilot's box first while at most `pilot_ttl_ms` old, then detections at most `detection_ttl_ms` old, largest first, `max_regions` in all; an empty list when their summed area exceeds `max_area_percent`. `RegionCell` hands the pilot's box from the vehicle's control loop to the sender; `sat-teleop-media` and `sat-teleop-control` share it through this crate, and with it a monotonic clock (`now_ms`) that `Timed::at_ms` counts on.
+
+## Softening (`soften`)
+
+`soften_i420` replaces every `factor` x `factor` luma block (`factor / 2`, at least 1, on chroma) outside the active regions with its block average, on the rung-sized frame before it is encoded; blocks start at the plane's origin, a partial edge block averages what it has, and kept blocks are untouched byte for byte. `factor` 1 or no region changes nothing. `outline` draws a box border clipped to the plane. Both run on every frame on a Pi: no allocation in the pixel loops, no indexing of input-sized buffers, padding bytes beyond the width are never written.
+
 ## Retention (`retention`)
 
 `evict(objects, limits, free_bytes, now_unix_ms, now) -> Vec<usize>` says which retained snapshots to delete, oldest first by capture time: every one older than `max_age_ms`, then the oldest until the store holds at most `max_bytes` and the volume at least `min_free_bytes` (each eviction frees its bytes). A snapshot with `pinned_until` after `now` is skipped (a retrieval is reading it), so a store whose limits only pinned objects could meet stays over them until the pins expire. Capture times are wall clock (they name the file); pins are `Instant`s. An `Object` with `outage` set (taken while the ground was not heard, not fetched since) is skipped like a pinned one while it is within `outage_keep_ms` of its capture and within the outage share: the newest such objects first, until the next would take them past `outage_share_percent` of `max_bytes`, so a full share drops the oldest outage objects to ordinary ones. They outlive `max_age_ms`. A fetched object is no longer marked (`outage` false) and is ordinary.

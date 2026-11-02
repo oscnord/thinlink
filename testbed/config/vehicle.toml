@@ -39,6 +39,15 @@ min_free_bytes = 4194304
 # Snapshots come every second; one missing is a gap.
 gap_after_ms = 1500
 
+# Regional video, off unless set. `detector` boxes the people a small model finds (`just model`
+# fetches it, the runtime image carries it at this path). `soften_factor` 2 to 4 also keeps the pilot's
+# box from QGroundControl sharp and softens the rest in blocks of that many pixels; 1 (the default)
+# softens nothing and the pilot's box is not kept. The limits (how long a region lasts, the
+# detector's rate and score) are [region] of limits.toml.
+# [region]
+# soften_factor = 2
+# detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+
 # MAVLink bridge (docs/testbed.md): SITL's serial 0 in this network namespace (a TCP autopilot must
 # be on loopback, and control reaches it only once it reports the SITL marker parameter),
 # mavlink-router's UDP server endpoint on the relay, inside WireGuard (only datagrams from it are

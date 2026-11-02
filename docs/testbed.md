@@ -333,6 +333,25 @@ Results go to `results/<unix-ms>-adaptation-<profile>/`.
 
 `just ingest-isolation` is a recipe, not a check, because it needs a container on `ingest_net` (the feeder, or a one-off one). It runs in `just gate-full` and `ingest-check` against any testbed. It requires the vehicle sidecar to publish exactly `127.0.0.1:5700/udp`, then reads the counter of each drop rule in `ingest.nft` before and after a probe and requires an increase: a TCP connection from the ingest side to the sidecar (input), the companion reaching the host on the ingest side (output), and packets routed through the sidecar from the ingest side to the router and from the router to the ingest side (forward, one rule each). A timeout would prove nothing, because replies leave through the router either way. Deleting any one drop rule makes it fail. `lab check ingest` results go to `results/<unix-ms>-ingest-<profile>/`.
 
+## Regional check
+
+`lab check regional --profile <name>` measures what regional video (`docs/architecture.md`) gains and costs. It needs the vehicle on `testbed/config/vehicle-regional.toml` (a one-frame clip of the check's test card as the source, `soften_factor = 2` and `debug_hooks` on; `vehicle-regional-detector.toml` also runs the person detector): `VEHICLE_CONFIG=vehicle-regional.toml just lab-up`, then `just lab-check regional geo --warmup-s 8 --duration-s 20` (`--rung <n>` pins the first two windows to ladder rung n, the third is the rung below), with the same `PI=pi4` or `PI=pi-zero-2w` for both to run on a small board's budget (`docs/latency.md`). It is not in `gate-full`. The check writes the clip (one 1280x720 frame, which the vehicle's `still` file source shows for good) to the vehicle's snapshot volume, which the vehicle's sender opens, and plays the ground's output on 192.168.232.40:5602 and scores every third frame against the card scaled to the output's size (SSIM in 8x8 windows), then, as `QGroundControl` does:
+
+1. asks the adapter's camera for its tracking status (`SET_MESSAGE_INTERVAL`), takes the lease, tracks a box (`CAMERA_TRACK_RECTANGLE`) and waits for the status to go active with that box;
+2. scores one window with the box, one after `CAMERA_STOP_TRACKING`, and one with the plain picture one rung down (`POST /video/rung/1` on the vehicle).
+
+| Assertion | Pass when |
+|---|---|
+| `tracking_status_requested`, `tracking_active`, `tracking_stopped` | The status arrives idle after the request, goes active with the box once the vehicle confirmed it keeps it sharp, and idle again after the stop. |
+| `frames_with`, `frames_without`, `frames_lower` | At least 10 frames were scored in the window. |
+| `region_ssim_gain` | The box's SSIM with regional video is above its SSIM without. Graded only on a pilot-only vehicle (`vehicle-regional.toml`): with the detector on its amber outlines are drawn inside the box and count against the card, so the assertion is `incomplete` and the detector-on run is for CPU and memory. |
+| `outside_ssim_vs_lower_rung` | The SSIM outside the box is at least that of the plain picture one rung down. |
+| `test_object_contrast_ratio` | The sum of the local standard deviations outside the box, relative to the reference's, is at least that of the rung below (fine detail kept). |
+| `frame_age_within_skeleton_budget` | Frame age p95 with the box is within `skeleton.<profile>`'s limit plus 100 ms for the output's hops. |
+| `budget` | `regional.<profile>` in `perf/budgets.toml`; calibration today. |
+
+The metrics are `region_ssim_with`, `region_ssim_without`, `region_ssim_gain`, `outside_ssim_vs_lower_rung`, `test_object_contrast_ratio`, `frame_age_p95_ms`, and from the vehicle's metrics over the first window `vehicle_cpu_percent` (its process CPU time over the window, of one host core), `vehicle_rss_mb`, `soften_ms_p95` and `detector_ms_p95` (when the detector ran). Results go to `results/<unix-ms>-regional-<profile>/`.
+
 ## Recording check
 
 `lab check recording --profile lan` checks the vehicle's retained snapshots (`docs/architecture.md`, "Retained detail"). `checks` sees the store's directory. The check is run through `just lab-check recording lan`: it needs the host to restart `companion`, which it asks for by printing `lab: restart companion`; run any other way it is `incomplete` at that step. Options: `--warmup-s`, `--url`, `--vehicle-metrics` and `--snapshot-dir` (default `/snapshots`). The store's limits come from `testbed/config/vehicle.toml` (`[store]`).
