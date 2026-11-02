@@ -240,6 +240,32 @@ x264's adaptive quantization is not a cause: the sender's `speed-preset=ultrafas
 
 What they show: on this card the top rung is not starved (the plain picture scores 0.89 to 0.95 inside the box), so there is no spare quality for softening to move into the box. Tracking a box changed the SSIM inside it by between -0.016 and +0.003 pilot-only (no gain), and lowered the SSIM outside it by 0.005 to 0.007 against the same rung plain; at rung 0 the outside with regional video was 0.005 to 0.042 below the plain picture one rung down and the fine-detail contrast kept was 0.89 to 1.01 of the rung below's. So `region_ssim_gain` is not above 0 in any run, and `outside_ssim_vs_lower_rung` fails at rung 0. The cause was not found; no threshold or softening setting was changed. The vehicle's frame age with the box was 365 to 455 ms at p95, within the skeleton's `geo` budget plus the output's hops. Not measured: rung 2 against the rung below, the V4L2 hardware encoder (the testbed has no path to one), people in the picture (the card's figures are shapes, so the detector found nobody and its cost, not its accuracy, is measured), a moving picture and a real Pi.
 
+## Obstacles
+
+Whether a small model a Pi can run sees wires, poles and masts, and bare branches in drone-height photos, at the 320 px the detector works at. Measured on the host (macOS arm64) with a script outside the repo, one pass, no tuning.
+
+Method:
+
+- **Photos.** 57 Wikimedia Commons photos under CC0, CC BY or CC BY-SA, listed with page, licence and labels in `docs/obstacles-photos.md`. 24 are aerial or from drone height (4 with a wire and a pylon or pole, 4 with bare trees, 16 with none of the three); 33 are from the ground or a low viewpoint (the only way to get enough wires and poles under a permissive licence). By hand: 27 show a wire, 27 a pole, mast or pylon, 10 bare branches. Labels are per photo, not boxes. Each photo is squashed to 320x320, as the sender does for the detector.
+- **Shipped detector.** NanoDet-Plus-m 320 (`just model`, same SHA-256), run through ONNX Runtime with the preprocessing in `crates/detect/AGENTS.md`, not through tract. COCO has no wire, pole or branch class, so a hit is counted when any class scores at least 0.4 (the shipped `detector_min_score`) anywhere in the photo, with no check that it sits on the obstacle. That is an upper bound on hits.
+- **Wire model.** None found under a permitted licence. The only power-line model with ONNX weights seen is a YOLO11 segmentation model fine-tuned on TTPLA, licensed AGPL-3.0 (excluded by the repo's rules). The TTPLA authors' own weights are Yolact PyTorch files with no stated licence and no ONNX. PL-UNeXt (a power-line segmentation network) was seen with no released weights. Nothing else was tested.
+- **Classical floor.** Gaussian blur, Canny (50, 150), probabilistic Hough on the 320x320 luma. Wire: a segment of at least 100 px (about a third of the picture) that is not near vertical. Pole: such a segment within 15 degrees of vertical. Branch: at least 150 short segments (20 px or more, from a second Hough pass). Thresholds were fixed before the run.
+
+A false alarm is a photo without that obstacle that the candidate still flags (photos with the other two obstacles count).
+
+| Obstacle (photos with / without) | NanoDet hits | NanoDet false alarms | Hough hits | Hough false alarms |
+|---|---|---|---|---|
+| Wire (27 / 30) | 5 | 2 | 25 | 28 |
+| Pole, mast, pylon (27 / 30) | 3 | 4 | 16 | 13 |
+| Bare branches (10 / 47) | 1 | 6 | 5 | 7 |
+| Aerial photos only: wire or pole (4 / 20) | 0 | 1 | 4 wire, 1 pole | 19 wire, 6 pole |
+
+At a lower bar (any class at 0.25 or more) NanoDet hits 18 of 27 wires, 17 of 27 poles and 4 of 10 branch photos, but flags 16 of 30, 17 of 30 and 30 of 47 photos without them. At 0.4 the classes it names are bird, airplane, cow, truck, person and vase: nothing a pilot would read as a wire or a pole. Hough fires on nearly every photo (roads, field edges, roof lines and horizons are long straight edges), so its wire hits carry no information.
+
+Time per frame on the host: NanoDet 4.6 ms median, 5.4 ms p95 (ONNX Runtime, 320 input); Canny plus two Hough passes 3.4 ms median, 9.2 ms p95. These are a relative guide only; the shipped detector costs 29.4 ms p95 on the emulated Pi 4 (above).
+
+Decision: no small model is reliable, so nothing is wired in. NanoDet finds a wire in at most 5 of 27 photos and a pole in 3 of 27, where the rule asks for 80 %; the Hough floor meets the hit rate on wires only by flagging 28 of 30 photos that have none, against a limit of 1 in 10. Both fit the time budget, so cost is not the blocker; recall and false alarms are. A box must never read as "clear", and a detector that misses 8 wires in 10 makes silence mean nothing. Feeding ArduPilot's avoidance is not supported by this measurement. A follow-up would need a wire model under Apache-2.0, MIT or BSD (train one on TTPLA or PLD-UAV, whose dataset licences need checking first) and a test set with boxes taken from a drone. Not measured: boxes and localisation, video rather than stills, motion, real drone-height wires at distance (4 such photos), the model on tract or on a real Pi, and any model trained on a power-line dataset.
+
 ## Recording check
 
 `lab check recording --profile lan` runs in `checks`, which mounts the vehicle's snapshot volume and reads the store's limits from the vehicle's config (`docs/testbed.md`, "Recording check"):
