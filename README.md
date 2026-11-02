@@ -7,6 +7,7 @@ A bench prototype. You can run all of it on one computer: a test setup emulates 
 ## What it does
 
 - **Live video in QGroundControl, labelled with its age.** The drone stamps every frame into the picture as its software receives it, so the age is known all the way to the screen (the camera's own delay is not included). Each frame reads `LIVE`, `LOW RATE`, `STALE`, `FROZEN`, `NO VIDEO` or `AGE UNKNOWN` with that age, so old, frozen or unverifiable video never reads as live. QGroundControl finds the video as the drone's camera without setup.
+- **A prediction of where the camera will point.** While the picture is live, the ground draws a dashed ring where the camera's centre will be by the time a command sent now takes effect, and a dashed horizon line, so the pilot can steer ahead of the delay. The ring is hollow and the age label stays, so old video never passes for current.
 - **Adaptive video.** The drone watches the link. When delay builds or the link narrows, it makes the picture smaller or slower, and pauses briefly to empty a backlog. Control and telemetry keep their share of the link.
 - **Telemetry** from the autopilot to QGroundControl through the link, within a fixed budget.
 - **Control under a lease.** Only one listed controller may command the drone at a time. Every command must be fresh and runs at most once. When commands stop, the drone stops.

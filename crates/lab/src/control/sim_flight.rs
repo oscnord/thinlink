@@ -82,8 +82,9 @@ const STREAM_GONE: Duration = Duration::from_secs(1);
 /// For the first frame of video.
 const FIRST_FRAME_DEADLINE: Duration = Duration::from_secs(60);
 const SAMPLE_EVERY: Duration = Duration::from_millis(100);
-/// `GLOBAL_POSITION_INT`, `GPS_RAW_INT` and `VFR_HUD` at 10 Hz while the check runs.
-const WATCHED: [f32; 3] = [33.0, 24.0, 74.0];
+/// `GLOBAL_POSITION_INT`, `GPS_RAW_INT`, `VFR_HUD` and `ATTITUDE` at 10 Hz while the check runs,
+/// as `QGroundControl` asks for them; the ground's predictive display draws from `ATTITUDE`.
+const WATCHED: [f32; 4] = [33.0, 24.0, 74.0, 30.0];
 const WATCH_INTERVAL_US: f32 = 100_000.0;
 
 /// Requested settings of one run.

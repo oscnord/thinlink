@@ -13,13 +13,15 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use mavlink::dialects::ardupilotmega::{ATTITUDE_DATA, MavMessage};
 use serde::{Deserialize, Serialize};
 
 pub use self::camera::{Camera, CameraCounts, CameraStream};
 pub use self::control::{ControlSnapshot, Controller, LeaseStatus, Status, TakeError};
 use sat_teleop_policy::clock;
+use sat_teleop_policy::predict::Attitude;
 
 use crate::auth::VehicleId;
 use crate::clock::{Clock, ClockSnapshot, ClockSource};
@@ -36,6 +38,8 @@ const CLOCK_QUERY_EVERY: Duration = Duration::from_secs(2);
 const BOUND_REFRESH_EVERY: Duration = Duration::from_millis(100);
 /// `GroundStats::bound` when there is no bound to trust.
 const NO_BOUND: u64 = u64::MAX;
+/// The autopilot's component id (`MAV_COMP_ID_AUTOPILOT1`); the camera component has its own.
+const AUTOPILOT_COMPONENT: u8 = 1;
 
 /// `testbed/config/ground.toml`.
 #[derive(Debug, Clone, Deserialize)]
@@ -69,6 +73,9 @@ pub struct GroundStats {
     /// The overlay socket.
     pub listen: Link,
     relay_endpoint: Mutex<Option<SocketAddr>>,
+    /// The autopilot's newest `ATTITUDE`.
+    attitude: Mutex<Option<Attitude>>,
+    started: Instant,
     /// The sum of the two clock bounds as `refresh_bound` last worked it out, `NO_BOUND` for none:
     /// the video output reads it on every pass, and must not wait for the controller's lock.
     bound: AtomicU64,
@@ -104,6 +111,8 @@ impl GroundStats {
             clock: Arc::new(Clock::new(clock)),
             listen: Link::default(),
             relay_endpoint: Mutex::new(None),
+            attitude: Mutex::new(None),
+            started: Instant::now(),
             bound: AtomicU64::new(NO_BOUND),
             telemetry: Flow::default(),
             gcs: Flow::default(),
@@ -144,6 +153,25 @@ impl GroundStats {
         }
     }
 
+    /// Milliseconds since this was created, the clock `attitude`'s receive time is on.
+    pub fn monotonic_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
+    }
+
+    /// The newest `ATTITUDE` the autopilot sent, with when it arrived (`monotonic_ms`).
+    pub fn attitude(&self) -> Option<Attitude> {
+        self.attitude.lock().ok().and_then(|a| *a)
+    }
+
+    fn note_attitude(&self, frame: &Frame) {
+        let Some(attitude) = attitude_of(frame, self.monotonic_ms()) else {
+            return;
+        };
+        if let Ok(mut current) = self.attitude.lock() {
+            *current = Some(attitude);
+        }
+    }
+
     fn relay_endpoint(&self) -> Option<SocketAddr> {
         self.relay_endpoint.lock().ok().and_then(|e| *e)
     }
@@ -153,6 +181,30 @@ impl GroundStats {
             *current = Some(endpoint);
         }
     }
+}
+
+/// The attitude an autopilot's `ATTITUDE` frame carries, received at `at_ms`.
+fn attitude_of(frame: &Frame, at_ms: u64) -> Option<Attitude> {
+    if frame.component_id() != AUTOPILOT_COMPONENT {
+        return None;
+    }
+    let Ok(MavMessage::ATTITUDE(ATTITUDE_DATA {
+        roll,
+        pitch,
+        pitchspeed,
+        yawspeed,
+        ..
+    })) = frame.decode()
+    else {
+        return None;
+    };
+    Some(Attitude {
+        roll_rad: roll,
+        pitch_rad: pitch,
+        yaw_rate_rad_s: yawspeed,
+        pitch_rate_rad_s: pitchspeed,
+        at_ms,
+    })
 }
 
 /// Resolves each ground station to its first IPv4 address.
@@ -277,6 +329,7 @@ fn relay_to_stations(
         stats.set_relay_endpoint(from);
         for frame in datagram_frames(buf.get(..len).unwrap_or_default()) {
             stats.telemetry.received(&frame);
+            stats.note_attitude(&frame);
             for station in stations {
                 match station.socket.send_to(frame.bytes(), station.address) {
                     Ok(_) => stats.telemetry.forwarded(&frame),
@@ -357,5 +410,44 @@ fn forward(frame: &Frame, overlay: &UdpSocket, stats: &GroundStats) {
     match overlay.send_to(frame.bytes(), relay) {
         Ok(_) => stats.gcs.forwarded(frame),
         Err(_) => stats.gcs.dropped(DropReason::SendFailed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(component: u8, message: &MavMessage) -> Frame {
+        let header = mavlink::MavHeader {
+            system_id: 1,
+            component_id: component,
+            sequence: 0,
+        };
+        let mut bytes = Vec::new();
+        mavlink::write_v2_msg(&mut bytes, header, message).unwrap();
+        datagram_frames(&bytes).next().unwrap()
+    }
+
+    #[test]
+    fn only_the_autopilots_attitude_is_kept() {
+        let attitude = MavMessage::ATTITUDE(ATTITUDE_DATA {
+            roll: 0.1,
+            pitch: 0.2,
+            yawspeed: 0.3,
+            pitchspeed: 0.4,
+            ..ATTITUDE_DATA::default()
+        });
+        let got = attitude_of(&frame(1, &attitude), 7).unwrap();
+        assert_eq!(
+            (
+                got.roll_rad,
+                got.pitch_rad,
+                got.yaw_rate_rad_s,
+                got.pitch_rate_rad_s,
+                got.at_ms
+            ),
+            (0.1, 0.2, 0.3, 0.4, 7)
+        );
+        assert!(attitude_of(&frame(100, &attitude), 7).is_none());
     }
 }

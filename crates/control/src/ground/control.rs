@@ -14,7 +14,7 @@ use mavlink::dialects::ardupilotmega::{COMMAND_ACK_DATA, MavCmd, MavMessage, Mav
 use mavlink::{MavHeader, Message};
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::clock::Reading;
+use sat_teleop_policy::clock::{self, Reading};
 use sat_teleop_policy::control::Kind as Class;
 
 use super::Station;
@@ -140,6 +140,9 @@ struct State {
     /// The nonce of the newest clock query, and the vehicle's answer to it.
     clock_nonce: u64,
     vehicle_clock: Option<(Option<u64>, Instant)>,
+    /// When the newest clock query went out, and the round trip of its answer.
+    clock_sent: Option<Instant>,
+    clock_rtt: Option<Duration>,
     counts: ControlCounts,
 }
 
@@ -279,6 +282,7 @@ impl Controller {
         let nonce = {
             let mut state = self.lock();
             state.clock_nonce = unix_ms();
+            state.clock_sent = Some(Instant::now());
             state.clock_nonce
         };
         self.send(&ToVehicle::ClockQuery { nonce });
@@ -289,6 +293,15 @@ impl Controller {
         let (bound, at) = self.lock().vehicle_clock?;
         let age_ms = u64::try_from(at.elapsed().as_millis()).unwrap_or(u64::MAX);
         bound.map(|bound_ms| Reading { bound_ms, age_ms })
+    }
+
+    /// How long a control envelope takes to reach the vehicle: half the round trip of the newest
+    /// clock query, while its reading is fresh. `None` before the first answer or once stale.
+    pub fn uplink_delay_ms(&self) -> Option<u64> {
+        let reading = self.vehicle_clock()?;
+        clock::aged(reading)?;
+        let rtt = self.lock().clock_rtt?;
+        u64::try_from(rtt.as_millis() / 2).ok()
     }
 
     /// Gives the lease back; returns the status after.
@@ -450,6 +463,7 @@ impl Controller {
             ToGround::Clock { nonce, bound_ms } => {
                 if nonce == state.clock_nonce {
                     state.vehicle_clock = Some((bound_ms, Instant::now()));
+                    state.clock_rtt = state.clock_sent.map(|sent| sent.elapsed());
                 }
             }
             ToGround::Rejected { reason, .. } => state.vehicle_rejected(reason),

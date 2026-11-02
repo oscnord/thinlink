@@ -19,6 +19,8 @@ use gstreamer_video as gst_video;
 use serde::{Deserialize, Serialize};
 
 use sat_teleop_policy::freshness::{self, LabelDeadline, Link, Observed, State, Thresholds};
+use sat_teleop_policy::mark as draw_mark;
+use sat_teleop_policy::predict::{self, Inputs, Mark};
 use sat_teleop_policy::stamp::{self, CaptureMs, FrameId, StateStamp};
 
 use crate::receiver::{self, Observation, Source};
@@ -78,6 +80,42 @@ impl OutputConfig {
         }
         Ok(())
     }
+}
+
+/// `[camera]` of `testbed/config/ground.toml`. Without it the predictive display is off.
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CameraConfig {
+    /// The camera's horizontal field of view in degrees, the picture's full width.
+    pub hfov_deg: f32,
+    /// For a camera fixed to the body, how far it is mounted below the nose, in degrees: it turns
+    /// the horizon on. Absent for a gimbal that holds its own angle.
+    #[serde(default)]
+    pub tilt_deg: Option<f32>,
+}
+
+impl CameraConfig {
+    pub fn validate(self) -> Result<(), MediaError> {
+        if !(self.hfov_deg.is_finite() && self.hfov_deg > 0.0 && self.hfov_deg < 180.0) {
+            return Err(MediaError::Config(format!(
+                "hfov_deg {} is not between 0 and 180 degrees",
+                self.hfov_deg
+            )));
+        }
+        if let Some(tilt) = self.tilt_deg.filter(|t| !(t.is_finite() && t.abs() < 90.0)) {
+            return Err(MediaError::Config(format!(
+                "tilt_deg {tilt} is not between -90 and 90 degrees"
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// The predictive display: the camera's field of view, and where its inputs come from, read for
+/// every frame drawn. `None` from `inputs` (no attitude yet, no uplink delay measured) draws nothing.
+pub struct Predictive<'a> {
+    pub camera: CameraConfig,
+    pub inputs: &'a dyn Fn() -> Option<Inputs>,
 }
 
 /// `[freshness]` of `testbed/limits.toml`, in milliseconds.
@@ -260,13 +298,14 @@ impl OutputStats {
 
 /// Decodes the source and sends the output until the process ends, each pipeline restarted after
 /// a failure. `destinations` are `config.destinations`, resolved; `clock_bound` is read for every
-/// state it computes.
+/// state it computes. With `predictive` the aim mark and the horizon are drawn into current frames.
 pub fn run(
     config: &OutputConfig,
     destinations: &[SocketAddr],
     thresholds: Thresholds,
     stats: &Arc<OutputStats>,
     clock_bound: &dyn Fn() -> Option<u64>,
+    predictive: Option<&Predictive>,
 ) {
     let latest = Arc::new(Latest::default());
     let rung = config.encoding;
@@ -289,6 +328,7 @@ pub fn run(
         latest: &latest,
         stats,
         clock_bound,
+        predictive,
     };
     supervise(&stats.output, || output.run());
 }
@@ -341,6 +381,7 @@ struct Output<'a> {
     /// How far the vehicle's clock may be from the ground's now, in ms; without a bound no age is
     /// trusted and nothing is shown as live.
     clock_bound: &'a dyn Fn() -> Option<u64>,
+    predictive: Option<&'a Predictive<'a>>,
 }
 
 /// The output pipeline and the end the loop pushes into.
@@ -387,11 +428,28 @@ impl Output<'_> {
             pipeline.push(
                 shown.as_ref().unwrap_or(&slate),
                 state,
+                self.mark(state),
                 last_push,
                 change_ms,
             )?;
             self.stats.sent(state.state, repeat);
         }
+    }
+
+    /// The predictive display for a frame shown in `state`, if it is on and has its inputs.
+    fn mark(&self, state: StateStamp) -> Option<Mark> {
+        let predictive = self.predictive?;
+        let inputs = (predictive.inputs)()?;
+        let rung = self.config.encoding;
+        predict::mark(
+            state.state,
+            state.age_ms().map(u64::from),
+            &inputs,
+            predictive.camera.hfov_deg,
+            predictive.camera.tilt_deg,
+            u32::from(rung.width),
+            u32::from(rung.height),
+        )
     }
 
     fn observe(&self, tracker: &mut Tracker, observation: &Observation) -> Seen {
@@ -490,13 +548,15 @@ impl Output<'_> {
 }
 
 impl Pipeline {
-    /// Sends `frame` with `state` drawn below its stamp (the overlay reads it from there). The
+    /// Sends `frame` with `state` drawn below its stamp (the overlay reads it from there) and
+    /// `mark` drawn under the stamps, both before the overlay writes the label. The
     /// state was decided at `decided_at` and holds for `holds_ms` more; the frame carries the
     /// moment that ends, on the pipeline's clock, in its end offset.
     fn push(
         &self,
         frame: &gst::Buffer,
         state: StateStamp,
+        mark: Option<Mark>,
         decided_at: Instant,
         holds_ms: Option<u64>,
     ) -> Result<(), MediaError> {
@@ -517,7 +577,11 @@ impl Pipeline {
             let mut frame =
                 gst_video::VideoFrameRef::from_buffer_ref_writable(buffer, &self.video)?;
             let geometry = luma_geometry(&frame)?;
-            stamp::draw_state(frame.plane_data_mut(0)?, geometry, state)?;
+            let plane = frame.plane_data_mut(0)?;
+            stamp::draw_state(plane, geometry, state)?;
+            if let Some(Mark { aim, horizon }) = mark {
+                draw_mark::draw(plane, geometry, aim, horizon)?;
+            }
         }
         self.appsrc
             .push_buffer(buffer)

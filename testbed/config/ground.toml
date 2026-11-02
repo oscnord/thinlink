@@ -22,6 +22,16 @@ clock = "shared"
 # The key the adapter signs its envelopes with; the vehicle holds the public half.
 control_key = "/secrets/ctl-ground.key"
 
+[camera]
+# The camera's horizontal field of view across the picture's full width, in degrees. It turns the
+# autopilot's turn rates into pixels for the predictive display (docs/qgc.md); remove the table to
+# switch the display off. 114.6 is the simulated copter's gimbal camera (`horizontal_fov` 2.0 rad in
+# ardupilot_gazebo's gimbal_small_3d model, pinned in testbed/Containerfile.sim).
+hfov_deg = 114.6
+# No tilt_deg: the simulated gimbal holds its own pitch (20 degrees down) whatever the copter does,
+# so the copter's attitude does not move the horizon in its picture and none is drawn. A camera
+# fixed to the frame sets tilt_deg, how far below the nose it points, to get the horizon.
+
 [video]
 # The ground's freshness output (docs/qgc.md). MediaMTX's stream on the relay, over ground_net,
 # pulled over TCP without a jitter buffer wait: nothing is lost or reordered on that hop.

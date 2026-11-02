@@ -17,8 +17,11 @@ use sat_teleop_control::ground::{
     GroundSnapshot, GroundStats, TakeError,
 };
 use sat_teleop_media::metrics;
-use sat_teleop_media::output::{self, FreshnessLimits, OutputConfig, OutputSnapshot, OutputStats};
+use sat_teleop_media::output::{
+    self, CameraConfig, FreshnessLimits, OutputConfig, OutputSnapshot, OutputStats, Predictive,
+};
 use sat_teleop_policy::freshness::Thresholds;
+use sat_teleop_policy::predict::Inputs;
 use sat_teleop_policy::token::Token;
 
 use crate::detail::Detail;
@@ -100,6 +103,7 @@ struct Metrics {
 struct Config {
     ground: GroundConfig,
     video: OutputConfig,
+    camera: Option<CameraConfig>,
 }
 
 /// What the ground reads from `testbed/limits.toml`.
@@ -134,7 +138,11 @@ fn main() -> Result<ExitCode> {
 }
 
 fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) -> Result<()> {
-    let Config { ground, video } = load(config)?;
+    let Config {
+        ground,
+        video,
+        camera: camera_config,
+    } = load(config)?;
     let (control_limits, thresholds) = load_limits(limits)?;
     let stations = ground::resolve(&ground.gcs).context("ground stations")?;
     let destinations = ground::resolve(&video.destinations).context("video destinations")?;
@@ -150,10 +158,32 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
         signer,
     ));
     {
-        let (output_stats, stats) = (Arc::clone(&output_stats), Arc::clone(&stats));
+        let (output_stats, stats, controller) = (
+            Arc::clone(&output_stats),
+            Arc::clone(&stats),
+            Arc::clone(&controller),
+        );
         thread::spawn(move || {
             let bound = || stats.clock_bound();
-            output::run(&video, &destinations, thresholds, &output_stats, &bound);
+            let inputs = || {
+                Some(Inputs {
+                    attitude: stats.attitude()?,
+                    now_ms: stats.monotonic_ms(),
+                    uplink_delay_ms: controller.uplink_delay_ms()?,
+                })
+            };
+            let predictive = camera_config.map(|camera| Predictive {
+                camera,
+                inputs: &inputs,
+            });
+            output::run(
+                &video,
+                &destinations,
+                thresholds,
+                &output_stats,
+                &bound,
+                predictive.as_ref(),
+            );
         });
     }
     {
@@ -222,10 +252,23 @@ fn load(path: &Path) -> Result<Config> {
     video
         .validate()
         .with_context(|| format!("{} has an invalid [video] table", path.display()))?;
+    let camera: Option<CameraConfig> = table
+        .remove("camera")
+        .map(toml::Value::try_into)
+        .transpose()
+        .with_context(|| format!("{} has an invalid [camera] table", path.display()))?;
+    camera
+        .map(CameraConfig::validate)
+        .transpose()
+        .with_context(|| format!("{} has an invalid [camera] table", path.display()))?;
     let ground = table
         .try_into()
         .with_context(|| format!("{} is not a ground config", path.display()))?;
-    Ok(Config { ground, video })
+    Ok(Config {
+        ground,
+        video,
+        camera,
+    })
 }
 
 /// `[control]` and `[freshness]` of the limits file, validated.
