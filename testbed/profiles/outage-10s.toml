@@ -1,0 +1,27 @@
+[profile]
+name = "outage-10s"
+description = "GEO with a 10 s total outage in both directions, starting 10 s after the timeline starts."
+provenance = "synthetic"
+source = "Synthetic. The geo profile plus a scripted blackout, not measured."
+
+[uplink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 512
+burst_bytes = 6000
+
+[downlink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 2048
+burst_bytes = 6000
+
+[[timeline]]
+at_ms = 10000
+action = "blackout"
+direction = "both"
+
+[[timeline]]
+at_ms = 20000
+action = "restore"
+direction = "both"

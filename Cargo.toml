@@ -1,0 +1,65 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/ground",
+    "apps/lab",
+    "apps/relay",
+    "apps/vehicle",
+    "crates/control",
+    "crates/detail",
+    "crates/lab",
+    "crates/media",
+    "crates/policy",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1.0.104"
+base64 = "0.23.1"
+cargo_metadata = "0.23.1"
+clap = { version = "4.6.7", features = ["derive"] }
+ed25519-dalek = "3.0.0"
+gstreamer = "0.25.4"
+gstreamer-app = "0.25.2"
+gstreamer-video = "0.25.4"
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
+mavlink = { version = "0.21.0", default-features = false, features = ["std", "dialect-ardupilotmega"] }
+rustix = { version = "1.1.6", features = ["fs"] }
+serialport = { version = "4.7.2", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+subtle = "2.6.1"
+thiserror = "2.0.21"
+tiny_http = "0.12.0"
+toml = "1.1.8"
+ureq = "3.5.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+dbg_macro = "deny"
+indexing_slicing = "warn"
+
+[profile.release]
+debug = "line-tables-only"

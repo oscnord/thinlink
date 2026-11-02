@@ -1,0 +1,6 @@
+# Added by the justfile when CONTAINER_ENGINE is not podman: Docker has no name for the host, which
+# the ground adapter sends QGroundControl's telemetry and video to (testbed/config/ground.toml).
+services:
+  ground-net:
+    extra_hosts:
+      - "host.containers.internal:host-gateway"

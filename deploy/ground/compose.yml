@@ -1,0 +1,35 @@
+# The ground adapter: a container that holds the WireGuard tunnel to the relay, and the adapter in its
+# network namespace. Run from the unpacked release directory (`just ground-release`) with
+# `podman compose up -d` or `docker compose up -d`; QGroundControl runs natively on this machine and
+# needs no setup (docs/qgc.md). SAT_TELEOP_IMAGE is the release runtime image for this machine's architecture
+# (`.env` names it); `localhost/sat-teleop-runtime:dev` is the testbed's, with test hooks.
+name: sat-teleop-ground
+
+services:
+  net:
+    image: ${SAT_TELEOP_IMAGE:-localhost/sat-teleop-runtime:dev}
+    command: ["sh", "-c", "wg-quick up /secrets/wg0.conf && exec sleep infinity"]
+    init: true
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./wireguard/ground.conf:/secrets/wg0.conf:ro
+
+  ground:
+    image: ${SAT_TELEOP_IMAGE:-localhost/sat-teleop-runtime:dev}
+    command:
+      [
+        "sat-teleop-ground", "run", "--config", "/config/ground.toml", "--limits", "/config/limits.toml",
+        "--metrics-addr", "127.0.0.1:9100", "--token-file", "/secrets/ground.token",
+        "--job-token-file", "/secrets/job.token",
+      ]
+    init: true
+    restart: unless-stopped
+    network_mode: service:net
+    volumes:
+      - ./ground.toml:/config/ground.toml:ro
+      - ./limits.toml:/config/limits.toml:ro
+      - ./ctl-ground.key:/secrets/ctl-ground.key:ro
+      - ./ground.token:/secrets/ground.token:ro
+      - ./job.token:/secrets/job.token:ro
+    depends_on: [net]

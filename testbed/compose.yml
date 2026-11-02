@@ -1,0 +1,240 @@
+# Testbed topology. docs/testbed.md has the diagram, addresses and privileges.
+# Run through `just lab-up` / `just lab-down`; keys come from `just lab-keys`.
+name: sat-teleop
+
+networks:
+  vehicle_net:
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.231.0/24
+  ground_net:
+    ipam:
+      config:
+        - subnet: 192.168.232.0/24
+  ctl_net:
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.233.0/24
+  # The host's way to the vehicle's camera ingest port, and nothing else (testbed/scripts/ingest.nft).
+  ingest_net:
+    ipam:
+      config:
+        - subnet: 192.168.234.0/24
+
+volumes:
+  # The vehicle's snapshot store: a volume of its own, bounded, so that a full store cannot fill
+  # anything else. `checks` mounts it to look at the files (lab check recording).
+  snapshots:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=12m
+
+x-sidecar: &sidecar
+  image: localhost/sat-teleop-runtime:dev
+  command: ["/scripts/sidecar.sh"]
+  cap_add: [NET_ADMIN]
+  sysctls:
+    # Lets root ping over ICMP datagram sockets without NET_RAW.
+    net.ipv4.ping_group_range: "0 0"
+
+services:
+  router:
+    image: localhost/sat-teleop-runtime:dev
+    command: ["/scripts/router.sh"]
+    init: true
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: 1
+    volumes:
+      - ./scripts:/scripts:ro
+    networks:
+      vehicle_net:
+        ipv4_address: 192.168.231.254
+      ground_net:
+        ipv4_address: 192.168.232.254
+      ctl_net:
+        ipv4_address: 192.168.233.254
+
+  vehicle-net:
+    <<: *sidecar
+    environment:
+      ROUTE: default via 192.168.231.254
+      # SITL's ports are for the companion only (loopback).
+      EXTRA_NFT: /scripts/sitl.nft /scripts/ingest.nft
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./secrets/vehicle.conf:/secrets/wg0.conf:ro
+    networks:
+      vehicle_net:
+        ipv4_address: 192.168.231.10
+      ctl_net:
+        ipv4_address: 192.168.233.10
+      ingest_net:
+        ipv4_address: 192.168.234.10
+    # An external camera's RTP/H.264, host loopback only (docs/demo.md).
+    ports:
+      - "127.0.0.1:5700:5700/udp"
+    depends_on: [router]
+
+  relay-net:
+    <<: *sidecar
+    sysctls:
+      net.ipv4.ping_group_range: "0 0"
+      net.ipv4.ip_forward: 1
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./secrets/relay.conf:/secrets/wg0.conf:ro
+    networks:
+      ground_net:
+        ipv4_address: 192.168.232.20
+      ctl_net:
+        ipv4_address: 192.168.233.20
+    # MediaMTX shares this namespace: RTSP for QGC and WebRTC (page and ICE) for a browser, host
+    # loopback only.
+    ports:
+      - "127.0.0.1:8554:8554/tcp"
+      - "127.0.0.1:8889:8889/tcp"
+      - "127.0.0.1:8189:8189/udp"
+
+  ground-net:
+    <<: *sidecar
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./secrets/ground.conf:/secrets/wg0.conf:ro
+    networks:
+      ground_net:
+        ipv4_address: 192.168.232.30
+      ctl_net:
+        ipv4_address: 192.168.233.30
+    depends_on: [relay-net]
+
+  checks:
+    <<: *sidecar
+    environment:
+      ROUTE: 192.168.231.0/24 via 192.168.232.254
+    working_dir: /sat-teleop
+    volumes:
+      - ./scripts:/scripts:ro
+      - ./secrets/checks.conf:/secrets/wg0.conf:ro
+      - ./secrets/ctl-checks.key:/secrets/ctl-checks.key:ro
+      - ./secrets/vehicle.token:/secrets/vehicle.token:ro
+      - ./secrets/ground.token:/secrets/ground.token:ro
+      - ./secrets/job.token:/secrets/job.token:ro
+      - ./profiles:/sat-teleop/testbed/profiles:ro
+      - ./limits.toml:/sat-teleop/testbed/limits.toml:ro
+      - ./config/vehicle.toml:/sat-teleop/testbed/config/vehicle.toml:ro
+      - ../perf:/sat-teleop/perf:ro
+      - ../results:/sat-teleop/results
+      - snapshots:/snapshots
+    networks:
+      ground_net:
+        ipv4_address: 192.168.232.40
+      ctl_net:
+        ipv4_address: 192.168.233.40
+    depends_on: [relay-net]
+
+  # Vehicle companion: stamped H.264 over RTP to the relay, and MAVLink between SITL and
+  # mavlink-router through the gate, both inside WireGuard.
+  companion:
+    image: localhost/sat-teleop-runtime:dev
+    command:
+      [
+        "sat-teleop-vehicle", "run", "--config", "/config/vehicle.toml", "--limits", "/config/limits.toml",
+        "--ladder", "/config/ladder.toml", "--start-rung", "0",
+        "--metrics-addr", "192.168.233.10:9100", "--token-file", "/secrets/vehicle.token",
+        "--job-token-file", "/secrets/job.token",
+      ]
+    init: true
+    network_mode: service:vehicle-net
+    volumes:
+      # VEHICLE_CONFIG=vehicle-ingest.toml takes the video from the camera ingest (just demo).
+      - ./config/${VEHICLE_CONFIG:-vehicle.toml}:/config/vehicle.toml:ro
+      - ./limits.toml:/config/limits.toml:ro
+      - ./ladder.toml:/config/ladder.toml:ro
+      - ./secrets/ctl-ground.pub:/secrets/ctl-ground.pub:ro
+      - ./secrets/ctl-checks.pub:/secrets/ctl-checks.pub:ro
+      - ./secrets/vehicle.token:/secrets/vehicle.token:ro
+      - ./secrets/job.token:/secrets/job.token:ro
+      - snapshots:/snapshots
+    depends_on: [vehicle-net, sitl]
+
+  # ArduRover SITL (x86_64, under qemu on Apple Silicon). MAVLink on tcp 127.0.0.1:5760.
+  sitl:
+    image: localhost/sat-teleop-sitl:dev
+    platform: linux/amd64
+    init: true
+    network_mode: service:vehicle-net
+    depends_on: [vehicle-net]
+
+  # Test-pattern camera for the ingest path, in place of the Mac's webcam: started by
+  # `just ingest-check`, from the address the vehicle expects (and, for the refusal check, from
+  # one it does not).
+  feeder:
+    image: localhost/sat-teleop-runtime:dev
+    command: ["/scripts/feeder.sh"]
+    profiles: [feeder]
+    init: true
+    cap_add: [NET_ADMIN]
+    volumes:
+      - ./scripts:/scripts:ro
+    networks:
+      ingest_net:
+        ipv4_address: 192.168.234.5
+
+  mediamtx:
+    image: docker.io/bluenviron/mediamtx:1.21.3
+    network_mode: service:relay-net
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    depends_on: [relay-net]
+
+  # Routes MAVLink between the vehicle (10.77.0.1:14550) and the ground (10.77.0.3:14551).
+  mavlink-router:
+    image: localhost/sat-teleop-runtime:dev
+    command: ["mavlink-routerd", "-c", "/config/mavlink-router.conf"]
+    init: true
+    # It exits when 10.77.0.1 is not up yet (wg0 comes up in relay-net after start).
+    restart: on-failure
+    network_mode: service:relay-net
+    volumes:
+      - ./mavlink-router.conf:/config/mavlink-router.conf:ro
+    depends_on: [relay-net]
+
+  # Relay ingress: RTP from the vehicle in, RTSP publish to MediaMTX on 127.0.0.1.
+  relay:
+    image: localhost/sat-teleop-runtime:dev
+    command:
+      [
+        "sat-teleop-relay", "run", "--config", "/config/relay.toml", "--metrics-addr", "192.168.233.20:9100",
+        "--token-file", "/secrets/job.token",
+      ]
+    init: true
+    network_mode: service:relay-net
+    volumes:
+      - ./config/relay.toml:/config/relay.toml:ro
+      - ./secrets/job.token:/secrets/job.token:ro
+    depends_on: [relay-net, mediamtx]
+
+  # Ground adapter: MAVLink between mavlink-router and the ground stations (QGC on the host, checks),
+  # and their only command endpoint: control envelopes to the vehicle while it holds the lease.
+  ground:
+    image: localhost/sat-teleop-runtime:dev
+    command:
+      [
+        "sat-teleop-ground", "run", "--config", "/config/ground.toml", "--limits", "/config/limits.toml",
+        "--metrics-addr", "192.168.233.30:9100", "--token-file", "/secrets/ground.token",
+        "--job-token-file", "/secrets/job.token",
+      ]
+    init: true
+    network_mode: service:ground-net
+    volumes:
+      - ./config/ground.toml:/config/ground.toml:ro
+      - ./limits.toml:/config/limits.toml:ro
+      - ./secrets/ctl-ground.key:/secrets/ctl-ground.key:ro
+      - ./secrets/ground.token:/secrets/ground.token:ro
+      - ./secrets/job.token:/secrets/job.token:ro
+    depends_on: [ground-net]

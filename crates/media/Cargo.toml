@@ -1,0 +1,19 @@
+[package]
+name = "sat-teleop-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+gstreamer.workspace = true
+gstreamer-app.workspace = true
+gstreamer-video.workspace = true
+sat-teleop-policy = { path = "../policy" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tiny_http.workspace = true

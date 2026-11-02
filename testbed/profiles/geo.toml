@@ -1,0 +1,17 @@
+[profile]
+name = "geo"
+description = "GEO-like link: 300 ms each way (600 ms RTT), 10 ms jitter, 512 kbit/s up, 2048 kbit/s down."
+provenance = "synthetic"
+source = "Synthetic. Delay split evenly per direction to target 550-700 ms measured RTT; asymmetric rates typical of a small terminal, not measured."
+
+[uplink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 512
+burst_bytes = 6000
+
+[downlink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 2048
+burst_bytes = 6000

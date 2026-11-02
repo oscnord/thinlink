@@ -1,0 +1,20 @@
+# The simulated flight (`just sim-up`, docs/simulation.md): added to compose.yml, it swaps the rover for
+# an ArduCopter flown in Gazebo, which renders the camera that replaces the test pattern.
+# The topology, the link and every other service are the default testbed's.
+
+services:
+  # ArduCopter SITL, in the vehicle's namespace as the rover was; Gazebo's plugin reaches it over
+  # loopback on UDP 9002 (JSON, lockstep).
+  sitl:
+    image: localhost/sat-teleop-sitl-copter:dev
+
+  # Gazebo (physics and camera, headless). Its camera streams RTP/H.264 to the companion's ingest
+  # address in the same namespace, so the video enters the sender through the ingest and then the
+  # link like any frame. The memory cap keeps an overrun from taking the shared Podman machine's
+  # other containers with it.
+  sim:
+    image: localhost/sat-teleop-sim:dev
+    init: true
+    network_mode: service:vehicle-net
+    mem_limit: 1100m
+    depends_on: [vehicle-net, sitl]

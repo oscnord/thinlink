@@ -1,0 +1,17 @@
+# ArduRover 4.7.2 SITL overrides on top of the pinned rover.parm (loaded second, so these win):
+# SITL stops on its own when the vehicle stops refreshing control. Names, units and ranges are
+# those of ArduPilot git fb773567896014da007bca58358704d4a0d8516f: Rover/Parameters.cpp,
+# libraries/RC_Channel/RC_Channels_VarInfo.h; behaviour in Rover/Rover.cpp (gcs_failsafe_check)
+# and Rover/failsafe.cpp (failsafe_trigger). docs/testbed.md, "SITL".
+#
+# RC overrides (MANUAL_CONTROL is one) end this many seconds after the last one; the vehicle
+# refreshes the fresh setpoint every 0.2 s. Default 3.
+RC_OVERRIDE_TIME 0.5
+# GCS failsafe: without a heartbeat or MANUAL_CONTROL from MAV_GCS_SYSID (255) for FS_GCS_TIMEOUT
+# seconds (range 2-120, default 5), plus FS_TIMEOUT seconds (range 1-100, default 1.5) before the
+# action, switch to FS_ACTION. Only once a ground station has been seen.
+FS_GCS_ENABLE 1
+FS_GCS_TIMEOUT 2
+FS_TIMEOUT 1
+# 2 is Hold (the default, set here so the override file says what happens).
+FS_ACTION 2

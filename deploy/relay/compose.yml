@@ -1,0 +1,41 @@
+# The relay, MediaMTX and mavlink-router on a public server, started by `docker compose up -d` in
+# /opt/sat-teleop (deploy/relay/provision.sh). Host networking: they bind the overlay address that
+# WireGuard (wg-quick@wg0, on the host) brings up, and restart until it exists. The server never
+# transcodes, so it needs no more than a small VPS; the memory caps below are guesses, not
+# measurements (docs/deploy.md).
+name: sat-teleop-relay
+
+services:
+  mediamtx:
+    image: docker.io/bluenviron/mediamtx:1.21.3@sha256:59e43552f3be43695b70c19424dc2a42fcec18075f88d91561a24ac5d70a586c
+    network_mode: host
+    restart: unless-stopped
+    mem_limit: 128m
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+  mavlink-router:
+    image: localhost/sat-teleop-runtime:amd64
+    command: ["mavlink-routerd", "-c", "/config/mavlink-router.conf"]
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    mem_limit: 32m
+    volumes:
+      - ./mavlink-router.conf:/config/mavlink-router.conf:ro
+
+  relay:
+    image: localhost/sat-teleop-runtime:amd64
+    command:
+      [
+        "sat-teleop-relay", "run", "--config", "/config/relay.toml", "--metrics-addr", "127.0.0.1:9100",
+        "--token-file", "/secrets/job.token",
+      ]
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    mem_limit: 256m
+    volumes:
+      - ./relay.toml:/config/relay.toml:ro
+      - ./job.token:/secrets/job.token:ro
+    depends_on: [mediamtx]

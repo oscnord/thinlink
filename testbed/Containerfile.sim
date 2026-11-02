@@ -1,0 +1,71 @@
+# The simulated flight's physics and camera (docs/simulation.md): Gazebo Harmonic (gz-sim 8.15.0) with
+# ardupilot_gazebo at a pinned commit, headless, rendering with Mesa's software rasteriser (no GPU in
+# the Podman machine). Built natively (arm64 on Apple Silicon) by `just sim-image`; Ubuntu 22.04 is the
+# release Harmonic and ardupilot_gazebo support. Everything is baked in: nothing is fetched at run time.
+# Base: ubuntu:22.04 by its multi-platform index digest (resolved 2026-11-02).
+ARG BASE=docker.io/library/ubuntu@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11
+
+FROM ${BASE} AS gazebo-repo
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates gnupg \
+    && rm -rf /var/lib/apt/lists/*
+# OSRF's archive key, https://packages.osrfoundation.org/gazebo.gpg, checked by hash.
+ADD --checksum=sha256:15d0300460e0c9c0efb21fa9770c0bf228988a07d71c4fac985c2161954a25a4 \
+    https://packages.osrfoundation.org/gazebo.gpg /usr/share/keyrings/gazebo.gpg.asc
+RUN gpg --dearmor < /usr/share/keyrings/gazebo.gpg.asc > /usr/share/keyrings/gazebo.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/gazebo.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable jammy main" \
+        > /etc/apt/sources.list.d/gazebo.list
+
+# ardupilot_gazebo's plugins: ArduPilot's JSON interface, the camera streamer and the models.
+FROM gazebo-repo AS build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake pkg-config rapidjson-dev libopencv-dev \
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgz-sim8-dev=8.15.0-1~jammy \
+    && rm -rf /var/lib/apt/lists/*
+ADD --checksum=sha256:0f6db0f476248f64ecdc39ae9da602cf4d98511cc18bab4c829460a95aa2e94e \
+    https://github.com/ArduPilot/ardupilot_gazebo/archive/f116b03552d05c8d0b0bed5ed67033a1183121d1.tar.gz /src.tar.gz
+RUN mkdir /src && tar -xzf /src.tar.gz -C /src --strip-components=1
+# The camera plugin streams only after a message on its enable topic; nothing sends one here, so it
+# starts with the first frame instead. The substitution is checked.
+RUN sed -i 's/bool requestedStartStreaming{false};/bool requestedStartStreaming{true};/' /src/src/GstCameraPlugin.cc \
+    && grep -q 'requestedStartStreaming{true}' /src/src/GstCameraPlugin.cc
+# One job: the plugin's C++ is heavy and the Podman machine's memory is shared (build_memory in the justfile).
+RUN cmake -S /src -B /src/build -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    && cmake --build /src/build -j1
+
+FROM gazebo-repo
+# The -dev packages of the rendering and physics plugins are installed for files the runtime packages
+# lack on arm64: the plugin names the loader looks for, and the ogre2 shader media.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gz-sim8-cli=8.15.0-1~jammy libgz-sim8=8.15.0-1~jammy libgz-sim8-plugins=8.15.0-1~jammy \
+        libgz-rendering8-ogre2=8.3.0-1~jammy libgz-rendering8-ogre2-dev=8.3.0-1~jammy \
+        libgz-physics7-dartsim=7.9.0-1~jammy libgz-physics7-dartsim-dev=7.9.0-1~jammy \
+        libegl1 libgl1-mesa-dri libglx-mesa0 xvfb libdebuginfod1 gz-transport13-cli \
+        libopencv-core4.5d libopencv-imgproc4.5d libopencv-imgcodecs4.5d \
+        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /usr/share/gz/gz-rendering8/ogre2/src \
+    && ln -s ../media /usr/share/gz/gz-rendering8/ogre2/src/media
+COPY --from=build /src/build/*.so /opt/ardupilot_gazebo/plugins/
+COPY --from=build /src/models /opt/ardupilot_gazebo/models
+COPY testbed/sim/world.sdf /opt/sim/world.sdf
+COPY testbed/sim/models /opt/sim/models
+# The camera: the copter's gimbal camera streams RTP/H.264 to the companion's ingest port. It is the
+# stock gimbal model with its stream pointed at the vehicle's ingest address, 640x360 at 15 frames
+# per second. Each substitution is checked, so a model that changed under a new pin fails the build.
+RUN f=/opt/ardupilot_gazebo/models/gimbal_small_3d/model.sdf \
+    && sed -i \
+        -e 's#<height>480</height>#<height>360</height>#' \
+        -e 's#<update_rate>10</update_rate>#<update_rate>15</update_rate>#' \
+        -e 's#<udp_host>127.0.0.1</udp_host>#<udp_host>192.168.234.10</udp_host>#' \
+        -e 's#<udp_port>5600</udp_port>#<udp_port>5700</udp_port>#' $f \
+    && grep -q '<height>360</height>' $f && grep -q '<update_rate>15</update_rate>' $f \
+    && grep -q '<udp_host>192.168.234.10</udp_host>' $f && grep -q '<udp_port>5700</udp_port>' $f
+# GZ_IP keeps gz-transport's discovery on loopback: the simulator shares the vehicle's namespace, and
+# its other interfaces face the link.
+ENV GZ_SIM_RESOURCE_PATH=/opt/ardupilot_gazebo/models:/opt/sim/models \
+    GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/ardupilot_gazebo/plugins \
+    GZ_IP=127.0.0.1
+# `gz sim -s` is the server only; --headless-rendering renders through EGL, and Xvfb gives Mesa's
+# software rasteriser a display to attach to.
+ENTRYPOINT ["xvfb-run", "-a", "gz", "sim", "-s", "-r", "--headless-rendering", "-v2", "/opt/sim/world.sdf"]

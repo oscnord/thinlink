@@ -1,0 +1,44 @@
+# sat-teleop-ground MAVLink bridge (docs/testbed.md). Unknown keys are rejected.
+
+# mavlink-router's client endpoint sends telemetry here, on the ground's overlay address.
+listen = "10.77.0.3:14551"
+# mavlink-router's overlay address; it sends from a port of its own choosing.
+relay = "10.77.0.1"
+# Ground stations. Each gets telemetry from its own socket and is heard on that socket:
+# QGroundControl on the host (its default UDP link listens on 14550 and replies to the sender) and
+# the lab runner in `checks`.
+gcs = ["host.containers.internal:14550", "192.168.232.40:14552"]
+
+# Control envelopes (docs/architecture.md, "Control protocol"): the adapter's control socket on its
+# overlay address, and the vehicle's control endpoint.
+control = "10.77.0.3:7701"
+vehicle = "10.77.0.2:7700"
+# The vehicle's name (`vehicle_id` of its config): every signed control message is made for it.
+vehicle_id = "testbed"
+# This machine's clock bound; the vehicle reports its own and the output judges the video's age by
+# the sum (docs/measurement.md, "Clock assumption"). The testbed's containers share the VM's clock,
+# so the bound is 0; without a fresh bound on both sides no age is trusted and nothing shows as live.
+clock = "shared"
+# The key the adapter signs its envelopes with; the vehicle holds the public half.
+control_key = "/secrets/ctl-ground.key"
+
+[video]
+# The ground's freshness output (docs/qgc.md). MediaMTX's stream on the relay, over ground_net,
+# pulled over TCP without a jitter buffer wait: nothing is lost or reordered on that hop.
+source = "rtsp://192.168.232.20:8554/live"
+# QGroundControl on the host (UDP h.264 video, its default 0.0.0.0:5600) and `lab check qgc-status`
+# in checks.
+destinations = ["host.containers.internal:5600", "192.168.232.40:5602"]
+# Announce the output as the vehicle's camera (MAVLink component 100) with this stream URI; QGC
+# 5.1.5 then plays it whatever its video source setting (docs/qgc.md). Remove the line to keep QGC
+# on a source of its own, such as MediaMTX's RTSP stream.
+camera_uri = "udp://0.0.0.0:5600"
+
+[video.encoding]
+# The source's size and rate; more bitrate than the uplink's 500 kbit/s because the hop to QGC is
+# local; a keyframe every second so a station that starts late gets a picture soon.
+width = 640
+height = 360
+fps = 15
+bitrate_kbit = 2000
+keyframe_interval_ms = 1000

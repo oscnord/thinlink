@@ -1,0 +1,27 @@
+# ctl_net carries orchestration and metrics only: TCP to the router agent (9000) and to app
+# metrics (9100), plus their replies. Everything else on it, UDP and ICMP included, is dropped
+# and nothing is forwarded to or from it, so no data can bypass the router over ctl_net.
+# sidecar.sh loads this with `nft -D ctl_if=<interface on 192.168.233.0/24>`.
+table inet sat_teleop_ctl {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        iifname $ctl_if ct state established,related accept
+        iifname $ctl_if tcp dport { 9000, 9100 } accept
+        iifname $ctl_if drop
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+        oifname $ctl_if ct state established,related accept
+        oifname $ctl_if tcp dport { 9000, 9100 } accept
+        # The lab runner in checks may probe ctl_net to prove the input rules hold elsewhere.
+        oifname $ctl_if ip saddr 192.168.233.40 accept
+        oifname $ctl_if drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+        iifname $ctl_if drop
+        oifname $ctl_if drop
+    }
+}

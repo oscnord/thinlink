@@ -1,0 +1,22 @@
+# The ingest network carries one thing: RTP/H.264 from an external camera to the companion's UDP
+# port 5700, and nothing back. Everything else arriving on it is dropped, nothing is forwarded to
+# or from it, and nothing leaves through it, so it cannot carry data around the impaired link.
+# sidecar.sh loads this with `nft -D ingest_if=<interface on 192.168.234.0/24>`.
+table inet sat_teleop_ingest {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        iifname $ingest_if udp dport 5700 accept
+        iifname $ingest_if counter drop
+    }
+
+    chain output {
+        type filter hook output priority filter; policy accept;
+        oifname $ingest_if counter drop
+    }
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+        iifname $ingest_if counter drop
+        oifname $ingest_if counter drop
+    }
+}

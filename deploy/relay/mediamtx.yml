@@ -1,0 +1,32 @@
+# MediaMTX on the relay: RTSP only, over the overlay. The relay publishes path `live` from this host;
+# the ground adapter reads it over WireGuard. Settings not listed keep the defaults of
+# bluenviron/mediamtx:1.21.3.
+logLevel: info
+
+authInternalUsers:
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+        path: live
+  # Only overlay peers may watch; the firewall keeps the rest out as well.
+  - user: any
+    pass:
+    ips: ["10.77.0.0/24"]
+    permissions:
+      - action: read
+        path: live
+
+rtsp: true
+rtspTransports: [tcp]
+rtspAddress: :8554
+
+webrtc: false
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+paths:
+  live: {}

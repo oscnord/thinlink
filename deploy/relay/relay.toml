@@ -1,0 +1,18 @@
+# /opt/sat-teleop/relay.toml: the relay on a public server. Unknown keys are rejected.
+
+# RTP from the vehicle arrives on the overlay address, inside WireGuard.
+listen = "10.77.0.1:5004"
+# MediaMTX on the same host accepts publishing from localhost only (mediamtx.yml).
+publish = "rtsp://127.0.0.1:8554/live"
+
+[feedback]
+listen = "10.77.0.1:5006"
+# Only the vehicle's probes are answered.
+vehicle = "10.77.0.2"
+
+# The job API for retained snapshots and crops. Every request needs the bearer token (job.token), and
+# the host firewall lets only the vehicle reach the first port and only the ground the second
+# (nftables.conf).
+[detail]
+vehicle = "10.77.0.1:8080"
+ground = "10.77.0.1:8081"

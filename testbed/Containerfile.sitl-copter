@@ -1,0 +1,20 @@
+# ArduCopter 4.7.2 SITL, the official statically linked x86_64 build (git fb773567896014da007bca58358704d4a0d8516f,
+# the commit of the ArduRover pin). Built by `just sim-image` for linux/amd64; on Apple Silicon it runs under the
+# VM's qemu binfmt. Its physics come from Gazebo through the JSON interface (testbed/Containerfile.sim). docs/simulation.md.
+# Base: as testbed/Containerfile.sitl.
+FROM docker.io/library/debian@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+ADD --checksum=sha256:caed35e4cb796ec06cac40b09566a18251771486b1cbac5e2bf16b7a5ed5045d --chmod=755 \
+    https://firmware.ardupilot.org/Copter/stable-4.7.2/SITL_x86_64_linux_gnu/arducopter /sitl/arducopter
+ADD --checksum=sha256:5e01345b45d1c6190b28bece5638bbdd4cf1cce35e05bbbf480ab24d2b51aa0e --chmod=644 \
+    https://raw.githubusercontent.com/ArduPilot/ardupilot/fb773567896014da007bca58358704d4a0d8516f/Tools/autotest/default_params/copter.parm /sitl/copter.parm
+ADD --checksum=sha256:4aee140cbb29b967e4519e4c84c4b389a2172c30e542f36b4fba4c118b4d4750 --chmod=644 \
+    https://raw.githubusercontent.com/ArduPilot/ardupilot/fb773567896014da007bca58358704d4a0d8516f/Tools/autotest/default_params/gazebo-iris.parm /sitl/gazebo-iris.parm
+# The gimbal's servo outputs, from ardupilot_gazebo at the commit testbed/Containerfile.sim builds.
+ADD --checksum=sha256:abd1023d9162d31e4e852b0bf68673fd1576deb136be5b35ff52745e603a8be6 --chmod=644 \
+    https://raw.githubusercontent.com/ArduPilot/ardupilot_gazebo/f116b03552d05c8d0b0bed5ed67033a1183121d1/config/gazebo-iris-gimbal.parm /sitl/gazebo-iris-gimbal.parm
+COPY --chmod=644 testbed/sat-teleop-copter.parm /sitl/sat-teleop-copter.parm
+WORKDIR /var/lib/sitl
+# Serial 0 is MAVLink on tcp:5760; SITL waits there until a client (the companion) connects.
+ENTRYPOINT ["/sitl/arducopter", "--model", "JSON", "--speedup", "1", "--slave", "0", "--sim-address=127.0.0.1", "-I0", \
+    "--defaults", "/sitl/copter.parm,/sitl/gazebo-iris.parm,/sitl/gazebo-iris-gimbal.parm,/sitl/sat-teleop-copter.parm"]
+CMD ["--home", "-35.363262,149.165237,584,353"]

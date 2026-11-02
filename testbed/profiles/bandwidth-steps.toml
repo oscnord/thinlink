@@ -1,0 +1,41 @@
+[profile]
+name = "bandwidth-steps"
+description = "GEO with the uplink rate stepping 512, 128, 64, 256, 512 kbit/s every 15 s."
+provenance = "synthetic"
+source = "Synthetic. The geo profile plus scripted uplink rate steps, not measured."
+
+[uplink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 512
+burst_bytes = 6000
+
+[downlink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 2048
+burst_bytes = 6000
+
+[[timeline]]
+at_ms = 15000
+action = "set-rate"
+direction = "uplink"
+rate_kbit = 128
+
+[[timeline]]
+at_ms = 30000
+action = "set-rate"
+direction = "uplink"
+rate_kbit = 64
+
+[[timeline]]
+at_ms = 45000
+action = "set-rate"
+direction = "uplink"
+rate_kbit = 256
+
+[[timeline]]
+at_ms = 60000
+action = "set-rate"
+direction = "uplink"
+rate_kbit = 512

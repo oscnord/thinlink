@@ -1,0 +1,37 @@
+[profile]
+name = "lte-bad"
+description = "Poor LTE: about 60 ms each way, 30 ms jitter, 800 kbit/s up, bursty loss."
+provenance = "synthetic"
+source = "Synthetic. Gilbert-Elliott parameters chosen for about 5 percent mean loss in bursts of about 5 packets, not measured."
+
+[uplink]
+delay_ms = 60
+jitter_ms = 30
+jitter_distribution = "pareto"
+rate_kbit = 800
+burst_bytes = 6000
+
+# Gilbert-Elliott: bad-state share = p / (p + r) = 1.34 / 21.34 = 6.3 %,
+# mean loss = share * one_minus_h = 6.3 % * 80 % = 5.0 %, mean bad burst = 1 / r = 5 packets.
+[uplink.loss]
+model = "gilbert-elliott"
+p = 1.34
+r = 20
+one_minus_h = 80
+one_minus_k = 0
+
+[downlink]
+delay_ms = 60
+jitter_ms = 30
+jitter_distribution = "pareto"
+rate_kbit = 3000
+burst_bytes = 8000
+
+# Gilbert-Elliott: bad-state share = p / (p + r) = 1.34 / 21.34 = 6.3 %,
+# mean loss = share * one_minus_h = 6.3 % * 80 % = 5.0 %, mean bad burst = 1 / r = 5 packets.
+[downlink.loss]
+model = "gilbert-elliott"
+p = 1.34
+r = 20
+one_minus_h = 80
+one_minus_k = 0

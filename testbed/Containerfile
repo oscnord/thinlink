@@ -1,0 +1,93 @@
+# rust:1.99.0-trixie by its multi-platform index digest (resolved 2026-11-01): the tag is re-published
+# when Debian's packages change, which would miss every layer below.
+FROM --platform=$BUILDPLATFORM docker.io/library/rust:1.99.0-trixie@sha256:81015672d6939b0265f09adf96d5de125482bb1330106076956b0518e74edc90 AS build
+# Debian images delete downloaded packages after every apt run; the cache mounts below only help
+# if they are kept.
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+ && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+ && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-bad1.0-dev \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-rtsp gstreamer1.0-tools
+RUN rustup component add rustfmt clippy
+RUN mkdir -p /cache/cargo /cache/target && chmod 777 /cache/cargo /cache/target
+ARG CARGO_BUILD_JOBS=1
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
+
+# The binaries for the image's architecture. Both stages run on the build host's own architecture:
+# rustc segfaults under qemu emulation on Apple Silicon (`rustc -vV` itself), so an amd64 image is
+# cross-built rather than built emulated.
+# CARGO_FEATURES is empty for a release image. The testbed's images pass
+# `--features sat-teleop-vehicle/testbed` (the justfile's `image` recipe): the vehicle's test hooks and
+# its SITL allowance in real mode exist only in a build with it, and a build without refuses a
+# config that names them.
+FROM build AS bins-native
+ARG CARGO_FEATURES=""
+# One build cache per architecture: a cargo target directory from another host triple is rebuilt from
+# scratch, so sharing it would empty the native cache whenever the other architecture builds.
+ARG BUILDARCH
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target,id=sat-teleop-target-$BUILDARCH \
+    cargo build --release --locked $CARGO_FEATURES \
+ && install -D -t /out target/release/lab target/release/sat-teleop-vehicle target/release/sat-teleop-relay \
+    target/release/sat-teleop-ground
+
+FROM build AS bins-cross-amd64
+ARG CARGO_FEATURES=""
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    dpkg --add-architecture amd64 \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends crossbuild-essential-amd64 \
+    libgstreamer1.0-dev:amd64 libgstreamer-plugins-base1.0-dev:amd64 libgstreamer-plugins-bad1.0-dev:amd64
+RUN rustup target add x86_64-unknown-linux-gnu
+ENV PKG_CONFIG_ALLOW_CROSS=1 \
+    PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig \
+    CC_x86_64_unknown_linux_gnu=x86_64-linux-gnu-gcc \
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-linux-gnu-gcc
+WORKDIR /src
+COPY . .
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target,id=sat-teleop-target-cross-amd64 \
+    cargo build --release --locked --target x86_64-unknown-linux-gnu $CARGO_FEATURES \
+ && install -D -t /out target/x86_64-unknown-linux-gnu/release/lab target/x86_64-unknown-linux-gnu/release/sat-teleop-vehicle \
+    target/x86_64-unknown-linux-gnu/release/sat-teleop-relay target/x86_64-unknown-linux-gnu/release/sat-teleop-ground
+
+# debian:trixie-slim by its multi-platform index digest (resolved 2026-11-01), the same as the SITL
+# image's base; a tag would follow whichever platform was pulled last.
+FROM docker.io/library/debian@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS runtime-base
+RUN rm -f /etc/apt/apt.conf.d/docker-clean \
+ && echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+ && apt-get install -y --no-install-recommends \
+    gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly gstreamer1.0-libav gstreamer1.0-rtsp gstreamer1.0-tools \
+    gstreamer1.0-x \
+    iproute2 nftables wireguard-tools iputils-ping tcpdump ca-certificates procps curl chrony
+# mavlink-router v4 release binary for the image's architecture, pinned by SHA-256.
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      arm64) name=mavlink-routerd-glibc-aarch64 sum=fad7a5ee509cdcbd1b4569c2d9da356b901f2d521d45c970473ceb6f5b8e0619 ;; \
+      amd64) name=mavlink-routerd-glibc-x86_64 sum=785b9d653dd13f47716cd0c4a74f68126d39dfa3abb2e91ed60245122c5266a1 ;; \
+      *) echo "no mavlink-router build for $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL -o /usr/local/bin/mavlink-routerd \
+    "https://github.com/mavlink-router/mavlink-router/releases/download/v4/$name" \
+ && echo "$sum  /usr/local/bin/mavlink-routerd" | sha256sum -c - \
+ && chmod 755 /usr/local/bin/mavlink-routerd
+
+# `runtime` carries the binaries built for the build host's own architecture (arm64 on Apple Silicon,
+# which is also the Pi's), `runtime-amd64` the cross-built ones (`just image-for amd64`).
+FROM runtime-base AS runtime
+COPY --from=bins-native /out/ /usr/local/bin/
+
+FROM runtime-base AS runtime-amd64
+COPY --from=bins-cross-amd64 /out/ /usr/local/bin/

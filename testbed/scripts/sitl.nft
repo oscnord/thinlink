@@ -1,0 +1,12 @@
+# SITL listens on every address of the vehicle's network namespace: MAVLink on tcp 5760 (serial 0),
+# 5762 and 5763 (serial 1 and 2) and RC input on udp 5501. Only the companion, over loopback, may
+# reach them; otherwise a host on the overlay could talk to the autopilot past the vehicle's gate.
+# sidecar.sh loads this when EXTRA_NFT names it.
+table inet sat_teleop_sitl {
+    chain input {
+        type filter hook input priority filter; policy accept;
+        iif lo accept
+        tcp dport { 5760, 5762, 5763 } drop
+        udp dport 5501 drop
+    }
+}

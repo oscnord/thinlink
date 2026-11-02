@@ -1,0 +1,8 @@
+[[fixture]]
+name = "foreman_cif.y4m"
+url = "https://media.xiph.org/video/derf/y4m/foreman_cif.y4m"
+sha256 = "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b"
+size_bytes = 45621044
+license = "Listed in Xiph.org derf's collection as believed freely redistributable; see the sequence readme files on the derf page for any additional restrictions"
+source = "https://media.xiph.org/video/derf/ (original: http://ise.stanford.edu/Video/foreman.qcif.gz)"
+notes = "352x288 CIF, 300 frames, 29.97 fps, 4:2:0 y4m"

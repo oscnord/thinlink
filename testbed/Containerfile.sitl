@@ -1,0 +1,16 @@
+# ArduPilot ArduRover 4.7.2 SITL, the official statically linked x86_64 build (git fb773567896014da007bca58358704d4a0d8516f).
+# Built by `just sitl-image` for linux/amd64; on Apple Silicon it runs under the VM's qemu binfmt. docs/testbed.md.
+# Base: debian:trixie-slim by its multi-platform index digest (resolved 2026-11-01), so the platform
+# flag picks amd64 without pulling into or retagging the shared local `debian:trixie-slim`.
+FROM docker.io/library/debian@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+ADD --checksum=sha256:f453fd8217b9d798c873e5c424e139a2a3597b52e31658f76b2c177b523391af --chmod=755 \
+    https://firmware.ardupilot.org/Rover/stable-4.7.2/SITL_x86_64_linux_gnu/ardurover /sitl/ardurover
+ADD --checksum=sha256:6479879d3e625854a6c32cb4d3fe231bab81d935e07904eac8a411fd6f971bc4 --chmod=644 \
+    https://raw.githubusercontent.com/ArduPilot/ardupilot/fb773567896014da007bca58358704d4a0d8516f/Tools/autotest/default_params/rover.parm /sitl/rover.parm
+# The testbed's overrides, loaded after rover.parm: GCS failsafe and RC override timeout.
+COPY --chmod=644 testbed/sat-teleop.parm /sitl/sat-teleop.parm
+# SITL keeps its parameters (eeprom.bin) and logs in the working directory.
+WORKDIR /var/lib/sitl
+# Serial 0 is MAVLink on tcp:5760; SITL waits there until a client (the companion) connects.
+ENTRYPOINT ["/sitl/ardurover", "--model", "rover", "--defaults", "/sitl/rover.parm,/sitl/sat-teleop.parm", "--speedup", "1", "-I0"]
+CMD ["--home", "59.3293,18.0686,10,0"]

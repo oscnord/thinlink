@@ -1,0 +1,40 @@
+# The ground adapter on the operator's laptop, in a container with its own WireGuard tunnel to the relay
+# (deploy/ground/compose.yml). QGroundControl runs on the same machine. Unknown keys are rejected.
+
+# mavlink-router's client endpoint sends telemetry here, on the ground's overlay address.
+listen = "10.77.0.3:14551"
+# mavlink-router's overlay address.
+relay = "10.77.0.1"
+# QGroundControl on this machine, on its default UDP link (14550). `host.containers.internal` is the
+# machine itself from inside a Podman container.
+gcs = ["host.containers.internal:14550"]
+control = "10.77.0.3:7701"
+vehicle = "10.77.0.2:7700"
+# The vehicle's name, the `vehicle_id` of its vehicle.toml: every signed control message is made for it.
+vehicle_id = "vehicle-1"
+# This machine's clock bound; the vehicle reports its own and the picture is LIVE only within the sum
+# (docs/real-vehicle.md, "Clocks"). Without a fresh bound the picture reads AGE UNKNOWN, never LIVE.
+# On a Linux machine with chrony, the container asks the host's chronyd over its command port; install
+# chrony-ground.conf on the host first. A container on a Mac runs in the Podman VM, which has no chrony
+# and whose clock stops while the laptop sleeps: measure your machine's bound and set it instead,
+#   clock = { fixed = 50 }
+# which holds until the VM's clock steps by more than that (after a sleep), then reads AGE UNKNOWN until
+# the container restarts.
+clock = { chrony_at = "host.containers.internal" }
+# The key the adapter signs its envelopes with (`just deploy-keys` makes it); the vehicle holds the
+# public half.
+control_key = "/secrets/ctl-ground.key"
+
+[video]
+# MediaMTX on the relay, over the tunnel and TCP.
+source = "rtsp://10.77.0.1:8554/live"
+# QGroundControl's default UDP video port.
+destinations = ["host.containers.internal:5600"]
+camera_uri = "udp://0.0.0.0:5600"
+
+[video.encoding]
+width = 640
+height = 360
+fps = 15
+bitrate_kbit = 2000
+keyframe_interval_ms = 1000

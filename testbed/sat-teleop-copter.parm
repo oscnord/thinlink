@@ -1,0 +1,48 @@
+# ArduCopter 4.7.2 SITL overrides on top of the pinned copter.parm, gazebo-iris.parm and the gimbal's
+# parameters (loaded last, so these win). Names, values and units are those of ArduPilot git
+# fb773567896014da007bca58358704d4a0d8516f: ArduCopter/Parameters.cpp, ArduCopter/events.cpp,
+# ArduCopter/radio.cpp, ArduCopter/AP_Arming_Copter.cpp, libraries/RC_Channel/RC_Channels_VarInfo.h.
+# docs/simulation.md, "Failsafes".
+#
+# The simulator has a radio the autopilot always sees, parked at roll, pitch and yaw 1500 us and
+# throttle 1000 us (read from RC_CHANNELS while nothing was sent). MANUAL_CONTROL overrides it and
+# the override ends 0.5 s after the last message, so the parked throttle returns. With the stock
+# FS_THR_VALUE of 975 that is not a failsafe, and a Loiter copter descended at the full rate into
+# the ground when the stream stopped (measured). The values below make it one.
+#
+# RC overrides (MANUAL_CONTROL is one) end this many seconds after the last one; the vehicle
+# refreshes the fresh setpoint every 0.2 s. Default 3.
+RC_OVERRIDE_TIME 0.5
+# Radio failsafe: the throttle below FS_THR_VALUE (us, range 910-1100, default 975) for three samples.
+# 1085 puts the parked 1000 us under it, and any MANUAL_CONTROL throttle from z 85 clear of it. The
+# pre-arm check wants the throttle's minimum above FS_THR_VALUE + 10, so RC3_MIN is raised to 1100,
+# and RC3_MAX lowered to 1900 to keep the middle of the stick, MANUAL_CONTROL z 500, at the middle of
+# the throttle (hold altitude in AltHold and Loiter). The action, 7, is Brake or Land: Brake stops
+# the copter and holds it for as long as the lease lives (Land only if there is no position
+# estimate). Arming then needs the setpoint stream: the pre-arm check refuses a throttle below the
+# failsafe value.
+# The default RC_OPTIONS (bit 5) refuses to arm unless the throttle control input is zero, which the
+# middle of the stick, the setpoint stream's neutral, is not. Clearing it leaves the pre-arm checks
+# of roll, pitch and yaw (neutral) and of throttle too high in the manual-throttle modes.
+RC_OPTIONS 0
+RC3_MIN 1100
+RC3_MAX 1900
+FS_THR_VALUE 1085
+FS_THR_ENABLE 7
+# GCS failsafe (no heartbeat or MANUAL_CONTROL from MAV_GCS_SYSID 255, which is what a lost lease or
+# a lost ground adapter looks like): 5 is Land. Timeout range 2-120 s, default 5. It lands what the
+# brake was holding.
+FS_GCS_ENABLE 5
+FS_GCS_TIMEOUT 2
+# Bits of what a failsafe leaves alone: 0 a mission in Auto, 2 a guided flight, 3 a landing, on the
+# radio failsafe (so a guided takeoff or a landing needs no stick; the GCS failsafe still lands
+# them). The default, 16, would skip the GCS failsafe in the pilot-controlled modes.
+FS_OPTIONS 13
+# The gimbal. The simulator's radio parks channels 6 to 8 low, which the stock gimbal parameters read
+# as roll, pitch and yaw at their limits (-30, -135 and -160 degrees): the camera looked up and back at
+# its own mount (/gimbal/cmd_* read -30, +135 and -120 degrees at the joints). Neutral mode holds
+# MNT1_NEUTRAL_* (degrees, body frame) instead: level in roll and yaw, pitched 20 degrees down, which keeps the horizon below the in-picture stamp.
+MNT1_DEFLT_MODE 1
+MNT1_NEUTRAL_X 0
+MNT1_NEUTRAL_Y -20
+MNT1_NEUTRAL_Z 0

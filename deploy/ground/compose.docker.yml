@@ -1,0 +1,6 @@
+# Add with `-f compose.yml -f compose.docker.yml` under Docker: it has no name for the host machine,
+# which the adapter sends QGroundControl's telemetry and video to. Podman provides the name itself.
+services:
+  net:
+    extra_hosts:
+      - "host.containers.internal:host-gateway"

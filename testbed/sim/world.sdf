@@ -1,0 +1,119 @@
+<?xml version="1.0" ?>
+<!-- The simulated flight's world (docs/simulation.md): ardupilot_gazebo's iris_runway, with
+     scenery added so that the camera sees edges and texture all around, not a runway only.
+     The runway and grass textures come from ardupilot_gazebo; everything else here is primitives.
+     No shadows, no GUI services and few models: the software renderer's memory is what limits the
+     simulation in the Podman machine (docs/simulation.md, "Resources"). -->
+<sdf version="1.9">
+  <world name="sat_teleop">
+    <physics name="1ms" type="ignore">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.25</real_time_factor>
+    </physics>
+
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+
+    <scene>
+      <ambient>1.0 1.0 1.0</ambient>
+      <background>0.6 0.75 0.9</background>
+      <sky></sky>
+    </scene>
+
+    <spherical_coordinates>
+      <latitude_deg>-35.363262</latitude_deg>
+      <longitude_deg>149.165237</longitude_deg>
+      <elevation>584</elevation>
+      <heading_deg>0</heading_deg>
+      <surface_model>EARTH_WGS84</surface_model>
+    </spherical_coordinates>
+
+    <light type="directional" name="sun">
+      <cast_shadows>false</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.8 0.8 0.8 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <include>
+      <uri>model://field</uri>
+      <pose degrees="true">-29 545 0 0 0 363</pose>
+    </include>
+
+    <include>
+      <uri>model://iris_with_gimbal</uri>
+      <pose degrees="true">0 0 0.195 0 0 90</pose>
+    </include>
+
+    <!-- Scenery: two rings of pylons and blocks around the take-off point and three gates to fly
+         through towards the north. Visual only: the renderer's memory grows with every model, so
+         there are few. -->
+    <model name="pylon_0"><static>true</static><pose degrees="true">30.0 0.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><cylinder><radius>0.6</radius><length>6</length></cylinder></geometry><material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+    </link></model>
+    <model name="block_1"><static>true</static><pose degrees="true">15.0 26.0 3.00 0 0 17</pose><link name="l">
+      <visual name="v"><geometry><box><size>3 3 6</size></box></geometry><material><ambient>0.95 0.7 0.1 1</ambient><diffuse>0.95 0.7 0.1 1</diffuse></material></visual>
+    </link></model>
+    <model name="pylon_2"><static>true</static><pose degrees="true">-15.0 26.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><cylinder><radius>0.6</radius><length>6</length></cylinder></geometry><material><ambient>0.2 0.5 0.9 1</ambient><diffuse>0.2 0.5 0.9 1</diffuse></material></visual>
+    </link></model>
+    <model name="block_3"><static>true</static><pose degrees="true">-30.0 0.0 3.00 0 0 51</pose><link name="l">
+      <visual name="v"><geometry><box><size>3 3 6</size></box></geometry><material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material></visual>
+    </link></model>
+    <model name="pylon_4"><static>true</static><pose degrees="true">-15.0 -26.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><cylinder><radius>0.6</radius><length>6</length></cylinder></geometry><material><ambient>0.3 0.7 0.3 1</ambient><diffuse>0.3 0.7 0.3 1</diffuse></material></visual>
+    </link></model>
+    <model name="block_5"><static>true</static><pose degrees="true">15.0 -26.0 3.00 0 0 85</pose><link name="l">
+      <visual name="v"><geometry><box><size>3 3 6</size></box></geometry><material><ambient>0.7 0.3 0.8 1</ambient><diffuse>0.7 0.3 0.8 1</diffuse></material></visual>
+    </link></model>
+    <model name="pylon_6"><static>true</static><pose degrees="true">52.7 28.8 5.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><cylinder><radius>0.6</radius><length>10</length></cylinder></geometry><material><ambient>0.95 0.7 0.1 1</ambient><diffuse>0.95 0.7 0.1 1</diffuse></material></visual>
+    </link></model>
+    <model name="block_7"><static>true</static><pose degrees="true">1.4 60.0 5.00 0 0 17</pose><link name="l">
+      <visual name="v"><geometry><box><size>3 3 10</size></box></geometry><material><ambient>0.2 0.5 0.9 1</ambient><diffuse>0.2 0.5 0.9 1</diffuse></material></visual>
+    </link></model>
+    <model name="pylon_8"><static>true</static><pose degrees="true">-51.2 31.2 5.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><cylinder><radius>0.6</radius><length>10</length></cylinder></geometry><material><ambient>0.9 0.9 0.9 1</ambient><diffuse>0.9 0.9 0.9 1</diffuse></material></visual>
+    </link></model>
+    <model name="block_9"><static>true</static><pose degrees="true">-52.7 -28.8 5.00 0 0 51</pose><link name="l">
+      <visual name="v"><geometry><box><size>3 3 10</size></box></geometry><material><ambient>0.3 0.7 0.3 1</ambient><diffuse>0.3 0.7 0.3 1</diffuse></material></visual>
+    </link></model>
+    <model name="pylon_10"><static>true</static><pose degrees="true">-1.4 -60.0 5.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><cylinder><radius>0.6</radius><length>10</length></cylinder></geometry><material><ambient>0.7 0.3 0.8 1</ambient><diffuse>0.7 0.3 0.8 1</diffuse></material></visual>
+    </link></model>
+    <model name="block_11"><static>true</static><pose degrees="true">51.2 -31.2 5.00 0 0 85</pose><link name="l">
+      <visual name="v"><geometry><box><size>3 3 10</size></box></geometry><material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_0_l"><static>true</static><pose degrees="true">-4.0 40.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.5 0.5 6</size></box></geometry><material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_0_r"><static>true</static><pose degrees="true">4.0 40.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.5 0.5 6</size></box></geometry><material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_0_top"><static>true</static><pose degrees="true">0.0 40.0 6.25 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>9 0.5 0.5</size></box></geometry><material><ambient>0.9 0.2 0.2 1</ambient><diffuse>0.9 0.2 0.2 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_1_l"><static>true</static><pose degrees="true">-4.0 80.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.5 0.5 6</size></box></geometry><material><ambient>0.95 0.7 0.1 1</ambient><diffuse>0.95 0.7 0.1 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_1_r"><static>true</static><pose degrees="true">4.0 80.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.5 0.5 6</size></box></geometry><material><ambient>0.95 0.7 0.1 1</ambient><diffuse>0.95 0.7 0.1 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_1_top"><static>true</static><pose degrees="true">0.0 80.0 6.25 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>9 0.5 0.5</size></box></geometry><material><ambient>0.95 0.7 0.1 1</ambient><diffuse>0.95 0.7 0.1 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_2_l"><static>true</static><pose degrees="true">-4.0 120.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.5 0.5 6</size></box></geometry><material><ambient>0.2 0.5 0.9 1</ambient><diffuse>0.2 0.5 0.9 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_2_r"><static>true</static><pose degrees="true">4.0 120.0 3.00 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.5 0.5 6</size></box></geometry><material><ambient>0.2 0.5 0.9 1</ambient><diffuse>0.2 0.5 0.9 1</diffuse></material></visual>
+    </link></model>
+    <model name="gate_2_top"><static>true</static><pose degrees="true">0.0 120.0 6.25 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>9 0.5 0.5</size></box></geometry><material><ambient>0.2 0.5 0.9 1</ambient><diffuse>0.2 0.5 0.9 1</diffuse></material></visual>
+    </link></model>
+  </world>
+</sdf>

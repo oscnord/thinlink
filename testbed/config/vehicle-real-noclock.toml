@@ -1,0 +1,76 @@
+# vehicle-real.toml with a clock that has no bound: no chronyd runs in the testbed, so the vehicle
+# never gets a fresh bound and must not start sending control. `lab check real-mode` starts
+# it for that one case (docs/real-vehicle.md). Test only, like the rest of the real-mode testbed.
+
+# RTP/H.264 to the relay, inside WireGuard.
+destination = "10.77.0.1:5004"
+# Feedback: the relay answers probes here (docs/architecture.md, "Adaptation"). The rungs are in
+# testbed/ladder.toml.
+feedback = "10.77.0.1:5006"
+# Test only: POST /video/pause, /video/freeze and /video/resume on the metrics endpoint, which
+# `lab check qgc-status` uses to stall the source. Off (refused) unless set; never set it outside
+# the testbed.
+debug_hooks = true
+
+# The relay's job API (docs/architecture.md, "Retained detail"): the vehicle polls it for requests for
+# retained snapshots and crops, and uploads the answers over the overlay.
+detail = "http://10.77.0.1:8080"
+
+[source]
+# "test-pattern" (videotestsrc, live) or "file" with `path` to a y4m clip, looped in real time. A
+# test pattern is 1280x720 so that retained snapshots and crops have a real size; the rungs scale it.
+kind = "test-pattern"
+width = 1280
+height = 720
+
+# Retained snapshots: a branch off the source's full-resolution frames (docs/architecture.md,
+# "Retained detail"). Remove this table to switch the branch off.
+[snapshot]
+fps = 1
+quality = 90
+
+# Where they are kept: a volume of its own, 12 MiB in the testbed (testbed/compose.yml). A test
+# pattern's 720p snapshot is about 15.6 kB, so the quota of 512 KiB holds about half a minute of
+# them and `lab check recording` reaches it within a minute; a deployment sizes it to the hours of
+# history it wants.
+[store]
+dir = "/snapshots"
+max_bytes = 524288
+max_age_s = 120
+min_free_bytes = 4194304
+# Snapshots come every second; one missing is a gap.
+gap_after_ms = 1500
+
+# MAVLink bridge (docs/testbed.md): SITL's serial 0 in this network namespace (a TCP autopilot must
+# be on loopback, and control reaches it only once it reports the SITL marker parameter),
+# mavlink-router's UDP server endpoint on the relay, inside WireGuard (only datagrams from it are
+# read), and the control envelope endpoint on the vehicle's overlay address.
+[mavlink]
+autopilot = "tcpout:127.0.0.1:5760"
+relay = "10.77.0.1:14550"
+control = "10.77.0.2:7700"
+# This vehicle's name. Every signed control message is made for it, so one signed for another vehicle
+# is refused; the ground adapter's config (testbed/config/ground.toml) names the same one.
+vehicle_id = "testbed"
+# The only overlay addresses that may take the control lease: the ground adapter and the lab runner
+# in checks, each with the public key its envelopes must be signed with (`just lab-keys` makes the
+# pairs). The relay attests source addresses, not WireGuard end to end; the keys are what it lacks
+# (docs/architecture.md).
+controllers = [
+    { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
+    { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
+]
+# The bound comes from chrony, which does not run here.
+clock = "chrony"
+# Real mode: control reaches the autopilot only while the interlocks hold (docs/real-vehicle.md).
+mode = "real"
+sitl_in_real_mode = true
+# The failsafe parameters the autopilot must report, read back with PARAM_REQUEST_READ: the ones
+# testbed/sat-teleop.parm sets for ArduRover 4.7.2.
+require = [
+    { name = "FS_GCS_ENABLE", type = "int8", value = 1 },
+    { name = "FS_GCS_TIMEOUT", type = "real32", value = 2 },
+    { name = "FS_TIMEOUT", type = "real32", value = 1 },
+    { name = "FS_ACTION", type = "int8", value = 2 },
+    { name = "RC_OVERRIDE_TIME", type = "real32", value = 0.5 },
+]

@@ -1,0 +1,41 @@
+# MediaMTX on the relay (docs/testbed.md). It shares the relay-net namespace with sat-teleop-relay, which
+# publishes path `live` over RTSP from 127.0.0.1. Settings not listed keep the defaults of
+# bluenviron/mediamtx:1.21.3.
+logLevel: info
+
+authInternalUsers:
+  # Only the relay, inside this namespace, may publish.
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: publish
+        path: live
+  # Anyone who can reach the server may watch.
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+        path: live
+
+rtsp: true
+rtspTransports: [udp, tcp]
+rtspAddress: :8554
+rtpAddress: :8000
+rtcpAddress: :8001
+
+webrtc: true
+webrtcAddress: :8889
+# WebRTC media (ICE over UDP). A browser on the host reaches it through the published
+# 127.0.0.1:8189/udp, so 127.0.0.1 is offered as an extra candidate.
+webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: [127.0.0.1]
+
+rtmp: false
+hls: false
+srt: false
+moq: false
+
+paths:
+  live: {}

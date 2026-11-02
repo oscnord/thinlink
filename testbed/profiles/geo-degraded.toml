@@ -1,0 +1,28 @@
+[profile]
+name = "geo-degraded"
+description = "Degraded GEO: 128 kbit/s up, bursty uplink loss, light random downlink loss, asymmetric."
+provenance = "synthetic"
+source = "Synthetic. Weather-fade style degradation of the geo profile, not measured."
+
+[uplink]
+delay_ms = 300
+jitter_ms = 25
+rate_kbit = 128
+burst_bytes = 4000
+
+[uplink.loss]
+model = "gilbert-elliott"
+p = 2
+r = 25
+one_minus_h = 90
+one_minus_k = 0
+
+[downlink]
+delay_ms = 300
+jitter_ms = 10
+rate_kbit = 1024
+burst_bytes = 6000
+
+[downlink.loss]
+model = "random"
+percent = 1

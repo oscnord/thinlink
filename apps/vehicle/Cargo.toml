@@ -1,0 +1,25 @@
+[package]
+name = "sat-teleop-vehicle"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The test hooks and the SITL allowance in real mode. The testbed's images build with it; release
+# artifacts never do.
+testbed = ["sat-teleop-control/testbed"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+sat-teleop-control = { path = "../../crates/control" }
+sat-teleop-detail = { path = "../../crates/detail" }
+sat-teleop-media = { path = "../../crates/media" }
+sat-teleop-policy = { path = "../../crates/policy" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true

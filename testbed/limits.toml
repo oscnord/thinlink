@@ -1,0 +1,132 @@
+# Operational limits of the testbed applications (docs/testbed.md). Each application reads its own
+# tables; unknown keys in them are rejected.
+
+[telemetry]
+# MAVLink telemetry from the vehicle to the relay, in frame bytes per second (UDP, IP and WireGuard
+# headers not counted). Over budget the vehicle drops whole messages, bulk ones before the vehicle
+# state and replies (crates/control/AGENTS.md). The cap, and the cap until the vehicle has measured
+# its uplink; 1000-1000000.
+bytes_per_s = 8000
+# Once the uplink is measured, telemetry gets this share of what SITL offers (averaged over 5 s),
+# between the essential floor and the cap, and video the rest. SITL sends its telemetry in one burst
+# a second (829 frame bytes, now and then one message of 26-74 more); the vehicle state spends the
+# one-second bucket first and bulk messages only its upper half, so for none to drop the bucket
+# holds twice the burst, up to 1806 B. The 5 s average reads as low as 790 B/s (a 5-5.25 s span
+# holds five bursts), so 229 %; at 200 % one message in 45-49 dropped. 100-1000.
+offered_percent = 250
+# The cap never goes below the vehicle's state at one message a second: HEARTBEAT (21 frame bytes,
+# sent even over budget and counted here),
+# SYS_STATUS (at most 55), GLOBAL_POSITION_INT (40) and ATTITUDE (40) are 156 B/s; plus a
+# COMMAND_ACK (22) and margin.
+essential_bytes_per_s = 200
+
+[control]
+# Control lease and freshness, in milliseconds, judged on the vehicle's monotonic clock only
+# (docs/architecture.md, "Control protocol", derives them). The vehicle issues the lease holder a
+# challenge every 500 ms; an envelope counts only with one of the four most recent challenges, at
+# most challenge_lifetime_ms old: the 500 ms interval, plus the geo round trip (about 600 ms), plus
+# 400 ms for jitter and stalls.
+challenge_lifetime_ms = 1500
+# A continuous setpoint is refreshed to SITL (every 200 ms without a newer one) for at most this
+# long after it arrived, and never beyond its challenge's lifetime.
+setpoint_lifetime_ms = 500
+# The ground sends a liveness envelope when it has sent nothing for this long.
+liveness_interval_ms = 1000
+# The ground treats a ground station's resend (MAVLink confirmation above 0) of the same command
+# within this long as the same transaction, so the vehicle answers it without running it again.
+# QGroundControl resends a command it retries every 1200 ms, three tries in all: the last leaves
+# 2400 ms after the first; plus a GEO round trip and margin.
+ack_window_ms = 4000
+# The vehicle ends the lease this long after the holder's last valid envelope: two liveness
+# intervals lost, plus margin.
+lease_lifetime_ms = 3000
+# After the vehicle's last setpoint, SITL's throttle must be back to zero within this: the setpoint
+# lifetime and RC_OVERRIDE_TIME (testbed/sat-teleop.parm) end the drive, then the throttle slews down and
+# telemetry brings it up. 1.25 x the worst measured (1451 ms, geo, run 1793504643578 on e593abc;
+# 1373-1409 ms on e1d5edb) + 10 ms, rounded up to 5 ms. SITL's rover then coasts to a stop without
+# brakes, which is recorded, not bounded here.
+throttle_release_deadline_ms = 1825
+
+[freshness]
+# What the ground's video output shows (docs/measurement.md, "Freshness output", derives them).
+# Stale when the newest frame is older than this, clock bound included: geo frames arrive 320-350 ms
+# old and the next one follows within 100 ms, so live video stays under 450 ms; well before an
+# operator acts on old video.
+stale_after_ms = 600
+# Frozen when frames keep arriving but none is new for this long: new frames come every 67 ms
+# (15 fps), at most 105 ms apart without loss. At a low rate, one frame interval longer.
+frozen_after_ms = 500
+# Disconnected (no video) when no frame at all arrived for this long.
+disconnected_after_ms = 2000
+# Below this share of readable stamps among the last second of frames the age is unknown.
+min_readable_percent = 50
+# Low rate (the ladder's slow rungs, testbed/ladder.toml): a source whose frame interval (the lower
+# median of the capture intervals over the last second of new frames, by their stamps) exceeds this
+# shows as LOW RATE instead of LIVE, judged against the next threshold instead
+# of stale_after_ms. Geo frames arrive up to about 350 ms old, so above a 150 ms interval (below
+# about 7 fps) a picture could pass 600 ms between frames and flicker between Live and Stale.
+low_rate_interval_ms = 150
+# At a low rate, Stale when the newest frame is older than this: the slowest rung's 1000 ms interval
+# plus the worst arrival age at it; below disconnected_after_ms.
+low_rate_stale_after_ms = 1800
+
+[adapt]
+# The vehicle's adaptation (docs/architecture.md, "Adaptation", derives every value). Milliseconds
+# unless named.
+# A probe to the relay this often: detection then takes about a round trip plus the queue the probe
+# waits behind, and four probes a second cost about 5 kbit/s on the wire.
+probe_interval_ms = 250
+# The smallest round trip of this window is the empty-queue base.
+min_rtt_window_ms = 10000
+# Queue delay (the smaller of the last two round trips minus the base) above this is a queue: rising,
+# it is cut to the rung the measured uplink carries; standing, one rung, and if it still stands after
+# that cut, the cut is taken back and the round trip is the new base (a route change). One round
+# trip more than twice this over the base is a deep queue: cut at once.
+queue_delay_high_ms = 150
+# An answer at least this much over the base pauses the video until the queue has drained (twice
+# queue_delay_high_ms, the deep queue jitter never reaches): frames sent behind it arrive at least
+# 0.6 s old under geo (320 ms plus the queue), at the stale threshold, and the cut's spare quarter of
+# the uplink takes about four times the queue to drain it, while paused the uplink drains it in about
+# its own length. At the 512 to 128 kbit/s step the oldest frame was 674 ms with the pause at 300 ms
+# (cf21fa5) and 1.7 s with it at 500 ms (caae26f, the queue then drained with the video running).
+drain_above_ms = 300
+# At most this: the queue is back at the base, and a dwell towards a rung up may run.
+queue_delay_base_ms = 80
+# The queue delay's trend (least-squares slope) is taken over this span of probes; changing at least
+# trend_ms_per_s it rises or drains (a draining queue is not cut again), slower it stands.
+trend_window_ms = 1000
+trend_ms_per_s = 100
+# A cut fits rungs into this share of the measured uplink, so the rest drains the queue at 250 ms a
+# second, at least twice trend_ms_per_s (validated).
+capacity_fit_percent = 75
+# Loss in GCC's bands (draft-ietf-rmcat-gcc-02, section 6) over this window, from at least this many
+# video packets: below loss_low_percent a rung up may come, above loss_high_percent one rung down, in
+# between hold.
+loss_window_ms = 10000
+loss_min_packets = 500
+loss_low_percent = 2
+loss_high_percent = 10
+# No answer for this long, once one came: fall to the floor.
+stale_after_ms = 3000
+# Healthy this long after a fall that no deep queue led to: back to the rung before it, or the best
+# below it that the capacity measured at the last cut carries;
+# like a climb, cut within a dwell it doubles that rung's hold.
+outage_recovery_ms = 2000
+# Healthy this long before one rung up.
+dwell_ms = 10000
+# At most one change this often, a deep queue aside.
+min_change_interval_ms = 2000
+# The uplink measured at a cut on a rising queue bounds a climb to a rung it cannot carry for this
+# long; then the climb may probe for more. Each climb to a rung cut within a dwell doubles that
+# rung's hold, counted from that cut, up to capacity_hold_max_ms; at least 10 % more uplink measured later resets it.
+capacity_hold_ms = 30000
+capacity_hold_max_ms = 300000
+
+[retrieval]
+# What retrieval of retained snapshots may send from the vehicle, in bytes per second on the wire
+# (docs/measurement.md, "Retained detail", derives it). Video and control come first: retrieval only
+# sends at a normal rung, outside a drain and while the relay's feedback is fresh and shows no queue
+# (crates/policy/AGENTS.md), and what it asks for is taken out of the uplink before the video is
+# fitted to it. 0 switches retrieval off. A chunk is half a second of it, so 4000 B/s sends chunks
+# of 2000 bytes.
+allowance_bytes_per_s = 4000

@@ -5,3 +5,5 @@
 /.superpowers/
 /testbed/secrets/
 .DS_Store
+/deploy/secrets/
+/dist/

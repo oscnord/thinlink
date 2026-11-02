@@ -1,0 +1,53 @@
+# The vehicle's adaptation ladder (docs/architecture.md, "Adaptation"), best first. The vehicle
+# starts at `start` and the controller in sat-teleop-policy walks the ladder from the relay's feedback with
+# the thresholds in [adapt] of testbed/limits.toml. Each rung's bitrate is the most video the encoder
+# may send in any one second, keyframes included (x264's VBV, crates/media/AGENTS.md); headers come
+# on top. Groups only label the rungs: normal for driving, constrained, awareness_only (where the
+# vehicle is, one or two frames a second). Unknown keys are rejected.
+
+# A keyframe this often at every rung, forced by time, whatever the frame rate.
+keyframe_interval_ms = 2000
+# The rung to start at, counted from the best (0): the encoding the vehicle used before adaptation.
+start = 1
+
+[[rung]]
+group = "normal"
+width = 1280
+height = 720
+fps = 15
+bitrate_kbit = 1200
+
+[[rung]]
+group = "normal"
+width = 640
+height = 360
+fps = 15
+bitrate_kbit = 500
+
+[[rung]]
+group = "constrained"
+width = 640
+height = 360
+fps = 8
+bitrate_kbit = 250
+
+[[rung]]
+group = "constrained"
+width = 480
+height = 270
+fps = 5
+bitrate_kbit = 120
+
+[[rung]]
+group = "awareness_only"
+width = 320
+height = 180
+fps = 2
+bitrate_kbit = 50
+
+[[rung]]
+group = "awareness_only"
+width = 320
+height = 180
+fps = 1
+bitrate_kbit = 25

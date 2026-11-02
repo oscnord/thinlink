@@ -1,0 +1,17 @@
+[profile]
+name = "lte-good"
+description = "Healthy LTE: about 40 ms each way, 5 ms jitter, 5 Mbit/s up, 20 Mbit/s down."
+provenance = "synthetic"
+source = "Synthetic. Round numbers chosen to look like a decent LTE cell, not measured."
+
+[uplink]
+delay_ms = 40
+jitter_ms = 5
+rate_kbit = 5000
+burst_bytes = 12000
+
+[downlink]
+delay_ms = 40
+jitter_ms = 5
+rate_kbit = 20000
+burst_bytes = 25000
