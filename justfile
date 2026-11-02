@@ -11,8 +11,12 @@ native_arch := if arch() == "x86_64" { "amd64" } else { "arm64" }
 runtime_image := "localhost/sat-teleop-runtime:dev"
 # Docker does not know the name Podman gives the host; testbed/compose.docker.yml maps it.
 engine_compose := if engine == "podman" { "" } else { " -f testbed/compose.docker.yml" }
-# SIM=1 adds the simulated flight's services (`just sim-up`).
-compose := engine + " compose -p sat-teleop -f testbed/compose.yml" + engine_compose + if env_var_or_default("SIM", "") != "" { " -f testbed/compose.sim.yml" } else { "" }
+# SIM=1 adds the simulated flight's services (`just sim-up`). PI=pi4 or PI=pi-zero-2w caps the
+# vehicle's companion to that board (testbed/compose.pi4.yml and compose.pi-zero-2w.yml, docs/latency.md), for example
+# `PI=pi4 just lab-up`; set it for `lab-check` too.
+sim_file := if env_var_or_default("SIM", "") != "" { " -f testbed/compose.sim.yml" } else { "" }
+pi_file := if env_var_or_default("PI", "") != "" { " -f testbed/compose." + env_var("PI") + ".yml" } else { "" }
+compose := engine + " compose -p sat-teleop -f testbed/compose.yml" + engine_compose + sim_file + pi_file
 # Taking the testbed down names every service of either mode: a simulator container shares the
 # vehicle sidecar's namespace, so the sidecar cannot be removed before it.
 compose_down := engine + " compose -p sat-teleop -f testbed/compose.yml" + engine_compose + " -f testbed/compose.sim.yml"
@@ -206,6 +210,18 @@ lab-check scenario profile *args:
         fi
     done
     exit "${PIPESTATUS[0]}"
+
+# Where a frame's time goes, from a skeleton run's summary (`just stages 1793633897126-skeleton-geo`):
+# p50, p95 and max in ms per stage, from the processes' last 1024 frames at the end of the window.
+stages run:
+    @jq -r '.readings.end as $r | .metrics as $m | [ \
+        ["source to stamp", $r.vehicle.stages.before_stamp], ["encoder queue", $r.vehicle.stages.queue], \
+        ["encode", $r.vehicle.stages.encode], ["stamp to last packet sent", $r.vehicle.stages.sent], \
+        ["relay jitter buffer", $r.relay.stages.jitter], ["relay depay and parse", $r.relay.stages.parse], \
+        ["ground decode", $r.ground.video.decode], ["ground state stamp and re-encode", $r.ground.video.reencode], \
+        ["headless decode", $r.headless_decode], \
+        ["frame age at the headless receiver", {n: $m.new_frames_per_s, p50_ms: $m.frame_age_p50_ms, p95_ms: $m.frame_age_p95_ms, max_ms: $m.frame_age_max_ms}] \
+      ][] | "\(.[0])\t\(.[1].p50_ms)\t\(.[1].p95_ms)\t\(.[1].max_ms)"' results/{{run}}/summary.json | column -t -s "$(printf '\t')"
 
 # Fast gate for one fix: rebuild what changed, bring the testbed up only if the images or the build
 # inputs changed (a build needs it down), then run one check. docs/development.md, "Gates".

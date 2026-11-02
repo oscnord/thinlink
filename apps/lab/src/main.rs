@@ -107,7 +107,7 @@ struct CheckArgs {
     /// its telemetry.
     #[arg(long, default_value = "192.168.232.40:14552")]
     gcs_listen: SocketAddr,
-    /// mavlink, control-freshness, qgc-status: base URL of the ground adapter's metrics and lease
+    /// skeleton, mavlink, control-freshness, qgc-status: base URL of the ground adapter's metrics and lease
     /// endpoints.
     #[arg(long, default_value = "http://192.168.233.30:9100")]
     ground_metrics: String,
@@ -248,6 +248,7 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
                 duration: Duration::from_secs(args.duration_s),
                 vehicle_metrics: args.vehicle_metrics.clone(),
                 relay_metrics: args.relay_metrics.clone(),
+                ground_metrics: args.ground_metrics.clone(),
             };
             skeleton::run(
                 &agent,

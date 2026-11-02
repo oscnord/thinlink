@@ -27,6 +27,7 @@ use sat_teleop_policy::stamp::{self, CaptureMs, FrameId, Stamp};
 
 use crate::camera::{self, CameraFormat, CaptureClock, Encoder, EncoderWish};
 use crate::ingest::{self, IngestSnapshot, IngestStats};
+use crate::stages::{InEncoder, Marks, Stage, StageSnapshot};
 use crate::{
     Health, HealthSnapshot, MediaError, Running, Traffic, TrafficSnapshot, failure, luma_geometry,
     unix_ms,
@@ -102,12 +103,14 @@ pub struct Snapshot {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Source {
-    /// `videotestsrc is-live=true pattern=ball`, at `width` x `height` when both are given.
+    /// `videotestsrc is-live=true`, at `width` x `height` when both are given.
     TestPattern {
         #[serde(default)]
         width: Option<u16>,
         #[serde(default)]
         height: Option<u16>,
+        #[serde(default)]
+        pattern: TestPattern,
     },
     /// A y4m file, looped and paced to real time.
     File { path: PathBuf },
@@ -127,6 +130,24 @@ pub enum Source {
     },
     /// A Raspberry Pi camera module through `libcamerasrc`.
     Libcamera { width: u16, height: u16, fps: u16 },
+}
+
+/// What `videotestsrc` draws. Snow is noise, which the encoder cannot compress: it fills any rung.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TestPattern {
+    #[default]
+    Ball,
+    Snow,
+}
+
+impl TestPattern {
+    fn nick(self) -> &'static str {
+        match self {
+            Self::Ball => "ball",
+            Self::Snow => "snow",
+        }
+    }
 }
 
 /// One encoding setting: resolution, frame rate and bitrate.
@@ -348,7 +369,35 @@ pub struct SenderStats {
     snapshots: SnapshotCounts,
     rtp: Traffic,
     ingest: Arc<IngestStats>,
+    /// When each frame in flight was stamped, for the stages below.
+    stamped_at: Marks,
+    in_encoder: InEncoder,
+    /// When each encoded frame in flight was stamped, by the encoder's timestamp.
+    encoded_at: Marks,
+    stages: Stages,
     encoding: Mutex<Encoding>,
+}
+
+/// Where a frame's time goes in the vehicle (`crate::stages`).
+#[derive(Debug, Default)]
+struct Stages {
+    /// From the source's capture to the stamp: conversion, scaling and rate control.
+    before_stamp: Stage,
+    /// From the stamp to the encoder's input: the leaky queue.
+    queue: Stage,
+    /// From the encoder's input to its output.
+    encode: Stage,
+    /// From the stamp to the last packet of the frame leaving for the relay: also the payloader
+    /// and the pacer's backlog.
+    sent: Stage,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagesSnapshot {
+    pub before_stamp: StageSnapshot,
+    pub queue: StageSnapshot,
+    pub encode: StageSnapshot,
+    pub sent: StageSnapshot,
 }
 
 /// The snapshot branch's counters.
@@ -385,6 +434,7 @@ pub struct SenderSnapshot {
     pub paced_dropped: u64,
     /// Zero unless the source is an ingest.
     pub ingest: IngestSnapshot,
+    pub stages: StagesSnapshot,
     #[serde(flatten)]
     pub health: HealthSnapshot,
 }
@@ -473,6 +523,12 @@ impl SenderStats {
             pace_bytes_per_s: self.pace.load(Ordering::Relaxed),
             paced_dropped: self.paced_dropped.load(Ordering::Relaxed),
             ingest: self.ingest.snapshot(),
+            stages: StagesSnapshot {
+                before_stamp: self.stages.before_stamp.snapshot(),
+                queue: self.stages.queue.snapshot(),
+                encode: self.stages.encode.snapshot(),
+                sent: self.stages.sent.snapshot(),
+            },
             health: self.health.snapshot(),
         }
     }
@@ -739,7 +795,11 @@ fn source(
             let (elements, reader) = ingest::source(*listen, from, ingest)?;
             Ok((elements, Some(reader)))
         }
-        Source::TestPattern { width, height } => Ok((test_pattern(*width, *height)?, None)),
+        Source::TestPattern {
+            width,
+            height,
+            pattern,
+        } => Ok((test_pattern(*width, *height, *pattern)?, None)),
         Source::File { path } => Ok((file_source(path)?, None)),
         Source::V4l2 {
             device,
@@ -774,10 +834,14 @@ fn check_mode(width: u16, height: u16, fps: u16) -> Result<(), MediaError> {
     )))
 }
 
-fn test_pattern(width: Option<u16>, height: Option<u16>) -> Result<Vec<gst::Element>, MediaError> {
+fn test_pattern(
+    width: Option<u16>,
+    height: Option<u16>,
+    pattern: TestPattern,
+) -> Result<Vec<gst::Element>, MediaError> {
     let pattern = gst::ElementFactory::make("videotestsrc")
         .property("is-live", true)
-        .property_from_str("pattern", "ball")
+        .property_from_str("pattern", pattern.nick())
         .build()?;
     let mut size = gst::Caps::builder("video/x-raw");
     if let Some(width) = width {
@@ -803,6 +867,12 @@ fn file_source(path: &Path) -> Result<Vec<gst::Element>, MediaError> {
     ])
 }
 
+fn sink_pad(element: &gst::Element) -> Result<gst::Pad, MediaError> {
+    element
+        .static_pad("sink")
+        .ok_or(MediaError::Missing("sink pad"))
+}
+
 fn src_pad(element: &gst::Element) -> Result<gst::Pad, MediaError> {
     element
         .static_pad("src")
@@ -823,7 +893,7 @@ fn stamp_frames(
     let format = Mutex::new(None);
     let frozen = Mutex::new(None);
     let keyframes = Mutex::new(keyframes);
-    src_pad(rung_filter)?.add_probe(STAMP_PROBE, move |_, info| {
+    src_pad(rung_filter)?.add_probe(STAMP_PROBE, move |pad, info| {
         let mut keyframes = keyframes.lock().unwrap_or_else(PoisonError::into_inner);
         let buffer = match &mut info.data {
             Some(gst::PadProbeData::Event(event)) => {
@@ -843,6 +913,7 @@ fn stamp_frames(
         match stats.mode() {
             SourceMode::Live => {
                 *frozen = None;
+                record_before_stamp(pad, buffer, &stats);
                 stamp_next(buffer, &format, &stats, capture.as_deref());
             }
             SourceMode::Paused => {
@@ -860,6 +931,22 @@ fn stamp_frames(
         gst::PadProbeReturn::Ok
     });
     Ok(())
+}
+
+/// Records how long the frame has been in the pipeline when it reaches the stamp, and remembers
+/// when it was stamped.
+fn record_before_stamp(pad: &gst::Pad, buffer: &gst::Buffer, stats: &SenderStats) {
+    let Some(pts) = buffer.pts() else {
+        return;
+    };
+    stats.stamped_at.mark(pts.nseconds());
+    let now = pad.parent_element().and_then(|e| e.current_running_time());
+    if let Some(elapsed) = now.and_then(|now| now.checked_sub(pts)) {
+        stats
+            .stages
+            .before_stamp
+            .record(Duration::from_nanos(elapsed.nseconds()));
+    }
 }
 
 fn stamp_next(
@@ -1110,12 +1197,34 @@ fn hand_over(
 }
 
 fn count_encoded(encoder: &gst::Element, stats: &Arc<SenderStats>) -> Result<(), MediaError> {
+    let entering = Arc::clone(stats);
+    sink_pad(encoder)?.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+        let pts = buffer_pts(info.data.as_ref());
+        let stamped = pts.and_then(|pts| entering.stamped_at.at(pts));
+        if let Some(stamped) = stamped {
+            entering.stages.queue.record(stamped.elapsed());
+            entering.in_encoder.enter(stamped);
+        }
+        gst::PadProbeReturn::Ok
+    });
     let stats = Arc::clone(stats);
-    src_pad(encoder)?.add_probe(gst::PadProbeType::BUFFER, move |_, _| {
+    src_pad(encoder)?.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
         stats.frames_encoded.fetch_add(1, Ordering::Relaxed);
+        let left = stats.in_encoder.leave();
+        if let (Some((stamped, inside)), Some(pts)) = (left, buffer_pts(info.data.as_ref())) {
+            stats.stages.encode.record(inside);
+            stats.encoded_at.mark_at(pts, stamped);
+        }
         gst::PadProbeReturn::Ok
     });
     Ok(())
+}
+
+fn buffer_pts(data: Option<&gst::PadProbeData>) -> Option<u64> {
+    match data {
+        Some(gst::PadProbeData::Buffer(buffer)) => buffer.pts().map(gst::ClockTime::nseconds),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

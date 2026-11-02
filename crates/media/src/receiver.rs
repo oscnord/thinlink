@@ -16,6 +16,7 @@ use gstreamer_video as gst_video;
 
 use sat_teleop_policy::stamp::{self, Stamp, StateStamp};
 
+use crate::stages::{Marks, Stage};
 use crate::{MediaError, Running, luma_geometry, unix_ms};
 
 /// RTSP jitter buffer latency, QGC's default. With a non-syncing sink it is only the longest wait
@@ -24,6 +25,10 @@ pub const LATENCY_MS: u32 = 80;
 /// RTSP lower transport, as QGC requests it first.
 pub const PROTOCOLS: &str = "udp";
 pub const DECODER: &str = "avdec_h264";
+
+/// From the depayloader's output to the decoder's: parsing and decoding a frame. One per process,
+/// since a process runs one decoding pipeline at a time.
+pub static DECODE: Stage = Stage::new();
 /// How long one pull waits before the stop flag and the bus are checked again.
 const PULL_TIMEOUT: gst::ClockTime = gst::ClockTime::from_mseconds(100);
 /// Stamps read before scaling and not yet pulled; the appsink drops all but the newest frame.
@@ -196,13 +201,15 @@ fn build(
         .build();
     let depay = gst::ElementFactory::make("rtph264depay").build()?;
     let convert = gst::ElementFactory::make("videoconvert").build()?;
+    let decoder = gst::ElementFactory::make(DECODER)
+        // Frame threading holds frames back; slices only, whatever libav guesses about the source.
+        .property_from_str("thread-type", "slice")
+        .build()?;
+    time_decode(&depay, &decoder)?;
     let mut chain = vec![
         depay.clone(),
         gst::ElementFactory::make("h264parse").build()?,
-        // Frame threading holds frames back; slices only, whatever libav guesses about the source.
-        gst::ElementFactory::make(DECODER)
-            .property_from_str("thread-type", "slice")
-            .build()?,
+        decoder,
         convert.clone(),
     ];
     let unscaled = size.map(|_| Arc::new(Unscaled::default()));
@@ -236,6 +243,36 @@ fn build(
         }
     });
     Ok((pipeline, appsink, unscaled))
+}
+
+/// Records [`DECODE`]: a frame's time from the depayloader's output to the decoder's.
+fn time_decode(depay: &gst::Element, decoder: &gst::Element) -> Result<(), MediaError> {
+    let marks = Arc::new(Marks::default());
+    let pad = |element: &gst::Element| {
+        element
+            .static_pad("src")
+            .ok_or(MediaError::Missing("src pad"))
+    };
+    let frames = Arc::clone(&marks);
+    pad(depay)?.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+        if let Some(gst::PadProbeData::Buffer(buffer)) = &info.data
+            && let Some(pts) = buffer.pts()
+        {
+            frames.mark(pts.nseconds());
+        }
+        gst::PadProbeReturn::Ok
+    });
+    pad(decoder)?.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+        let Some(gst::PadProbeData::Buffer(buffer)) = &info.data else {
+            return gst::PadProbeReturn::Ok;
+        };
+        let elapsed = buffer.pts().and_then(|pts| marks.since(pts.nseconds()));
+        if let Some(elapsed) = elapsed {
+            DECODE.record(elapsed);
+        }
+        gst::PadProbeReturn::Ok
+    });
+    Ok(())
 }
 
 fn input(source: &Source) -> Result<gst::Element, MediaError> {

@@ -31,7 +31,8 @@ const TOKEN_WAIT: Duration = Duration::from_millis(1);
 
 #[derive(Default)]
 struct Backlog {
-    packets: VecDeque<Vec<u8>>,
+    /// Each packet with the presentation time of its frame.
+    packets: VecDeque<(u64, Vec<u8>)>,
     /// The wire bytes of `packets`.
     bytes: u32,
     admission: Admission,
@@ -113,7 +114,7 @@ fn offer(shared: &Shared, stats: &SenderStats, sample: &gst::Sample) {
         match verdict {
             Verdict::Queue => {
                 backlog.bytes = backlog.bytes.saturating_add(bytes);
-                backlog.packets.push_back(data.to_vec());
+                backlog.packets.push_back((pts, data.to_vec()));
             }
             Verdict::Drop | Verdict::DropAndRecover => {
                 stats.paced_dropped.fetch_add(1, Ordering::Relaxed);
@@ -132,7 +133,7 @@ fn send(shared: &Weak<Shared>, socket: &UdpSocket, destination: SocketAddr, stat
         let Some(shared) = shared.upgrade() else {
             return;
         };
-        let Some(packet) = next(&shared) else {
+        let Some((pts, packet)) = next(&shared) else {
             continue;
         };
         let rate = stats.pace.load(Ordering::Relaxed);
@@ -145,11 +146,23 @@ fn send(shared: &Weak<Shared>, socket: &UdpSocket, destination: SocketAddr, stat
                 .rtp
                 .bytes
                 .fetch_add(packet.len() as u64, Ordering::Relaxed);
+            record_sent(stats, pts, &packet);
         }
     }
 }
 
-fn next(shared: &Shared) -> Option<Vec<u8>> {
+/// The RTP marker bit ends a frame: its stamp-to-wire time is the time until this packet leaves.
+fn record_sent(stats: &SenderStats, pts: u64, packet: &[u8]) {
+    let ends_frame = packet.get(1).is_some_and(|byte| byte & 0x80 != 0);
+    if !ends_frame {
+        return;
+    }
+    if let Some(elapsed) = stats.encoded_at.since(pts) {
+        stats.stages.sent.record(elapsed);
+    }
+}
+
+fn next(shared: &Shared) -> Option<(u64, Vec<u8>)> {
     let mut backlog = shared
         .backlog
         .lock()
@@ -161,9 +174,9 @@ fn next(shared: &Shared) -> Option<Vec<u8>> {
             .unwrap_or_else(PoisonError::into_inner)
             .0;
     }
-    let packet = backlog.packets.pop_front()?;
+    let (pts, packet) = backlog.packets.pop_front()?;
     backlog.bytes = backlog.bytes.saturating_sub(wire_bytes(packet.len()));
-    Some(packet)
+    Some((pts, packet))
 }
 
 /// Blocks until the bucket for `rate` grants `bytes`; the bucket starts over when the rate changes.

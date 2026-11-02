@@ -9,6 +9,7 @@ use gstreamer as gst;
 use gstreamer::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::stages::{Marks, Stage, StageSnapshot};
 use crate::{DATA_PROBE, Health, HealthSnapshot, MediaError, Running, Traffic, failure};
 
 /// Longest wait at the relay for a missing packet; one arriving later is dropped.
@@ -38,6 +39,23 @@ pub struct IngressStats {
     late: AtomicU64,
     duplicates: AtomicU64,
     avg_jitter_us: AtomicU64,
+    stages: Stages,
+}
+
+/// Where a frame's time goes in the relay (`crate::stages`).
+#[derive(Debug, Default)]
+struct Stages {
+    /// From the arrival of a frame's last packet to the jitter buffer pushing it on: its wait for
+    /// missing or reordered packets.
+    jitter: Stage,
+    /// From the jitter buffer's push to the parser's output: depayload and parse.
+    parse: Stage,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagesSnapshot {
+    pub jitter: StageSnapshot,
+    pub parse: StageSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,6 +68,7 @@ pub struct IngressSnapshot {
     pub late: u64,
     pub duplicates: u64,
     pub avg_jitter_us: u64,
+    pub stages: StagesSnapshot,
     #[serde(flatten)]
     pub health: HealthSnapshot,
 }
@@ -65,6 +84,10 @@ impl IngressStats {
             late: self.late.load(Ordering::Relaxed),
             duplicates: self.duplicates.load(Ordering::Relaxed),
             avg_jitter_us: self.avg_jitter_us.load(Ordering::Relaxed),
+            stages: StagesSnapshot {
+                jitter: self.stages.jitter.snapshot(),
+                parse: self.stages.parse.snapshot(),
+            },
             health: self.health.snapshot(),
         }
     }
@@ -209,6 +232,7 @@ fn build(
     pipeline.connect_deep_element_added(|_, _, element| forward_without_sync(element));
     pipeline.add_many(&chain)?;
     gst::Element::link_many(&chain)?;
+    time_stages(stats, &chain)?;
     let stats = Arc::clone(stats);
     source
         .static_pad("src")
@@ -218,4 +242,64 @@ fn build(
             gst::PadProbeReturn::Ok
         });
     Ok((pipeline, jitterbuffer))
+}
+
+/// Probes for [`Stages`] on the source, the jitter buffer and the parser. A frame's packets share
+/// an RTP timestamp, and its last one has the marker bit; the buffers after the jitter buffer
+/// carry the presentation time it gave them.
+fn time_stages(stats: &Arc<IngressStats>, chain: &[gst::Element; 5]) -> Result<(), MediaError> {
+    let [source, jitterbuffer, _, parser, _] = chain;
+    let arrived = Arc::new(Marks::default());
+    let pushed = Arc::new(Marks::default());
+    let pad = |element: &gst::Element| {
+        element
+            .static_pad("src")
+            .ok_or(MediaError::Missing("src pad"))
+    };
+    let marks = Arc::clone(&arrived);
+    pad(source)?.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+        if let Some((timestamp, true)) = last_packet(info.data.as_ref()) {
+            marks.mark(timestamp);
+        }
+        gst::PadProbeReturn::Ok
+    });
+    let (stats_jitter, marks) = (Arc::clone(stats), Arc::clone(&pushed));
+    pad(jitterbuffer)?.add_probe(DATA_PROBE, move |_, info| {
+        let Some((timestamp, true)) = last_packet(info.data.as_ref()) else {
+            return gst::PadProbeReturn::Ok;
+        };
+        if let Some(elapsed) = arrived.since(timestamp) {
+            stats_jitter.stages.jitter.record(elapsed);
+        }
+        if let Some(Some(pts)) = buffer_of(info.data.as_ref()).map(gst::BufferRef::pts) {
+            marks.mark(pts.nseconds());
+        }
+        gst::PadProbeReturn::Ok
+    });
+    let stats = Arc::clone(stats);
+    pad(parser)?.add_probe(DATA_PROBE, move |_, info| {
+        let pts = buffer_of(info.data.as_ref()).and_then(gst::BufferRef::pts);
+        if let Some(elapsed) = pts.and_then(|pts| pushed.since(pts.nseconds())) {
+            stats.stages.parse.record(elapsed);
+        }
+        gst::PadProbeReturn::Ok
+    });
+    Ok(())
+}
+
+/// The last buffer of `data`, a buffer or a list.
+fn buffer_of<'a>(data: Option<&'a gst::PadProbeData<'a>>) -> Option<&'a gst::BufferRef> {
+    match data {
+        Some(gst::PadProbeData::Buffer(buffer)) => Some(buffer),
+        Some(gst::PadProbeData::BufferList(list)) => list.get(list.len().checked_sub(1)?),
+        _ => None,
+    }
+}
+
+/// The RTP timestamp of the packet in `data` and whether it ends its frame (marker bit).
+fn last_packet(data: Option<&gst::PadProbeData>) -> Option<(u64, bool)> {
+    let map = buffer_of(data)?.map_readable().ok()?;
+    let header = map.as_slice().get(..8)?;
+    let timestamp = u32::from_be_bytes(header.get(4..8)?.try_into().ok()?);
+    Some((u64::from(timestamp), header.get(1)? & 0x80 != 0))
 }

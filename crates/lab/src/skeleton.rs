@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use sat_teleop_media::receiver::{self, Observation, Source};
+use sat_teleop_media::stages::StageSnapshot;
 use sat_teleop_media::{Health, HealthSnapshot, supervise, unix_ms};
 use sat_teleop_policy::stamp::{self, CaptureMs, MAX_PLAUSIBLE_AGE_MS, plausible_age};
 
@@ -37,9 +38,10 @@ pub struct Settings {
     pub url: String,
     pub warmup: Duration,
     pub duration: Duration,
-    /// Base URLs of the vehicle and relay metrics endpoints.
+    /// Base URLs of the vehicle, relay and ground adapter metrics endpoints.
     pub vehicle_metrics: String,
     pub relay_metrics: String,
+    pub ground_metrics: String,
 }
 
 impl Settings {
@@ -58,6 +60,7 @@ impl Settings {
             "recovery_deadline_s": RECOVERY_DEADLINE.as_secs_f64(),
             "vehicle_metrics": self.vehicle_metrics,
             "relay_metrics": self.relay_metrics,
+            "ground_metrics": self.ground_metrics,
         })
     }
 }
@@ -205,6 +208,9 @@ struct Reading {
     router: Result<Value, String>,
     vehicle: Result<Value, String>,
     relay: Result<Value, String>,
+    ground: Result<Value, String>,
+    /// This process's own decode stage (`receiver::DECODE`): the headless receiver's.
+    headless_decode: StageSnapshot,
 }
 
 impl Reading {
@@ -216,6 +222,8 @@ impl Reading {
             router: check::get_json(agent, "/counters"),
             vehicle: check::get_json(&AgentClient::new(&settings.vehicle_metrics), "/metrics"),
             relay: check::get_json(&AgentClient::new(&settings.relay_metrics), "/metrics"),
+            ground: check::get_json(&AgentClient::new(&settings.ground_metrics), "/metrics"),
+            headless_decode: receiver::DECODE.snapshot(),
         }
     }
 
@@ -230,6 +238,8 @@ impl Reading {
             "router": value(&self.router),
             "vehicle": value(&self.vehicle),
             "relay": value(&self.relay),
+            "ground": value(&self.ground),
+            "headless_decode": self.headless_decode,
         })
     }
 }

@@ -113,6 +113,7 @@ Control reaches a real flight controller only in real mode, which is off by defa
 - [docs/simulation.md](docs/simulation.md): the simulated flight.
 - [docs/testbed.md](docs/testbed.md): the test setup, link profiles and checks.
 - [docs/measurement.md](docs/measurement.md): metrics, budgets and every measured number.
+- [docs/latency.md](docs/latency.md): how old the picture and the commands are on each kind of link, where the time goes, and the settings for the lowest delay.
 - [docs/architecture.md](docs/architecture.md): how it is built and why.
 - [docs/development.md](docs/development.md): toolchain, builds, gates, code layout and adding a package.
 - [AGENTS.md](AGENTS.md): rules for contributors and coding agents.

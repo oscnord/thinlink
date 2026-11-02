@@ -199,11 +199,12 @@ Two tiers of gate, so a fix iteration takes minutes:
 
 - Per commit: host-native `cargo fmt`, `cargo clippy` and `cargo test` on the crates the commit touches that do not link GStreamer (seconds). `just check` does not run before every commit.
 - Per fix: `just gate-fast <scenario> <profile>` rebuilds what changed, brings the testbed up only if the images or build inputs changed, and runs the one check that failed or covers the change.
-- Per change set, once, before review (and for budget and measurement runs): `just check` and `just gate-full`, the full series of checks, on release builds. Run `just check` once before reporting a change set or fix round, not per commit.
+- Per change set, once, before review or merge: `just check`, plus the lab checks that exercise what changed (`just gate-fast`, or runs already made on the same build). Run `just check` once before reporting a change set or fix round, not per commit.
 
 Keep verification proportional, then move on:
 
-- `just gate-full` runs once per change set, at its end, after its fixes. A fix round does not rerun it; it runs only the checks that cover the code it touched, once.
+- `just gate-full` (about 13 minutes) is not a default step. Run it only when a change touches shared behaviour that no targeted check covers, or to refresh budgets. A fix round runs only the checks that cover the code it touched, once.
+- Verification must not dwarf the work: a half-hour change does not get hours of gates.
 - Do not rerun a passing check for confidence, and do not ask for "N runs" or "N in a row". The exception is work on a flaky check: there, add a pure test that fails without the fix, then run the check about three times.
 - Budget derivation follows the house rule's run count in `perf/budgets.toml`; that is measurement, not a gate.
 
@@ -243,7 +244,7 @@ QGC rendering, adapter-failure visibility and optional browser presentation need
 ## 10. Before finishing
 
 - Review the complete diff, including every subagent change.
-- Run the gates in section 8: `just check` once, and `just gate-full` for a change set.
+- Run the gates in section 8: `just check` once, and the lab checks that cover the change.
 - Run affected lab scenarios and inspect their artifacts.
 - Recheck error paths, bounded queues, expiry and reconnect behavior.
 - Confirm no input-derived panic path or command bypass was introduced.

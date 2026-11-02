@@ -335,15 +335,15 @@ fn one_lease_verdict(h: &Handover, after: &Result<Value, String>) -> (Verdict, S
         .ok()
         .and_then(|m| m.pointer("/mavlink/control/lease/holder")?.as_str())
         .unwrap_or("none");
+    if h.ground != Some(LeaseStatus::Held) {
+        let detail = format!("the adapter did not take the lease: {:?}", h.ground);
+        return (Verdict::Incomplete, detail);
+    }
     if h.asked == Some(Ok(())) {
         return (
             Verdict::Fail,
             "both controllers were granted the lease".to_owned(),
         );
-    }
-    if h.ground != Some(LeaseStatus::Held) {
-        let detail = format!("the adapter did not take the lease: {:?}", h.ground);
-        return (Verdict::Incomplete, detail);
     }
     if h.asked != Some(Err(Refusal::LeaseHeld)) {
         let detail = format!("checks asked and got {:?}, not lease_held", h.asked);

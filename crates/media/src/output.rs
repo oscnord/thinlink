@@ -23,6 +23,7 @@ use sat_teleop_policy::stamp::{self, CaptureMs, FrameId, StateStamp};
 
 use crate::receiver::{self, Observation, Source};
 use crate::sender::Rung;
+use crate::stages::{Stage, StageSnapshot};
 use crate::{
     DATA_PROBE, Health, HealthSnapshot, MediaError, Running, Traffic, luma_geometry, supervise,
 };
@@ -153,6 +154,8 @@ pub struct OutputStats {
     states: StateCounts,
     state: Mutex<Option<State>>,
     rtp: Traffic,
+    /// From the overlay's input to the first packet at the sink: drawing, encoding, payloading.
+    reencode: Stage,
 }
 
 #[derive(Debug, Default)]
@@ -188,6 +191,10 @@ pub struct OutputSnapshot {
     pub states: StateCountsSnapshot,
     pub rtp_packets: u64,
     pub rtp_bytes: u64,
+    /// Parsing and decoding a frame (`receiver::DECODE`), over the last 1024 frames.
+    pub decode: StageSnapshot,
+    /// Drawing the state, re-encoding and payloading a frame, over the last 1024 frames.
+    pub reencode: StageSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -226,6 +233,8 @@ impl OutputStats {
             },
             rtp_packets: rtp.packets,
             rtp_bytes: rtp.bytes,
+            decode: receiver::DECODE.snapshot(),
+            reencode: self.reencode.snapshot(),
         }
     }
 
@@ -469,8 +478,9 @@ impl Output<'_> {
         pipeline.add_many(&chain)?;
         gst::Element::link_many(&chain)?;
         let in_flight = Arc::new(Mutex::new(LabelDeadline::default()));
-        label_each_frame(&overlay, video.clone(), &in_flight)?;
-        drop_late_frames(&sink, &in_flight, self.stats)?;
+        let entered = Arc::new(Mutex::new(None));
+        label_each_frame(&overlay, video.clone(), &in_flight, &entered)?;
+        drop_late_frames(&sink, &in_flight, &entered, self.stats)?;
         Ok(Pipeline {
             running: Running(pipeline),
             appsrc,
@@ -523,14 +533,27 @@ impl Pipeline {
 fn drop_late_frames(
     sink: &gst::Element,
     in_flight: &Arc<Mutex<LabelDeadline>>,
+    entered: &Arc<Mutex<Option<Instant>>>,
     stats: &Arc<OutputStats>,
 ) -> Result<(), MediaError> {
     let pad = sink
         .static_pad("sink")
         .ok_or(MediaError::Missing("sink pad"))?;
-    let (sink, in_flight, stats) = (sink.clone(), Arc::clone(in_flight), Arc::clone(stats));
+    let (sink, in_flight, entered, stats) = (
+        sink.clone(),
+        Arc::clone(in_flight),
+        Arc::clone(entered),
+        Arc::clone(stats),
+    );
     pad.add_probe(DATA_PROBE, move |pad, info| {
         stats.rtp.record(info.data.as_ref());
+        let since = entered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(since) = since {
+            stats.reencode.record(since.elapsed());
+        }
         let Some(now) = sink.current_running_time() else {
             return gst::PadProbeReturn::Ok;
         };
@@ -560,8 +583,9 @@ fn label_each_frame(
     overlay: &gst::Element,
     video: gst_video::VideoInfo,
     in_flight: &Arc<Mutex<LabelDeadline>>,
+    entered: &Arc<Mutex<Option<Instant>>>,
 ) -> Result<(), MediaError> {
-    let in_flight = Arc::clone(in_flight);
+    let (in_flight, entered) = (Arc::clone(in_flight), Arc::clone(entered));
     let pad = overlay
         .static_pad("video_sink")
         .ok_or(MediaError::Missing("overlay video sink pad"))?;
@@ -569,6 +593,9 @@ fn label_each_frame(
         let Some(gst::PadProbeData::Buffer(buffer)) = &info.data else {
             return gst::PadProbeReturn::Ok;
         };
+        *entered
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
         let deadline = Some(buffer.offset_end()).filter(|end| *end != NO_DEADLINE);
         in_flight
             .lock()
