@@ -19,6 +19,7 @@ pub mod gate;
 pub mod ground;
 pub mod identity;
 pub mod params;
+pub mod position;
 pub mod stats;
 pub mod telemetry;
 pub mod vehicle;

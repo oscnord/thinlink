@@ -9,7 +9,8 @@ use sat_teleop_policy::token::Token;
 
 use crate::crop::Rect;
 use crate::wire::{
-    CAPTURE_HEADER, CROP_HEADER, Created, FRAME_HEADER, JobId, JobRequest, Meta, SOURCE_HEADER,
+    CAPTURE_HEADER, CROP_HEADER, Created, FRAME_HEADER, JobId, JobRequest, Listing, Meta,
+    POSITION_HEADER, SOURCE_HEADER, parse_position,
 };
 
 /// The most a response may hold: a job's largest object, with room.
@@ -182,9 +183,24 @@ impl Client {
 
     /// The object of `id`, `None` while the vehicle has not finished it.
     pub fn poll(&self, id: &JobId) -> Result<Option<Fetched>, ClientError> {
+        self.poll_with(id, Fetched::from_answer)
+    }
+
+    /// The listing of an `Outage` job, `None` while the vehicle has not answered.
+    pub fn poll_listing(&self, id: &JobId) -> Result<Option<Listing>, ClientError> {
+        self.poll_with(id, |answer| {
+            serde_json::from_slice(&answer.body).map_err(|e| ClientError::Malformed(e.to_string()))
+        })
+    }
+
+    fn poll_with<T>(
+        &self,
+        id: &JobId,
+        parse: impl FnOnce(Answer) -> Result<T, ClientError>,
+    ) -> Result<Option<T>, ClientError> {
         let answer = self.send("GET", &format!("/objects/{id}"), &[], &[])?;
         match answer.status {
-            200 => Fetched::from_answer(answer).map(Some),
+            200 => parse(answer).map(Some),
             202 => Ok(None),
             404 => Err(ClientError::Unknown),
             410 => Err(ClientError::Failed(error_text(&answer))),
@@ -199,16 +215,28 @@ impl Client {
 
     /// Polls for the object until it is ready or `timeout` is over.
     pub fn fetch(&self, id: &JobId, timeout: Duration) -> Result<Fetched, ClientError> {
-        let started = Instant::now();
-        loop {
-            if let Some(fetched) = self.poll(id)? {
-                return Ok(fetched);
-            }
-            if started.elapsed() >= timeout {
-                return Err(ClientError::Timeout(timeout));
-            }
-            std::thread::sleep(FETCH_POLL);
+        wait_for(timeout, || self.poll(id))
+    }
+
+    /// Polls for the listing until it is ready or `timeout` is over.
+    pub fn list(&self, id: &JobId, timeout: Duration) -> Result<Listing, ClientError> {
+        wait_for(timeout, || self.poll_listing(id))
+    }
+}
+
+fn wait_for<T>(
+    timeout: Duration,
+    mut poll: impl FnMut() -> Result<Option<T>, ClientError>,
+) -> Result<T, ClientError> {
+    let started = Instant::now();
+    loop {
+        if let Some(ready) = poll()? {
+            return Ok(ready);
         }
+        if started.elapsed() >= timeout {
+            return Err(ClientError::Timeout(timeout));
+        }
+        std::thread::sleep(FETCH_POLL);
     }
 }
 
@@ -245,6 +273,10 @@ impl Fetched {
             Some(text) => Some(parse_rect(text).ok_or_else(|| bad(CROP_HEADER))?),
             None => return Err(bad(CROP_HEADER)),
         };
+        let position = match answer.header(POSITION_HEADER) {
+            Some(text) => Some(parse_position(text).ok_or_else(|| bad(POSITION_HEADER))?),
+            None => None,
+        };
         Ok(Self {
             meta: Meta {
                 capture_ms,
@@ -252,6 +284,7 @@ impl Fetched {
                 source_width,
                 source_height,
                 crop,
+                position,
             },
             jpeg: answer.body,
         })

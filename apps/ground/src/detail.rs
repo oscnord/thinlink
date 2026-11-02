@@ -10,7 +10,8 @@ use clap::{Args, Subcommand};
 
 use sat_teleop_detail::client::Client;
 use sat_teleop_detail::crop::Crop;
-use sat_teleop_detail::wire::{JobId, JobRequest, Kind};
+use sat_teleop_detail::wire::{JobId, JobRequest, Kind, MAX_LISTED};
+use sat_teleop_policy::position::Position;
 use sat_teleop_policy::token::Token;
 
 /// The relay's job API for the ground, on `ground_net`.
@@ -23,6 +24,8 @@ pub enum Detail {
     Request(RequestArgs),
     /// Wait for a job's object and write it to a file, labelled with the frame it shows.
     Fetch(FetchArgs),
+    /// List the snapshots the vehicle took while the ground was out of reach, with where it was.
+    Outage(OutageArgs),
     /// Cancel a job: the vehicle stops at its next chunk.
     Cancel {
         id: String,
@@ -55,6 +58,22 @@ pub struct RequestArgs {
 }
 
 #[derive(Args)]
+pub struct OutageArgs {
+    /// Snapshots taken in the last this many seconds, by this machine's clock.
+    #[arg(long, default_value_t = 3600, conflicts_with = "from_ms")]
+    since_s: u64,
+    /// Snapshots captured at or after this time, in UNIX milliseconds: the way to the rest of a
+    /// list that was full.
+    #[arg(long)]
+    from_ms: Option<u64>,
+    /// Give up waiting after this many seconds.
+    #[arg(long, default_value_t = 120)]
+    wait_s: u64,
+    #[arg(long, default_value = RELAY)]
+    relay: String,
+}
+
+#[derive(Args)]
 pub struct FetchArgs {
     id: String,
     /// Where to write the JPEG.
@@ -71,6 +90,7 @@ pub fn run(detail: Detail, token: Option<&Token>) -> Result<()> {
     match detail {
         Detail::Request(args) => request(&args, token),
         Detail::Fetch(args) => fetch(&args, token),
+        Detail::Outage(args) => outage(&args, token),
         Detail::Cancel { id, relay } => {
             let id = parse_id(&id)?;
             Client::new(&relay, CLIENT_TIMEOUT)
@@ -123,17 +143,81 @@ fn fetch(args: &FetchArgs, token: Option<&Token>) -> Result<()> {
     );
     println!(
         "{}: retained frame {} captured at {} ms UNIX ({age_s} s ago by this clock), {part} of \
-         {}x{}, {} bytes; historical, not live",
+         {}x{}, {} bytes, {}; historical, not live",
         args.output.display(),
         meta.frame_id,
         meta.capture_ms,
         meta.source_width,
         meta.source_height,
-        fetched.jpeg.len()
+        fetched.jpeg.len(),
+        describe(meta.position)
     );
     // The job's slot is free for the next request; the file is the ground's now.
     client.cancel(&id)?;
     Ok(())
+}
+
+fn outage(args: &OutageArgs, token: Option<&Token>) -> Result<()> {
+    let now = now_ms()?;
+    let job = JobRequest {
+        kind: Kind::Outage,
+        at_capture_ms: args
+            .from_ms
+            .unwrap_or_else(|| now.saturating_sub(args.since_s.saturating_mul(1000))),
+        crop: None,
+        max_bytes: 4096,
+        expires_in_ms: u32::try_from(args.wait_s.saturating_mul(1000)).unwrap_or(u32::MAX),
+    };
+    job.validate().map_err(anyhow::Error::msg)?;
+    let client = Client::new(&args.relay, CLIENT_TIMEOUT).with_token(token);
+    let id = client.request(&job)?;
+    let listing = client
+        .list(&id, Duration::from_secs(args.wait_s))
+        .with_context(|| format!("job {id}"));
+    client.cancel(&id)?;
+    let listing = listing?;
+    if listing.snapshots.is_empty() {
+        println!("no snapshots were taken out of reach in that time, or all were fetched");
+    }
+    for snapshot in &listing.snapshots {
+        let age_s = now.saturating_sub(snapshot.capture_ms) / 1000;
+        println!(
+            "frame {} at {} ms UNIX ({age_s} s ago), {}",
+            snapshot.frame_id,
+            snapshot.capture_ms,
+            describe(snapshot.position)
+        );
+    }
+    if let Some(last) = listing
+        .snapshots
+        .last()
+        .filter(|_| listing.snapshots.len() == MAX_LISTED)
+    {
+        println!(
+            "the list is full: `detail outage --from-ms {}` shows the rest",
+            last.capture_ms.saturating_add(1)
+        );
+    }
+    println!("fetch one with `detail request --at-ms <capture ms>` and `detail fetch`");
+    Ok(())
+}
+
+/// A position in words, or that there is none.
+fn describe(position: Option<Position>) -> String {
+    let Some(p) = position else {
+        return "no position".to_owned();
+    };
+    let degrees = |e7: i32| f64::from(e7) / 1e7;
+    let heading = p.heading_cdeg.map_or_else(
+        || "heading unknown".to_owned(),
+        |h| format!("heading {:.0} degrees", f64::from(h) / 100.0),
+    );
+    format!(
+        "at {:.6}, {:.6}, {:.1} m above home, {heading}",
+        degrees(p.lat_e7),
+        degrees(p.lon_e7),
+        f64::from(p.rel_alt_mm) / 1000.0
+    )
 }
 
 fn parse_id(text: &str) -> Result<JobId> {

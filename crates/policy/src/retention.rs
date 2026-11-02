@@ -1,5 +1,6 @@
 //! Retention of the vehicle's retained snapshots: which to delete so the store stays within its
-//! byte quota, its maximum age and its free-space floor.
+//! byte quota, its maximum age and its free-space floor, while the snapshots taken out of reach
+//! are kept for the operator up to a share of the quota.
 
 use std::time::Instant;
 
@@ -11,6 +12,8 @@ pub struct Object {
     pub bytes: u64,
     /// A retrieval is reading it: kept until then, whatever the limits say.
     pub pinned_until: Option<Instant>,
+    /// Taken while the ground was not heard and not fetched since.
+    pub outage: bool,
 }
 
 impl Object {
@@ -25,12 +28,44 @@ pub struct Limits {
     pub max_age_ms: u64,
     /// The volume keeps at least this much free.
     pub min_free_bytes: u64,
+    /// Outage snapshots are kept against the limits above up to this percentage of `max_bytes`.
+    pub outage_share_percent: u8,
+    /// An outage snapshot is kept this long after it was captured.
+    pub outage_keep_ms: u64,
+}
+
+/// The outage snapshots that retention keeps: unfetched and within `outage_keep_ms`, the newest
+/// first until the next would take them over their share of the quota.
+fn kept_for_outage(objects: &[Object], limits: Limits, now_unix_ms: u64) -> Vec<bool> {
+    let share = limits.max_bytes / 100 * u64::from(limits.outage_share_percent);
+    let mut newest_first: Vec<usize> = (0..objects.len()).collect();
+    newest_first.sort_by_key(|&i| std::cmp::Reverse(objects.get(i).map(|o| o.capture_ms)));
+    let mut kept = vec![false; objects.len()];
+    let mut held: u64 = 0;
+    for index in newest_first {
+        let Some(object) = objects.get(index) else {
+            continue;
+        };
+        let young = now_unix_ms.saturating_sub(object.capture_ms) <= limits.outage_keep_ms;
+        if !object.outage || !young {
+            continue;
+        }
+        held = held.saturating_add(object.bytes);
+        if held > share {
+            break;
+        }
+        if let Some(flag) = kept.get_mut(index) {
+            *flag = true;
+        }
+    }
+    kept
 }
 
 /// Indices into `objects` to delete, oldest first: every object older than `max_age_ms`, then the
 /// oldest until the store holds at most `max_bytes` and the volume (`free_bytes` free now) at least
 /// `min_free_bytes`. Pinned objects are skipped, so a store whose limits only pinned objects could
-/// meet stays over them until the pins expire.
+/// meet stays over them until the pins expire. Outage snapshots are skipped too, up to their
+/// share of the quota and within `outage_keep_ms`, whatever `max_age_ms` says.
 pub fn evict(
     objects: &[Object],
     limits: Limits,
@@ -38,13 +73,15 @@ pub fn evict(
     now_unix_ms: u64,
     now: Instant,
 ) -> Vec<usize> {
+    let outage_kept = kept_for_outage(objects, limits, now_unix_ms);
     let mut oldest_first: Vec<usize> = (0..objects.len()).collect();
     oldest_first.sort_by_key(|&i| objects.get(i).map(|o| o.capture_ms));
     let mut stored: u64 = objects.iter().map(|o| o.bytes).sum();
     let mut free = free_bytes;
     let mut evicted = Vec::new();
     for index in oldest_first {
-        let Some(object) = objects.get(index).filter(|o| !o.pinned(now)) else {
+        let kept = outage_kept.get(index).copied().unwrap_or(false);
+        let Some(object) = objects.get(index).filter(|o| !o.pinned(now) && !kept) else {
             continue;
         };
         let too_old = now_unix_ms.saturating_sub(object.capture_ms) > limits.max_age_ms;
@@ -72,6 +109,8 @@ mod tests {
         max_bytes: 300,
         max_age_ms: 60_000,
         min_free_bytes: 1000,
+        outage_share_percent: 50,
+        outage_keep_ms: 600_000,
     };
 
     #[test]
@@ -82,6 +121,7 @@ mod tests {
             capture_ms: NOW_MS - age_ms,
             bytes,
             pinned_until,
+            outage: false,
         };
         // Name, objects as (age in ms, bytes, pinned until), limits, free bytes and the indices
         // evicted, in eviction order.
@@ -172,6 +212,65 @@ mod tests {
         ];
         for (name, objects, limits, free, expected) in cases {
             let evicted = evict(&objects, limits, free, NOW_MS, now);
+            assert_eq!(evicted, expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn outage_snapshots_outlive_the_limits_within_their_share_until_fetched_or_old() {
+        let now = Instant::now();
+        let object = |age_ms: u64, outage| Object {
+            capture_ms: NOW_MS - age_ms,
+            bytes: 100,
+            pinned_until: None,
+            outage,
+        };
+        // Name, objects as (age in ms, outage), free bytes and the indices evicted, oldest first.
+        // The quota holds 300 bytes and the outage share 150, one snapshot of 100.
+        let cases: Vec<(&str, Vec<Object>, u64, Vec<usize>)> = vec![
+            (
+                "past the maximum age, an outage snapshot stays and an ordinary one goes",
+                vec![object(90_000, true), object(80_000, false)],
+                5000,
+                vec![1],
+            ),
+            (
+                "over the quota the ordinary snapshots go before the outage ones",
+                vec![
+                    object(40_000, true),
+                    object(30_000, false),
+                    object(20_000, false),
+                    object(10_000, false),
+                ],
+                5000,
+                vec![1],
+            ),
+            (
+                "over their share the newest outage snapshot wins and the older goes",
+                vec![
+                    object(30_000, true),
+                    object(20_000, true),
+                    object(10_000, false),
+                    object(1000, false),
+                ],
+                5000,
+                vec![0],
+            ),
+            (
+                "fetched snapshots are ordinary again",
+                vec![object(90_000, false), object(80_000, true)],
+                5000,
+                vec![0],
+            ),
+            (
+                "an outage snapshot older than the keep time is ordinary again",
+                vec![object(700_000, true), object(10_000, false)],
+                5000,
+                vec![0],
+            ),
+        ];
+        for (name, objects, free, expected) in cases {
+            let evicted = evict(&objects, LIMITS, free, NOW_MS, now);
             assert_eq!(evicted, expected, "{name}");
         }
     }

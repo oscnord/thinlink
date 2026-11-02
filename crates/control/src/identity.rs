@@ -17,7 +17,9 @@
 use std::time::Duration;
 
 use mavlink::MavHeader;
-use mavlink::dialects::ardupilotmega::{MavMessage, PARAM_REQUEST_READ_DATA};
+use mavlink::dialects::ardupilotmega::{
+    COMMAND_LONG_DATA, MavCmd, MavMessage, PARAM_REQUEST_READ_DATA,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -215,13 +217,42 @@ pub fn read_request(system: u8, component: u8, name: &str) -> Option<Frame> {
         target_component: component,
         param_id: name.into(),
     });
+    own_frame(&request)
+}
+
+/// A `SET_MESSAGE_INTERVAL` asking the autopilot at `system` and `component` for `message_id`
+/// every `interval`: the read-only telemetry request a ground station makes when it connects.
+pub fn stream_request(
+    system: u8,
+    component: u8,
+    message_id: u32,
+    interval: Duration,
+) -> Option<Frame> {
+    let request = MavMessage::COMMAND_LONG(COMMAND_LONG_DATA {
+        target_system: system,
+        target_component: component,
+        command: MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL,
+        #[expect(clippy::cast_precision_loss, reason = "message ids are small")]
+        param1: message_id as f32,
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "intervals are well under 2^24 us"
+        )]
+        param2: interval.as_micros() as f32,
+        ..COMMAND_LONG_DATA::default()
+    });
+    own_frame(&request)
+}
+
+/// `message` from the bridge's own identity on the autopilot's link.
+fn own_frame(message: &MavMessage) -> Option<Frame> {
     let header = MavHeader {
         system_id: PROBE_SYSTEM.into(),
         component_id: PROBE_COMPONENT,
         sequence: 0,
     };
     let mut bytes = Vec::new();
-    mavlink::write_v2_msg(&mut bytes, header, &request).ok()?;
+    mavlink::write_v2_msg(&mut bytes, header, message).ok()?;
     datagram_frames(&bytes).next()
 }
 

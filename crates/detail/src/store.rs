@@ -1,8 +1,12 @@
 //! The vehicle's snapshot store: one directory of JPEGs named `<capture_ms>-<frame_id>.jpg`. A file
 //! is written as `.tmp` and renamed, so a crash leaves either a whole snapshot or a `.tmp` the next
-//! start deletes; the index is the directory itself, scanned at start. Retention is decided by
-//! `sat_teleop_policy::retention`.
+//! start deletes; the index is the directory itself, scanned at start. A snapshot taken with a
+//! fresh position, or while the ground was out of reach, has a small
+//! `<capture_ms>-<frame_id>.pos` beside it; one without is just the JPEG, as every snapshot was
+//! before positions. Retention is decided by `sat_teleop_policy::retention`, which keeps the
+//! out-of-reach snapshots until they are fetched.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -10,6 +14,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::position::Position;
 use sat_teleop_policy::retention::{self, Limits, Object};
 
 use crate::DetailError;
@@ -18,6 +23,10 @@ use crate::DetailError;
 const MAX_SNAPSHOT_BYTES: usize = 16 * 1024 * 1024;
 const SUFFIX: &str = ".jpg";
 const TMP_SUFFIX: &str = ".jpg.tmp";
+const POS_SUFFIX: &str = ".pos";
+const POS_TMP_SUFFIX: &str = ".pos.tmp";
+/// A position file is a few dozen bytes; anything larger is not one.
+const MAX_POS_BYTES: u64 = 1024;
 
 /// `[store]` of the vehicle config.
 #[derive(Debug, Clone, Deserialize)]
@@ -31,6 +40,21 @@ pub struct StoreSettings {
     pub min_free_bytes: u64,
     /// Snapshots further apart than this have a gap between them.
     pub gap_after_ms: u64,
+    /// Snapshots taken while the ground was not heard are kept against the limits up to this
+    /// percentage of `max_bytes`, the newest first.
+    #[serde(default = "default_outage_share_percent")]
+    pub outage_share_percent: u8,
+    /// They are kept this long, unless fetched sooner.
+    #[serde(default = "default_outage_keep_s")]
+    pub outage_keep_s: u64,
+}
+
+fn default_outage_share_percent() -> u8 {
+    50
+}
+
+fn default_outage_keep_s() -> u64 {
+    3600
 }
 
 impl StoreSettings {
@@ -46,6 +70,14 @@ impl StoreSettings {
                 (1..=3_600_000).contains(&self.gap_after_ms),
                 "gap_after_ms must be 1-3600000",
             ),
+            (
+                self.outage_share_percent <= 100,
+                "outage_share_percent must be 0-100",
+            ),
+            (
+                (1..=31_536_000).contains(&self.outage_keep_s),
+                "outage_keep_s must be 1-31536000",
+            ),
         ];
         if let Some((_, rule)) = rules.iter().find(|(holds, _)| !holds) {
             return Err(DetailError::Config(format!("[store]: {rule}")));
@@ -56,6 +88,8 @@ impl StoreSettings {
                 max_bytes: self.max_bytes,
                 max_age_ms: self.max_age_s * 1000,
                 min_free_bytes: self.min_free_bytes,
+                outage_share_percent: self.outage_share_percent,
+                outage_keep_ms: self.outage_keep_s * 1000,
             },
             gap_after_ms: self.gap_after_ms,
         })
@@ -76,6 +110,27 @@ pub struct Entry {
     pub capture_ms: u64,
     pub frame_id: u32,
     pub bytes: u64,
+    /// Where the vehicle was when it was taken; `None` when the autopilot's position was stale.
+    pub position: Option<Position>,
+    /// Taken while the ground was not heard and not fetched since.
+    pub outage: bool,
+}
+
+/// What a snapshot was taken with: where the vehicle was and whether the ground was out of
+/// reach. It is the contents of the snapshot's `.pos` file.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tag {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub outage: bool,
+}
+
+impl Tag {
+    fn is_empty(self) -> bool {
+        self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -88,7 +143,7 @@ struct Kept {
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct Recovery {
     pub kept: usize,
-    /// `.tmp` files a crash left, deleted.
+    /// `.tmp` files and position files without a snapshot that a crash left, deleted.
     pub tmp_removed: usize,
     /// Names that are not snapshots, left alone and not indexed.
     pub ignored: usize,
@@ -126,14 +181,19 @@ pub struct Store {
 
 /// `<capture_ms>-<frame_id>.jpg` as numbers; `None` for any other name.
 fn parse_name(name: &str) -> Option<(u64, u32)> {
-    let stem = name.strip_suffix(SUFFIX)?;
+    parse_stem(name, SUFFIX)
+}
+
+/// `<capture_ms>-<frame_id><suffix>` as numbers; `None` for any other name.
+fn parse_stem(name: &str, suffix: &str) -> Option<(u64, u32)> {
+    let stem = name.strip_suffix(suffix)?;
     let (capture, frame) = stem.split_once('-')?;
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     if !digits(capture) || !digits(frame) {
         return None;
     }
     let (capture, frame) = (capture.parse().ok()?, frame.parse().ok()?);
-    (file_name(capture, frame) == name).then_some((capture, frame))
+    (format!("{capture}-{frame}{suffix}") == name).then_some((capture, frame))
 }
 
 fn file_name(capture_ms: u64, frame_id: u32) -> String {
@@ -145,6 +205,17 @@ pub fn entry_path(dir: &Path, entry: Entry) -> PathBuf {
     dir.join(file_name(entry.capture_ms, entry.frame_id))
 }
 
+fn position_path(dir: &Path, capture_ms: u64, frame_id: u32) -> PathBuf {
+    dir.join(format!("{capture_ms}-{frame_id}{POS_SUFFIX}"))
+}
+
+/// The tag in the file at `path`, if it is a plain small file holding one.
+fn read_tag(path: &Path) -> Option<Tag> {
+    let small = fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= MAX_POS_BYTES);
+    let text = fs::read_to_string(path).ok().filter(|_| small)?;
+    serde_json::from_str(&text).ok()
+}
+
 /// What a snapshot directory holds, read without changing it.
 #[derive(Debug, Default)]
 pub struct Listing {
@@ -152,7 +223,9 @@ pub struct Listing {
     pub entries: Vec<Entry>,
     /// Files a crash may have left half written.
     pub tmp_files: Vec<PathBuf>,
-    /// Names that are neither, and anything that is not a plain file.
+    /// Position files whose snapshot is not there.
+    pub orphans: Vec<PathBuf>,
+    /// Names that are none of these, and anything that is not a plain file.
     pub ignored: usize,
 }
 
@@ -160,12 +233,22 @@ pub struct Listing {
 /// ignored. Only plain files count.
 pub fn list(dir: &Path) -> std::io::Result<Listing> {
     let mut listing = Listing::default();
+    let mut positions: HashMap<(u64, u32), (Tag, PathBuf)> = HashMap::new();
     for item in fs::read_dir(dir)?.flatten() {
         let name = item.file_name();
         let name = name.to_string_lossy();
         let is_file = item.file_type().is_ok_and(|t| t.is_file());
-        if is_file && name.ends_with(TMP_SUFFIX) {
+        if is_file && (name.ends_with(TMP_SUFFIX) || name.ends_with(POS_TMP_SUFFIX)) {
             listing.tmp_files.push(item.path());
+            continue;
+        }
+        if let Some(key) = parse_stem(&name, POS_SUFFIX).filter(|_| is_file) {
+            match read_tag(&item.path()) {
+                Some(tag) => {
+                    positions.insert(key, (tag, item.path()));
+                }
+                None => listing.ignored += 1,
+            }
             continue;
         }
         let parsed = parse_name(&name).filter(|_| is_file);
@@ -177,8 +260,16 @@ pub fn list(dir: &Path) -> std::io::Result<Listing> {
             capture_ms,
             frame_id,
             bytes: meta.len(),
+            position: None,
+            outage: false,
         });
     }
+    for entry in &mut listing.entries {
+        let found = positions.remove(&(entry.capture_ms, entry.frame_id));
+        let tag = found.map(|(tag, _)| tag).unwrap_or_default();
+        (entry.position, entry.outage) = (tag.position, tag.outage);
+    }
+    listing.orphans = positions.into_values().map(|(_, path)| path).collect();
     listing.entries.sort_by_key(|e| (e.capture_ms, e.frame_id));
     Ok(listing)
 }
@@ -196,7 +287,7 @@ impl Store {
             ignored: listing.ignored,
             ..Recovery::default()
         };
-        for tmp in &listing.tmp_files {
+        for tmp in listing.tmp_files.iter().chain(&listing.orphans) {
             recovery.tmp_removed += usize::from(fs::remove_file(tmp).is_ok());
         }
         let mut kept: Vec<Kept> = listing
@@ -220,12 +311,14 @@ impl Store {
         Ok(store)
     }
 
-    /// Writes a snapshot, then deletes what the limits say. A failed write leaves no `.tmp`.
+    /// Writes a snapshot with its tag, then deletes what the limits say. A failed write leaves
+    /// no `.tmp`.
     pub fn put(
         &mut self,
         capture_ms: u64,
         frame_id: u32,
         jpeg: &[u8],
+        tag: Tag,
         now_unix_ms: u64,
         now: Instant,
     ) -> Result<(), DetailError> {
@@ -238,6 +331,7 @@ impl Store {
         let name = file_name(capture_ms, frame_id);
         let path = self.config.dir.join(&name);
         let tmp = self.config.dir.join(format!("{name}.tmp"));
+        self.write_tag(capture_ms, frame_id, tag)?;
         write_whole(&tmp, jpeg).map_err(|e| {
             let _ = fs::remove_file(&tmp);
             DetailError::io(format!("cannot write {}", path.display()), e)
@@ -250,6 +344,8 @@ impl Store {
             capture_ms,
             frame_id,
             bytes: jpeg.len() as u64,
+            position: tag.position,
+            outage: tag.outage,
         };
         self.kept
             .retain(|k| (k.entry.capture_ms, k.entry.frame_id) != (capture_ms, frame_id));
@@ -265,6 +361,53 @@ impl Store {
         );
         self.written += 1;
         self.enforce(now_unix_ms, now)
+    }
+
+    /// Writes the tag file before the snapshot, so a snapshot that has a tag never shows up
+    /// without it; an empty tag removes the file an earlier snapshot of the same name left.
+    fn write_tag(&self, capture_ms: u64, frame_id: u32, tag: Tag) -> Result<(), DetailError> {
+        let path = position_path(&self.config.dir, capture_ms, frame_id);
+        if tag.is_empty() {
+            let _ = fs::remove_file(&path);
+            return Ok(());
+        }
+        let tmp = path.with_extension("pos.tmp");
+        let body = serde_json::to_vec(&tag)
+            .map_err(|e| DetailError::Config(format!("cannot encode a position: {e}")))?;
+        let written = write_whole(&tmp, &body).and_then(|()| fs::rename(&tmp, &path));
+        written.map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            DetailError::io(format!("cannot write {}", path.display()), e)
+        })
+    }
+
+    /// The outage snapshots captured at or after `from_ms`, oldest first, at most `limit`.
+    pub fn outage_from(&self, from_ms: u64, limit: usize) -> Vec<Entry> {
+        self.kept
+            .iter()
+            .map(|k| k.entry)
+            .filter(|e| e.outage && e.capture_ms >= from_ms)
+            .take(limit)
+            .collect()
+    }
+
+    /// Ends an outage snapshot's keeping: it was fetched, so retention treats it as any other.
+    pub fn release(&mut self, entry: Entry) {
+        let key = (entry.capture_ms, entry.frame_id);
+        let found = self
+            .kept
+            .iter_mut()
+            .find(|k| (k.entry.capture_ms, k.entry.frame_id) == key);
+        let Some(kept) = found else {
+            return;
+        };
+        kept.entry.outage = false;
+        let tag = Tag {
+            position: kept.entry.position,
+            outage: false,
+        };
+        // A tag that cannot be rewritten only means the snapshot is kept again after a restart.
+        let _ = self.write_tag(entry.capture_ms, entry.frame_id, tag);
     }
 
     /// The newest snapshot captured at or before `at_capture_ms`, if the store holds one.
@@ -338,6 +481,7 @@ impl Store {
                 capture_ms: k.entry.capture_ms,
                 bytes: k.entry.bytes,
                 pinned_until: k.pinned_until,
+                outage: k.entry.outage,
             })
             .collect();
         let doomed = retention::evict(&objects, self.config.limits, free, now_unix_ms, now);
@@ -347,6 +491,11 @@ impl Store {
                 continue;
             };
             let removed = fs::remove_file(self.path(kept.entry));
+            let _ = fs::remove_file(position_path(
+                &self.config.dir,
+                kept.entry.capture_ms,
+                kept.entry.frame_id,
+            ));
             // A file that is already gone is not kept in the index either.
             let gone = removed.is_ok() || !self.path(kept.entry).exists();
             if let Some(flag) = keep.get_mut(index) {
@@ -371,4 +520,94 @@ fn free_bytes(dir: &Path) -> Result<u64, DetailError> {
     let stat = rustix::fs::statvfs(dir)
         .map_err(|e| DetailError::io(format!("cannot stat {}", dir.display()), e.into()))?;
     Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    const JPEG: &[u8] = b"not decoded here";
+
+    fn config() -> StoreConfig {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "sat-teleop-store-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        StoreConfig {
+            dir,
+            limits: Limits {
+                max_bytes: 1 << 20,
+                max_age_ms: 3_600_000,
+                min_free_bytes: 0,
+                outage_share_percent: 50,
+                outage_keep_ms: 3_600_000,
+            },
+            gap_after_ms: 1500,
+        }
+    }
+
+    fn fix(lat_e7: i32) -> Position {
+        Position {
+            lat_e7,
+            lon_e7: 180_000_000,
+            rel_alt_mm: 12_000,
+            heading_cdeg: Some(9000),
+        }
+    }
+
+    fn found(store: &Store, at: u64) -> Entry {
+        store.nearest_at_or_before(at).unwrap()
+    }
+
+    #[test]
+    fn tags_survive_a_restart_and_snapshots_without_one_stay_readable() {
+        let config = config();
+        let (now_ms, now) = (1_000_000, Instant::now());
+        let mut store = Store::open(config.clone(), now_ms, now).unwrap();
+        let at = |position, outage| Tag { position, outage };
+        let puts = [
+            (999_000, 1, at(Some(fix(590_000_000)), false)),
+            (999_500, 2, at(None, true)),
+            (999_800, 3, at(Some(fix(590_000_001)), true)),
+            (999_900, 4, Tag::default()),
+        ];
+        for (capture_ms, frame_id, tag) in puts {
+            store
+                .put(capture_ms, frame_id, JPEG, tag, now_ms, now)
+                .unwrap();
+        }
+        // A snapshot from before positions existed: the JPEG alone.
+        fs::write(config.dir.join("998000-0.jpg"), JPEG).unwrap();
+        // A tag file whose snapshot a crash took.
+        fs::write(config.dir.join("1-1.pos"), br#"{"outage":true}"#).unwrap();
+        store.release(found(&store, 999_800));
+        drop(store);
+
+        let mut store = Store::open(config.clone(), now_ms, now).unwrap();
+        let tags: Vec<_> = [998_000, 999_000, 999_500, 999_800, 999_900]
+            .map(|t| found(&store, t))
+            .map(|e| (e.capture_ms, e.position, e.outage))
+            .to_vec();
+        assert_eq!(
+            tags,
+            [
+                (998_000, None, false),
+                (999_000, Some(fix(590_000_000)), false),
+                (999_500, None, true),
+                (999_800, Some(fix(590_000_001)), false),
+                (999_900, None, false),
+            ]
+        );
+        assert_eq!(store.snapshot().recovery.tmp_removed, 1);
+        assert!(!config.dir.join("1-1.pos").exists());
+        let listed: Vec<_> = store.outage_from(0, 8).iter().map(|e| e.frame_id).collect();
+        assert_eq!(listed, [2]);
+        store.release(found(&store, 999_500));
+        assert!(!config.dir.join("999500-2.pos").exists());
+        fs::remove_dir_all(&config.dir).unwrap();
+    }
 }

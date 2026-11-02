@@ -7,6 +7,8 @@ use std::io::{self, Read};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use sat_teleop_policy::position::Position;
+
 use crate::crop::{self, Crop, Rect};
 
 /// Larger than any snapshot or crop the testbed's sources produce, and what one job may hold.
@@ -87,6 +89,8 @@ pub enum Kind {
     Snapshot,
     /// A rectangle of it, encoded again.
     Crop,
+    /// Not a picture: the snapshots taken out of reach from `at_capture_ms` on, with positions.
+    Outage,
 }
 
 /// `POST /jobs`: the frame captured at or before `at_capture_ms`, whole or cropped.
@@ -114,8 +118,8 @@ impl JobRequest {
             ));
         }
         match (self.kind, self.crop) {
-            (Kind::Snapshot, None) => Ok(()),
-            (Kind::Snapshot, Some(_)) => Err("a snapshot takes no crop".to_owned()),
+            (Kind::Snapshot | Kind::Outage, None) => Ok(()),
+            (Kind::Snapshot | Kind::Outage, Some(_)) => Err("only a crop takes a crop".to_owned()),
             (Kind::Crop, None) => Err("a crop needs a crop rectangle".to_owned()),
             (Kind::Crop, Some(crop)) => crop::check(crop).map_err(|e| e.to_string()),
         }
@@ -148,6 +152,9 @@ pub struct Meta {
     /// The rectangle of the source, in pixels; `None` for the whole frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub crop: Option<Rect>,
+    /// Where the vehicle was when it took the frame, if the autopilot's position was fresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
 }
 
 impl Meta {
@@ -183,6 +190,35 @@ impl Meta {
     }
 }
 
+/// The most snapshots one list answers with, so the answer fits a small request body.
+pub const MAX_LISTED: usize = 16;
+
+/// A snapshot taken out of reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Listed {
+    pub capture_ms: u64,
+    pub frame_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Position>,
+}
+
+/// `POST /jobs/{id}/listing`: the answer to an `Outage` job, oldest first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Listing {
+    pub snapshots: Vec<Listed>,
+}
+
+impl Listing {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.snapshots.len() > MAX_LISTED {
+            return Err(format!("a listing holds at most {MAX_LISTED} snapshots"));
+        }
+        Ok(())
+    }
+}
+
 /// `POST /jobs/{id}/complete`: the chunks sent, and the whole object's size and hash.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -206,3 +242,55 @@ pub const CAPTURE_HEADER: &str = "X-Capture-Ms";
 pub const FRAME_HEADER: &str = "X-Frame-Id";
 pub const CROP_HEADER: &str = "X-Crop";
 pub const SOURCE_HEADER: &str = "X-Source-Size";
+pub const POSITION_HEADER: &str = "X-Position";
+
+/// A position as `lat_e7,lon_e7,rel_alt_mm,heading_cdeg`, the heading `-` when unknown.
+pub fn position_text(position: Position) -> String {
+    let heading = position
+        .heading_cdeg
+        .map_or_else(|| "-".to_owned(), |h| h.to_string());
+    format!(
+        "{},{},{},{heading}",
+        position.lat_e7, position.lon_e7, position.rel_alt_mm
+    )
+}
+
+/// The inverse of [`position_text`]; `None` for anything else.
+pub fn parse_position(text: &str) -> Option<Position> {
+    let mut parts = text.split(',');
+    let lat_e7 = parts.next()?.parse().ok()?;
+    let lon_e7 = parts.next()?.parse().ok()?;
+    let rel_alt_mm = parts.next()?.parse().ok()?;
+    let heading_cdeg = match parts.next()? {
+        "-" => None,
+        heading => Some(heading.parse().ok()?),
+    };
+    parts.next().is_none().then_some(Position {
+        lat_e7,
+        lon_e7,
+        rel_alt_mm,
+        heading_cdeg,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_position_header_reads_back_what_was_written_and_nothing_else() {
+        let position = |heading_cdeg| Position {
+            lat_e7: -590_000_000,
+            lon_e7: 180_000_001,
+            rel_alt_mm: 12_000,
+            heading_cdeg,
+        };
+        for heading in [Some(9000), None] {
+            let text = position_text(position(heading));
+            assert_eq!(parse_position(&text), Some(position(heading)), "{text}");
+        }
+        for text in ["", "1,2,3", "1,2,3,4,5", "1,2,x,4", "1,2,3,70000", "1,2,3,"] {
+            assert_eq!(parse_position(text), None, "{text:?}");
+        }
+    }
+}

@@ -11,7 +11,7 @@ A bench prototype. You can run all of it on one computer: a test setup emulates 
 - **Adaptive video.** The drone watches the link. When delay builds or the link narrows, it makes the picture smaller or slower, and pauses briefly to empty a backlog. Control and telemetry keep their share of the link.
 - **Telemetry** from the autopilot to QGroundControl through the link, within a fixed budget.
 - **Control under a lease.** Only one listed controller may command the drone at a time. Every command must be fresh and runs at most once. When commands stop, the drone stops.
-- **Retained detail.** The drone keeps a full-size snapshot every second. Ask for one from a few seconds ago, whole or cropped: it is sent only while live video and control leave room, and is labelled as historical.
+- **Retained detail.** The drone keeps a full-size snapshot every second. Ask for one from a few seconds ago, whole or cropped: it is sent only while live video and control leave room, and is labelled as historical. Each snapshot also records where the drone was, and the ones taken while the ground could not hear it are kept until you fetch them (`just detail-outage` lists them).
 - **Graded checks.** Each scenario measures one of these under a link profile and grades it against a stored budget.
 
 Measured in the test setup:

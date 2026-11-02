@@ -18,7 +18,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mavlink::Message;
-use mavlink::dialects::ardupilotmega::MavMessage;
+use mavlink::MessageData;
+use mavlink::dialects::ardupilotmega::{GLOBAL_POSITION_INT_DATA, MavMessage};
 use serde::{Deserialize, Serialize};
 
 use self::control::{ControlSnapshot, ControlStats};
@@ -30,6 +31,7 @@ use crate::frame::{Frame, FrameReader, MAX_DATAGRAM, datagram_frames};
 use crate::gate::{self, Decision};
 use crate::identity::{self, Mode};
 use crate::params::{self, Required};
+use crate::position::NewestPosition;
 use crate::stats::{DropReason, DropsByMessage, Flow, FlowCounts, Link, LinkState};
 use crate::telemetry::{Admission, RateCap, Released, TelemetryLimits};
 use crate::{ControlError, timed_out};
@@ -139,6 +141,8 @@ pub struct VehicleStats {
     /// The telemetry cap in frame bytes per second: `[telemetry]` of the limits until the uplink
     /// budget sets it.
     telemetry_cap: AtomicU32,
+    /// The autopilot's newest position, for the snapshots the vehicle keeps.
+    pub position: NewestPosition,
 }
 
 #[derive(Debug, Serialize)]
@@ -263,7 +267,8 @@ fn serve_sitl(
     let error = loop {
         cap.set_rate(stats.telemetry_cap.load(Ordering::Relaxed));
         release_waiting(cap, socket, relay, &stats.telemetry);
-        probe.ask_if_due(autopilot, writer, &stats.control);
+        let needs_position = stats.position.fresh(Instant::now()).is_none();
+        probe.ask_if_due(autopilot, writer, &stats.control, needs_position);
         let frame = match frames.next_frame() {
             Ok(frame) => frame,
             Err(e) if timed_out(&e) && last_frame.elapsed() < SITL_SILENCE => continue,
@@ -272,6 +277,7 @@ fn serve_sitl(
         };
         last_frame = Instant::now();
         autopilot = learn_vehicle(&frame, &stats.control).or(autopilot);
+        stats.position.note(&frame, autopilot, last_frame);
         stats
             .sitl_bytes
             .fetch_add(frames.source_mut().take(), Ordering::Relaxed);
@@ -284,6 +290,7 @@ fn serve_sitl(
     };
     set_writer(writer, None);
     stats.control.forget_autopilot();
+    stats.position.forget();
     error
 }
 
@@ -301,14 +308,22 @@ fn learn_vehicle(frame: &Frame, control: &ControlStats) -> Option<(u8, u8)> {
     Some(address)
 }
 
-/// Asks the autopilot for the SITL marker once a second until it has answered, and in real mode for
-/// the required failsafe parameters, one request at a time. Writes go to the connection the control
-/// endpoint shares, under its lock, and are not counted as traffic.
+/// Asks the autopilot for its position stream while there is no fresh position, for the SITL marker
+/// once a second until it has answered, and in real mode for the required failsafe parameters, one
+/// request at a time. Writes go to the connection the control endpoint shares, under its lock, and
+/// are not counted as traffic.
 #[derive(Default)]
 struct Probe {
+    position: Option<Instant>,
     marker: Option<Instant>,
     param: Option<Instant>,
 }
+
+/// How often the position stream is asked for while none arrives: an autopilot sends nothing it
+/// was not asked for, and forgets what it was asked when it restarts.
+const POSITION_ASK_EVERY: Duration = Duration::from_secs(5);
+/// The position stream's interval, well inside the age a snapshot's position may have.
+const POSITION_INTERVAL: Duration = Duration::from_millis(500);
 
 /// The least time between two parameter requests: the autopilot answers each within a few
 /// milliseconds, and a lost one is asked for again.
@@ -320,16 +335,31 @@ impl Probe {
         autopilot: Option<(u8, u8)>,
         writer: &SitlWriter,
         control: &ControlStats,
+        needs_position: bool,
     ) {
         let Some((system, component)) = autopilot else {
             return;
         };
-        if let Some(frame) = self.next_request(system, component, control) {
+        if let Some(frame) = self.next_request(system, component, control, needs_position) {
             write_to_sitl(&frame, writer, &Flow::default());
         }
     }
 
-    fn next_request(&mut self, system: u8, component: u8, control: &ControlStats) -> Option<Frame> {
+    fn next_request(
+        &mut self,
+        system: u8,
+        component: u8,
+        control: &ControlStats,
+        needs_position: bool,
+    ) -> Option<Frame> {
+        let position_due = self
+            .position
+            .is_none_or(|at| at.elapsed() >= POSITION_ASK_EVERY);
+        if needs_position && position_due {
+            self.position = Some(Instant::now());
+            let id = GLOBAL_POSITION_INT_DATA::ID;
+            return identity::stream_request(system, component, id, POSITION_INTERVAL);
+        }
         let marker_due = self
             .marker
             .is_none_or(|at| at.elapsed() >= identity::PROBE_EVERY);
@@ -481,7 +511,9 @@ impl<R: Read> Read for Counted<R> {
 mod tests {
     use std::net::{Shutdown, TcpListener, TcpStream};
 
-    use mavlink::dialects::ardupilotmega::{HEARTBEAT_DATA, MavAutopilot, MavMessage, MavType};
+    use mavlink::dialects::ardupilotmega::{
+        HEARTBEAT_DATA, MavAutopilot, MavCmd, MavMessage, MavType,
+    };
 
     use super::*;
     use crate::frame::encoded;
@@ -505,6 +537,32 @@ mod tests {
             0,
             "the reader must reconnect"
         );
+    }
+
+    #[test]
+    fn the_bridge_asks_for_the_position_stream_while_it_has_no_position() {
+        let control = ControlStats::default();
+        let mut probe = Probe::default();
+        let first = probe.next_request(1, 1, &control, true).unwrap();
+        let Ok(MavMessage::COMMAND_LONG(asked)) = first.decode() else {
+            panic!("expected a stream request, got {}", first.message_id());
+        };
+        assert_eq!(asked.command, MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL);
+        assert!((asked.param1 - 33.0).abs() < f32::EPSILON);
+        // Not again within the interval: the marker probe goes next.
+        let next = probe.next_request(1, 1, &control, true).unwrap();
+        assert!(matches!(
+            next.decode(),
+            Ok(MavMessage::PARAM_REQUEST_READ(_))
+        ));
+        // With a fresh position nothing is asked for it.
+        let fresh = Probe::default()
+            .next_request(1, 1, &control, false)
+            .unwrap();
+        assert!(matches!(
+            fresh.decode(),
+            Ok(MavMessage::PARAM_REQUEST_READ(_))
+        ));
     }
 
     #[test]

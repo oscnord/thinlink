@@ -22,7 +22,7 @@ use crate::assemble::Accepted;
 use crate::jobs::{Counts, JobError, Jobs, Lookup};
 use crate::wire::{
     CAPTURE_HEADER, CHUNK_HASH_HEADER, CROP_HEADER, Complete, Created, FRAME_HEADER, Failure,
-    JobId, JobRequest, SOURCE_HEADER, is_sha256_hex,
+    JobId, JobRequest, Listing, POSITION_HEADER, SOURCE_HEADER, is_sha256_hex, position_text,
 };
 use sat_teleop_policy::retrieval::MAX_CHUNK;
 use sat_teleop_policy::token::{Token, admit};
@@ -242,6 +242,7 @@ fn route(surface: Surface, request: &mut Request, relay: &Relay) -> Result<Reply
             chunk(request, id, index, relay)
         }
         (Surface::Vehicle, Method::Post, ["jobs", id, "complete"]) => complete(request, id, relay),
+        (Surface::Vehicle, Method::Post, ["jobs", id, "listing"]) => listing(request, id, relay),
         (Surface::Vehicle, Method::Post, ["jobs", id, "fail"]) => fail(request, id, relay),
         _ => Err(Reject::not_found()),
     }
@@ -306,25 +307,28 @@ fn object(id: &str, relay: &Relay) -> Result<Reply, Reject> {
             202,
             &json!({ "state": state, "chunks": chunks }),
         )),
+        Lookup::Listed(listing) => Ok(Reply::json(200, &*listing)),
         Lookup::Ready(object) => {
             let meta = object.meta;
             let crop = meta.crop.map_or_else(
                 || "none".to_owned(),
                 |r| format!("{},{},{},{}", r.x, r.y, r.w, r.h),
             );
+            let mut headers = vec![
+                (CAPTURE_HEADER, meta.capture_ms.to_string()),
+                (FRAME_HEADER, meta.frame_id.to_string()),
+                (CROP_HEADER, crop),
+                (
+                    SOURCE_HEADER,
+                    format!("{}x{}", meta.source_width, meta.source_height),
+                ),
+            ];
+            headers.extend(meta.position.map(|p| (POSITION_HEADER, position_text(p))));
             Ok(Reply {
                 status: 200,
                 content_type: "image/jpeg",
                 body: object.jpeg.clone(),
-                headers: vec![
-                    (CAPTURE_HEADER, meta.capture_ms.to_string()),
-                    (FRAME_HEADER, meta.frame_id.to_string()),
-                    (CROP_HEADER, crop),
-                    (
-                        SOURCE_HEADER,
-                        format!("{}x{}", meta.source_width, meta.source_height),
-                    ),
-                ],
+                headers,
             })
         }
     }
@@ -396,6 +400,14 @@ fn complete(request: &mut Request, id: &str, relay: &Relay) -> Result<Reply, Rej
     let id = parse_id(id)?;
     let done: Complete = read_json(request)?;
     relay.jobs().complete(&id, &done, Instant::now())?;
+    relay.completed.fetch_add(1, Ordering::Relaxed);
+    Ok(Reply::empty(204))
+}
+
+fn listing(request: &mut Request, id: &str, relay: &Relay) -> Result<Reply, Reject> {
+    let id = parse_id(id)?;
+    let listing: Listing = read_json(request)?;
+    relay.jobs().listing(&id, listing, Instant::now())?;
     relay.completed.fetch_add(1, Ordering::Relaxed);
     Ok(Reply::empty(204))
 }

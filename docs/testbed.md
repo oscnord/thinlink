@@ -105,6 +105,7 @@ just lab-check adaptation bandwidth-steps            # the vehicle's adaptation 
 just lab-check adaptation lte-bad --duration-s 120   # further arguments go to `lab check`
 just ingest-check lan         # the camera ingest path with a test-pattern feeder in place of a webcam
 just detail-request 10        # ask for the retained frame from 10 s ago; just detail-fetch <id> file.jpg saves it
+just detail-outage            # list the snapshots taken while the ground could not hear the vehicle, with positions
 just take-control             # the ground adapter takes the vehicle's control lease (docs/qgc.md)
 just control-status           # its lease
 just release-control          # give it back

@@ -31,6 +31,11 @@ pub struct Conditions {
     pub allowance: u32,
 }
 
+/// Whether the relay answered a probe recently enough for the ground to be heard.
+pub fn ground_heard(c: &Conditions) -> bool {
+    c.since_answer_ms.is_some_and(|ms| ms < c.stale_after_ms)
+}
+
 /// Why retrieval holds back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hold {
@@ -66,7 +71,7 @@ pub fn permit(c: &Conditions) -> Result<(), Hold> {
     if c.draining {
         return Err(Hold::Draining);
     }
-    if c.since_answer_ms.is_none_or(|ms| ms >= c.stale_after_ms) {
+    if !ground_heard(c) {
         return Err(Hold::FeedbackStale);
     }
     if c.queue_delay_ms.is_none_or(|ms| ms > c.queue_delay_base_ms) {

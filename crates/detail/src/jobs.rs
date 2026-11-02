@@ -9,7 +9,9 @@ use serde::Serialize;
 
 use crate::assemble::{Accepted, Assembly, ChunkError};
 use crate::crop;
-use crate::wire::{Assignment, Complete, JobId, JobRequest, MAX_REASON, Meta, is_sha256_hex};
+use crate::wire::{
+    Assignment, Complete, JobId, JobRequest, Kind, Listing, MAX_REASON, Meta, is_sha256_hex,
+};
 
 /// Jobs the table holds, whatever their state.
 pub const MAX_JOBS: usize = 4;
@@ -42,6 +44,8 @@ enum State {
     Queued,
     Assigned(Assembly),
     Done(Arc<Object>),
+    /// An `Outage` job's answer.
+    Listed(Arc<Listing>),
     Failed(String),
 }
 
@@ -56,6 +60,7 @@ struct Job {
 #[derive(Debug)]
 pub enum Lookup {
     Ready(Arc<Object>),
+    Listed(Arc<Listing>),
     Pending { state: &'static str, chunks: usize },
     Failed(String),
     Unknown,
@@ -156,6 +161,9 @@ impl Jobs {
     /// size `done.meta` says.
     pub fn complete(&mut self, id: &JobId, done: &Complete, now: Instant) -> Result<(), JobError> {
         let invalid = |what: &str| JobError::Invalid(what.to_owned());
+        if self.kind_of(id) == Some(Kind::Outage) {
+            return Err(invalid("an outage job is answered with a listing"));
+        }
         done.meta.validate().map_err(JobError::Invalid)?;
         if !is_sha256_hex(&done.sha256) {
             return Err(invalid("sha256 is 64 lowercase hex digits"));
@@ -188,6 +196,25 @@ impl Jobs {
         result
     }
 
+    fn kind_of(&self, id: &JobId) -> Option<Kind> {
+        self.jobs.get(id).map(|job| job.request.kind)
+    }
+
+    /// Ends an `Outage` job with the snapshots the vehicle lists.
+    pub fn listing(&mut self, id: &JobId, listing: Listing, now: Instant) -> Result<(), JobError> {
+        listing.validate().map_err(JobError::Invalid)?;
+        self.assembly(id, now)?;
+        if self.kind_of(id) != Some(Kind::Outage) {
+            return Err(JobError::Invalid(
+                "only an outage job is answered with a listing".to_owned(),
+            ));
+        }
+        if let Some(job) = self.jobs.get_mut(id) {
+            job.state = State::Listed(Arc::new(listing));
+        }
+        Ok(())
+    }
+
     /// The vehicle gives up the job.
     pub fn fail(&mut self, id: &JobId, reason: &str, now: Instant) -> Result<(), JobError> {
         self.reap(now);
@@ -218,6 +245,7 @@ impl Jobs {
                 chunks: assembly.chunks(),
             },
             Some(State::Done(object)) => Lookup::Ready(Arc::clone(object)),
+            Some(State::Listed(listing)) => Lookup::Listed(Arc::clone(listing)),
             Some(State::Failed(reason)) => Lookup::Failed(reason.clone()),
         }
     }
@@ -228,10 +256,70 @@ impl Jobs {
             match job.state {
                 State::Queued => counts.queued += 1,
                 State::Assigned(_) => counts.assigned += 1,
-                State::Done(_) => counts.done += 1,
+                State::Done(_) | State::Listed(_) => counts.done += 1,
                 State::Failed(_) => counts.failed += 1,
             }
         }
         counts
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wire::{Kind, Listed, MAX_LISTED};
+
+    fn request(kind: Kind) -> JobRequest {
+        JobRequest {
+            kind,
+            at_capture_ms: 0,
+            crop: None,
+            max_bytes: 4096,
+            expires_in_ms: 60_000,
+        }
+    }
+
+    fn done() -> Complete {
+        Complete {
+            chunks: 0,
+            bytes: 0,
+            sha256: "0".repeat(64),
+            meta: Meta {
+                capture_ms: 1,
+                frame_id: 1,
+                source_width: 1,
+                source_height: 1,
+                crop: None,
+                position: None,
+            },
+        }
+    }
+
+    #[test]
+    fn an_outage_job_ends_with_a_listing_and_a_picture_job_with_a_picture() {
+        let now = Instant::now();
+        let (outage, picture) = (JobId::random().unwrap(), JobId::random().unwrap());
+        let mut jobs = Jobs::default();
+        jobs.submit(outage.clone(), request(Kind::Outage), now)
+            .unwrap();
+        jobs.submit(picture.clone(), request(Kind::Snapshot), now)
+            .unwrap();
+        while jobs.next(now).is_some() {}
+        let listed = |n: usize| Listing {
+            snapshots: vec![
+                Listed {
+                    capture_ms: 1,
+                    frame_id: 1,
+                    position: None
+                };
+                n
+            ],
+        };
+
+        assert!(jobs.listing(&picture, listed(1), now).is_err());
+        assert!(jobs.complete(&outage, &done(), now).is_err());
+        assert!(jobs.listing(&outage, listed(MAX_LISTED + 1), now).is_err());
+        jobs.listing(&outage, listed(2), now).unwrap();
+        assert!(matches!(jobs.lookup(&outage, now), Lookup::Listed(l) if l.snapshots.len() == 2));
     }
 }

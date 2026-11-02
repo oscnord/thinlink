@@ -435,6 +435,16 @@ control-status:
 detail-request ago_s="10" crop="":
     {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail request --ago-s {{ago_s}} {{ if crop != "" { "--crop " + crop } else { "" } }}
 
+# Like `detail-request`, for the frame captured at <at_ms> (UNIX milliseconds, as `detail-outage`
+# prints it).
+detail-request-at at_ms crop="":
+    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail request --at-ms {{at_ms}} {{ if crop != "" { "--crop " + crop } else { "" } }}
+
+# List the snapshots the vehicle took while the ground was out of reach, with where it was, from the last
+# <since_s> seconds. They stay on the vehicle until fetched (`detail-request-at`, `detail-fetch`).
+detail-outage since_s="3600":
+    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail outage --since-s {{since_s}}
+
 # Wait for the answer to a `detail-request` and save the JPEG on this machine; prints which frame it
 # is and how old, labelled as historical.
 detail-fetch id file="detail.jpg":

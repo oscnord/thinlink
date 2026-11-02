@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sat_teleop_control::envelope::{CHALLENGE_EVERY, ControlLimits, ToGround};
 use sat_teleop_control::telemetry::TelemetryLimits;
 use sat_teleop_control::vehicle::{self, VehicleConfig, VehicleSnapshot, VehicleStats};
-use sat_teleop_detail::store::{Store, StoreSettings, StoreSnapshot};
+use sat_teleop_detail::store::{Store, StoreSettings, StoreSnapshot, Tag};
 use sat_teleop_detail::vehicle::{
     self as retrieval, RetrievalLimits, RetrievalSnapshot, RetrievalStats,
 };
@@ -25,6 +25,7 @@ use sat_teleop_media::camera;
 use sat_teleop_media::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
 use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
 use sat_teleop_policy::budget::{Budget, wire_bytes};
+use sat_teleop_policy::retrieval::ground_heard;
 
 #[cfg(feature = "testbed")]
 mod hooks;
@@ -127,8 +128,9 @@ impl Retained {
         }
     }
 
-    /// Writes what the sender hands over, one at a time, until the sender is gone.
-    fn write(&self, snapshots: &Receiver<Snapshot>) {
+    /// Writes what the sender hands over, one at a time, until the sender is gone; `tag` says
+    /// where the vehicle is and whether the ground is heard at the moment of the write.
+    fn write(&self, snapshots: &Receiver<Snapshot>, tag: impl Fn() -> Tag) {
         for snapshot in snapshots {
             let delay = self.write_delay_ms.load(Ordering::Relaxed);
             thread::sleep(Duration::from_millis(delay));
@@ -137,6 +139,7 @@ impl Retained {
                 snapshot.capture_ms,
                 snapshot.frame_id,
                 &snapshot.jpeg,
+                tag(),
                 unix_ms(),
                 Instant::now(),
             );
@@ -271,10 +274,27 @@ fn run(
         .map(|settings| open_store(settings, sender.snapshot.is_some()))
         .transpose()?
         .map(Arc::new);
+    let bridge = Arc::new(VehicleStats::new(&mavlink));
+    let adaptation = Arc::new((AdaptStats::default(), Health::default()));
     let (snapshots, writer_queue) = sync_channel(WRITER_QUEUE);
     if let Some(retained) = &retained {
-        let retained = Arc::clone(retained);
-        thread::spawn(move || retained.write(&writer_queue));
+        let (retained, bridge, adaptation) = (
+            Arc::clone(retained),
+            Arc::clone(&bridge),
+            Arc::clone(&adaptation),
+        );
+        thread::spawn(move || {
+            retained.write(&writer_queue, || {
+                let now = Instant::now();
+                let conditions = adaptation
+                    .0
+                    .retrieval_conditions(now, &adapt_limits, allowance);
+                Tag {
+                    position: bridge.position.fresh(now),
+                    outage: !ground_heard(&conditions),
+                }
+            });
+        });
     }
     let video = Arc::new(SenderStats::default());
     video.request(start);
@@ -284,7 +304,6 @@ fn run(
             supervise(&video.health, || sender::run(&sender, &video, &snapshots));
         });
     }
-    let bridge = Arc::new(VehicleStats::new(&mavlink));
     {
         let bridge = Arc::clone(&bridge);
         thread::spawn(move || {
@@ -294,7 +313,6 @@ fn run(
             }
         });
     }
-    let adaptation = Arc::new((AdaptStats::default(), Health::default()));
     let job = Arc::new(RetrievalStats::default());
     {
         let (video, bridge, adaptation, job) = (

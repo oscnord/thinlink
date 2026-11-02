@@ -19,8 +19,10 @@ use sat_teleop_policy::token::Token;
 use crate::DetailError;
 use crate::client::{Client, ClientError};
 use crate::crop::{self, Cropped};
-use crate::store::Store;
-use crate::wire::{Assignment, Complete, Failure, JobRequest, Meta, sha256_hex};
+use crate::store::{Entry, Store};
+use crate::wire::{
+    Assignment, Complete, Failure, JobRequest, Kind, Listed, Listing, MAX_LISTED, Meta, sha256_hex,
+};
 use crate::wire::{CHUNK_HASH_HEADER, MAX_REASON};
 
 /// How often a retrieval that may not send looks again.
@@ -258,17 +260,68 @@ struct Worker<'a, C> {
 }
 
 impl<C: Fn() -> Conditions> Worker<'_, C> {
+    fn store(&self) -> MutexGuard<'_, Store> {
+        self.store.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn work(&self, assignment: &Assignment) {
         let started = Instant::now();
         let deadline = started + Duration::from_millis(assignment.expires_in_ms);
         self.stats.set(State::Working, None);
         self.stats.reserved.store(self.allowance, Ordering::Relaxed);
-        let end = self
-            .prepare(&assignment.request, started)
-            .and_then(|prepared| self.upload(assignment, &prepared, deadline));
+        let end = match assignment.request.kind {
+            Kind::Outage => self.list(assignment, deadline),
+            Kind::Snapshot | Kind::Crop => self.send_picture(assignment, started, deadline),
+        };
         let end = end.unwrap_or_else(End::Failed);
         self.stats.reserved.store(0, Ordering::Relaxed);
         self.finish(assignment, end);
+    }
+
+    /// The picture for the job, uploaded; the snapshot is released once the relay has it.
+    fn send_picture(
+        &self,
+        assignment: &Assignment,
+        started: Instant,
+        deadline: Instant,
+    ) -> Result<End, String> {
+        let prepared = self.prepare(&assignment.request, started)?;
+        let end = self.upload(assignment, &prepared, deadline)?;
+        if end == End::Done {
+            self.store().release(prepared.entry);
+        }
+        Ok(end)
+    }
+
+    /// Answers an `Outage` job with the snapshots taken out of reach since the time asked for.
+    fn list(&self, assignment: &Assignment, deadline: Instant) -> Result<End, String> {
+        assignment.request.validate()?;
+        let snapshots = self
+            .store()
+            .outage_from(assignment.request.at_capture_ms, MAX_LISTED)
+            .into_iter()
+            .map(|e| Listed {
+                capture_ms: e.capture_ms,
+                frame_id: e.frame_id,
+                position: e.position,
+            })
+            .collect();
+        let body = serde_json::to_vec(&Listing { snapshots }).map_err(|e| e.to_string())?;
+        let cost = retrieval::request_wire_bytes(body.len());
+        let mut bucket = TokenBucket::new(self.allowance);
+        if !self.wait_to_send(&mut bucket, cost, deadline) {
+            return Ok(End::Expired);
+        }
+        RetrievalStats::add(&self.stats.wire_bytes, u64::from(cost));
+        let path = format!("/jobs/{}/listing", assignment.job_id);
+        match self.uploader.send("POST", &path, &[], &body) {
+            Ok(answer) if answer.status == 204 => Ok(End::Done),
+            Ok(answer) if matches!(answer.status, 404 | 409) => Ok(End::Cancelled),
+            other => Err(format!(
+                "the relay refused the listing: {}",
+                describe(&other)
+            )),
+        }
     }
 
     fn finish(&self, assignment: &Assignment, end: End) {
@@ -298,7 +351,7 @@ impl<C: Fn() -> Conditions> Worker<'_, C> {
     fn prepare(&self, request: &JobRequest, now: Instant) -> Result<Prepared, String> {
         request.validate()?;
         let (entry, path) = {
-            let mut store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut store = self.store();
             let entry = store
                 .nearest_at_or_before(request.at_capture_ms)
                 .ok_or("no retained snapshot at or before that time")?;
@@ -321,8 +374,9 @@ impl<C: Fn() -> Conditions> Worker<'_, C> {
             source_width: source.0,
             source_height: source.1,
             crop: rect,
+            position: entry.position,
         };
-        Ok(Prepared { jpeg, meta })
+        Ok(Prepared { jpeg, meta, entry })
     }
 
     fn upload(
@@ -422,6 +476,7 @@ impl<C: Fn() -> Conditions> Worker<'_, C> {
 struct Prepared {
     jpeg: Vec<u8>,
     meta: Meta,
+    entry: Entry,
 }
 
 fn millis(elapsed: Duration) -> u64 {
