@@ -2,7 +2,8 @@
 //! when asked to (`take`), wraps a station's heartbeat, `MANUAL_CONTROL` and discrete commands into
 //! envelopes while it holds the lease with a fresh challenge, and answers a station's
 //! state-changing command itself otherwise: `MAV_RESULT_DENIED` without the lease,
-//! `MAV_RESULT_UNSUPPORTED` for a command no envelope may carry. Nothing waits to be sent later.
+//! `MAV_RESULT_UNSUPPORTED` for a command no envelope may carry (a mission upload message gets the
+//! same answers as a `MISSION_ACK`). Nothing waits to be sent later.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{SocketAddr, UdpSocket};
@@ -10,7 +11,10 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use mavlink::dialects::ardupilotmega::{COMMAND_ACK_DATA, MavCmd, MavMessage, MavResult};
+use mavlink::dialects::ardupilotmega::{
+    COMMAND_ACK_DATA, MISSION_ACK_DATA, MavCmd, MavMessage, MavMissionResult, MavMissionType,
+    MavResult,
+};
 use mavlink::{MavHeader, Message};
 use serde::{Deserialize, Serialize};
 
@@ -196,17 +200,28 @@ impl NextSeq {
 struct Sent {
     txn: u64,
     station: usize,
-    command: CommandKey,
+    /// The command, for a resend to find it; a mission upload message is never resent as one (the
+    /// station repeats it on its own timer and the autopilot answers a repeat).
+    command: Option<CommandKey>,
     ack: AckTo,
     at: Instant,
 }
 
-/// A station's command, as a `COMMAND_ACK` answering it needs it.
+/// A station's message, as the answer to it needs it: a `COMMAND_ACK` for a command, a
+/// `MISSION_ACK` for a mission upload message. The answer comes from the message's target system
+/// and component, which is how `QGroundControl` matches it.
 #[derive(Debug, Clone, Copy)]
-struct AckTo {
-    command: MavCmd,
-    /// The command's target system and component: the ack comes from them.
-    vehicle: (u8, u8),
+enum AckTo {
+    Command {
+        command: MavCmd,
+        vehicle: (u8, u8),
+    },
+    Mission {
+        mission_type: MavMissionType,
+        vehicle: (u8, u8),
+        /// The station's own system and component, the ack's target.
+        station: (u8, u8),
+    },
 }
 
 impl Controller {
@@ -368,7 +383,7 @@ impl Controller {
 
     /// Answers a station's command no envelope may carry: `UNSUPPORTED` with the lease, `DENIED`
     /// without. Returns the `COMMAND_ACK` to send back.
-    pub(super) fn unsupported(&self, message: &MavMessage) -> Option<Vec<u8>> {
+    pub(super) fn unsupported(&self, frame: &Frame, message: &MavMessage) -> Option<Vec<u8>> {
         let mut state = self.lock();
         state.expire(self.limits);
         let result = if state.fresh(self.limits) {
@@ -376,7 +391,7 @@ impl Controller {
         } else {
             MavResult::MAV_RESULT_DENIED
         };
-        state.answer(ack_to(message), result)
+        state.answer(ack_to(frame, message), result)
     }
 
     /// Sends a station's message in an envelope of `class` while the adapter holds the lease with a
@@ -391,7 +406,7 @@ impl Controller {
     ) -> Option<Vec<u8>> {
         let mut state = self.lock();
         state.expire(self.limits);
-        let ack = ack_to(message);
+        let ack = ack_to(frame, message);
         if !state.fresh(self.limits) {
             if class == Class::Discrete {
                 return state.answer(ack, MavResult::MAV_RESULT_DENIED);
@@ -403,10 +418,10 @@ impl Controller {
         let kind = match (class, ack, CommandKey::of(message)) {
             (Class::Liveness, ..) => Kind::Liveness,
             (Class::Continuous, ..) => Kind::Continuous,
-            (Class::Discrete, Some(ack), Some(command)) => Kind::Discrete {
+            (Class::Discrete, Some(ack), command) => Kind::Discrete {
                 txn: state.txn(station, command, ack, confirmation(message), window),
             },
-            (Class::Discrete, ..) => return None,
+            (Class::Discrete, None, _) => return None,
         };
         if self.wrap(&mut state, kind, Some(frame)) || class != Class::Discrete {
             return None;
@@ -586,7 +601,7 @@ impl State {
     fn txn(
         &mut self,
         station: usize,
-        command: CommandKey,
+        command: Option<CommandKey>,
         ack: AckTo,
         confirmation: u8,
         window: Duration,
@@ -594,7 +609,9 @@ impl State {
         let now = Instant::now();
         self.sent
             .retain(|s| now.saturating_duration_since(s.at) <= window);
-        if let Some(txn) = resent(&self.sent, station, command, confirmation, now, window) {
+        let again = command
+            .and_then(|command| resent(&self.sent, station, command, confirmation, now, window));
+        if let Some(txn) = again {
             return txn;
         }
         self.next_txn += 1;
@@ -681,16 +698,53 @@ impl State {
     }
 }
 
-fn ack_to(message: &MavMessage) -> Option<AckTo> {
-    let (command, target_system, target_component) = match message {
-        MavMessage::COMMAND_LONG(c) => (c.command, c.target_system, c.target_component),
-        MavMessage::COMMAND_INT(c) => (c.command, c.target_system, c.target_component),
-        _ => return None,
-    };
-    Some(AckTo {
-        command,
-        vehicle: (target_system, target_component),
-    })
+fn ack_to(frame: &Frame, message: &MavMessage) -> Option<AckTo> {
+    let station = (
+        u8::try_from(frame.system_id()).unwrap_or(u8::MAX),
+        frame.component_id(),
+    );
+    match message {
+        MavMessage::COMMAND_LONG(c) => Some(AckTo::Command {
+            command: c.command,
+            vehicle: (c.target_system, c.target_component),
+        }),
+        MavMessage::COMMAND_INT(c) => Some(AckTo::Command {
+            command: c.command,
+            vehicle: (c.target_system, c.target_component),
+        }),
+        MavMessage::MISSION_COUNT(m) => Some(mission_ack_to(
+            m.target_system,
+            m.target_component,
+            m.mission_type,
+            station,
+        )),
+        MavMessage::MISSION_ITEM_INT(m) => Some(mission_ack_to(
+            m.target_system,
+            m.target_component,
+            m.mission_type,
+            station,
+        )),
+        MavMessage::MISSION_CLEAR_ALL(m) => Some(mission_ack_to(
+            m.target_system,
+            m.target_component,
+            m.mission_type,
+            station,
+        )),
+        _ => None,
+    }
+}
+
+fn mission_ack_to(
+    system: u8,
+    component: u8,
+    mission_type: MavMissionType,
+    station: (u8, u8),
+) -> AckTo {
+    AckTo::Mission {
+        mission_type,
+        vehicle: (system, component),
+        station,
+    }
 }
 
 fn confirmation(message: &MavMessage) -> u8 {
@@ -700,18 +754,44 @@ fn confirmation(message: &MavMessage) -> u8 {
     }
 }
 
-/// A `COMMAND_ACK` from the command's target: `QGroundControl` matches it by the sender's system
-/// and component and the command.
+/// The answer to a station's message from its target: a `COMMAND_ACK`, or for a mission upload
+/// message a `MISSION_ACK` (`DENIED` or `UNSUPPORTED`; an applied one is answered by the autopilot
+/// through the telemetry). `None` when there is nothing to say.
 fn ack_bytes(ack: AckTo, result: MavResult) -> Option<Vec<u8>> {
+    let (vehicle, message) = match ack {
+        AckTo::Command { command, vehicle } => (
+            vehicle,
+            MavMessage::COMMAND_ACK(COMMAND_ACK_DATA {
+                command,
+                result,
+                ..COMMAND_ACK_DATA::default()
+            }),
+        ),
+        AckTo::Mission {
+            mission_type,
+            vehicle,
+            station,
+        } => {
+            let mavtype = match result {
+                MavResult::MAV_RESULT_DENIED => MavMissionResult::MAV_MISSION_DENIED,
+                MavResult::MAV_RESULT_UNSUPPORTED => MavMissionResult::MAV_MISSION_UNSUPPORTED,
+                _ => return None,
+            };
+            let message = MavMessage::MISSION_ACK(MISSION_ACK_DATA {
+                target_system: station.0,
+                target_component: station.1,
+                mavtype,
+                mission_type,
+                ..MISSION_ACK_DATA::default()
+            });
+            (vehicle, message)
+        }
+    };
     let header = MavHeader {
-        system_id: u32::from(ack.vehicle.0),
-        component_id: ack.vehicle.1,
+        system_id: u32::from(vehicle.0),
+        component_id: vehicle.1,
         sequence: 0,
     };
-    let message = MavMessage::COMMAND_ACK(COMMAND_ACK_DATA {
-        command: ack.command,
-        result,
-    });
     let mut bytes = Vec::new();
     mavlink::write_v2_msg(&mut bytes, header, &message).ok()?;
     Some(bytes)
@@ -738,7 +818,7 @@ fn resent(
         .rev()
         .find(|s| {
             s.station == station
-                && s.command == command
+                && s.command == Some(command)
                 && now.saturating_duration_since(s.at) <= window
         })
         .map(|s| s.txn)
@@ -746,7 +826,7 @@ fn resent(
 
 #[cfg(test)]
 mod tests {
-    use mavlink::dialects::ardupilotmega::COMMAND_LONG_DATA;
+    use mavlink::dialects::ardupilotmega::{COMMAND_LONG_DATA, MISSION_COUNT_DATA};
 
     use super::*;
 
@@ -769,8 +849,11 @@ mod tests {
         let sent = |txn, station, message: &MavMessage, after_ms| Sent {
             txn,
             station,
-            command: key(message),
-            ack: ack_to(message).unwrap(),
+            command: Some(key(message)),
+            ack: AckTo::Command {
+                command: MavCmd::MAV_CMD_COMPONENT_ARM_DISARM,
+                vehicle: (1, 1),
+            },
             at: t0 + Duration::from_millis(after_ms),
         };
         // An arm (txn 1) from station 0, then a disarm (txn 2) from station 0.
@@ -790,5 +873,65 @@ mod tests {
             let txn = resent(&earlier, station, key(&message), confirmation, now, window);
             assert_eq!(txn, expected, "station {station}, {message:?} at {ms} ms");
         }
+    }
+
+    #[test]
+    fn a_refused_mission_message_is_answered_with_a_mission_ack_from_the_vehicle() {
+        let count = MavMessage::MISSION_COUNT(MISSION_COUNT_DATA {
+            count: 4,
+            target_system: 1,
+            target_component: 1,
+            ..MISSION_COUNT_DATA::default()
+        });
+        let mut bytes = Vec::new();
+        let header = MavHeader {
+            system_id: 255,
+            component_id: 190,
+            sequence: 0,
+        };
+        mavlink::write_v2_msg(&mut bytes, header, &count).unwrap();
+        let frame = crate::frame::datagram_frames(&bytes).next().unwrap();
+        let ack = ack_to(&frame, &count).unwrap();
+        let cases = [
+            (
+                MavResult::MAV_RESULT_DENIED,
+                Some(MavMissionResult::MAV_MISSION_DENIED),
+            ),
+            (
+                MavResult::MAV_RESULT_UNSUPPORTED,
+                Some(MavMissionResult::MAV_MISSION_UNSUPPORTED),
+            ),
+            (MavResult::MAV_RESULT_ACCEPTED, None),
+        ];
+        for (result, expected) in cases {
+            let answer = ack_bytes(ack, result).map(|bytes| {
+                let ack = crate::frame::datagram_frames(&bytes).next().unwrap();
+                (ack.system_id(), ack.component_id(), ack.decode().unwrap())
+            });
+            let Some(expected) = expected else {
+                assert!(answer.is_none());
+                continue;
+            };
+            let Some((1, 1, MavMessage::MISSION_ACK(got))) = answer else {
+                panic!("{result:?}: {answer:?}");
+            };
+            assert_eq!(
+                (got.mavtype, got.target_system, got.target_component),
+                (expected, 255, 190)
+            );
+        }
+    }
+
+    #[test]
+    fn identical_mission_messages_get_separate_transactions() {
+        let mut state = State::default();
+        let ack = AckTo::Mission {
+            mission_type: MavMissionType::MAV_MISSION_TYPE_MISSION,
+            vehicle: (1, 1),
+            station: (255, 190),
+        };
+        let window = Duration::from_millis(4000);
+        let txns: Vec<u64> = (0..3).map(|_| state.txn(0, None, ack, 1, window)).collect();
+        assert_eq!(txns, [1, 2, 3]);
     }
 }

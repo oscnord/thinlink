@@ -56,6 +56,34 @@ require = [
 
 Why these: `FS_GCS_ENABLE`/`FS_GCS_TIMEOUT` are what lands the vehicle if the lease, the adapter or the link is lost. `RC_OVERRIDE_TIME` makes the sticks stop mattering shortly after the setpoints do (the vehicle refreshes a fresh setpoint every 200 ms and lets it lapse after 0.5 s). The radio failsafe covers the throttle the sticks stream drives. The geofence is the autopilot's own bound on where the vehicle can go whatever the ground sends. The testbed's rover set and its derivation are in `testbed/sat-teleop.parm` (`docs/testbed.md`, "SITL"); the copter's simulated-flight values and measurements are in `docs/simulation.md`.
 
+## Missions flown out of reach
+
+By default nothing here changes the core promise: when commands stop, the drone stops. `allow_missions = true` in the `[mavlink]` table of `vehicle.toml` makes one exception, for a copter in Auto. It is off by default and without it the vehicle refuses everything below.
+
+With it on, the lease holder can use QGroundControl's Plan view: the vehicle admits `MISSION_COUNT`, `MISSION_ITEM_INT` and `MISSION_CLEAR_ALL` (the upload), `MAV_CMD_MISSION_START` (how QGroundControl 5.1.5 starts a mission from the ground) and a change into Auto (copter mode 3). They travel only in signed discrete envelopes from the lease holder, like arming, and are refused otherwise: with the switch off, for a rover, and for any mission type but the waypoint mission, so the fence and the rally points cannot be rewritten over the link. The autopilot's requests, acknowledgement and progress come back as telemetry. The vehicle also looks at the items (below).
+
+A copter that loses the link inside its geofence then finishes the mission by the autopilot's own failsafe. A lost link stops the sticks as well as the heartbeat, so both failsafes must let a mission in Auto carry on: `FS_OPTIONS` bit 0 (`RC_CONTINUE_IF_AUTO`, the radio failsafe) and bit 1 (`GCS_CONTINUE_IF_AUTO`, the GCS failsafe), and bit 4 (`GCS_CONTINUE_IF_PILOT_CONTROL`) must stay clear, or the GCS failsafe would be skipped in the stick modes (`ArduCopter/Copter.h`, `FailsafeOption`, and `ArduCopter/events.cpp`, ArduPilot `fb773567`, the commit the simulation is built from). The geofence ends the mission with its action on a breach. The gate forbids fence uploads, so the fence must be one that needs none: the maximum altitude and the circle. Real mode with the switch on therefore refuses to start unless `require` holds, besides the entries above:
+
+```toml
+allow_missions = true
+require = [
+    # ... the entries above, and:
+    { name = "FS_OPTIONS", type = "int32", value = 3, compare = "bits_set" },    # continue in Auto on the radio and the GCS failsafe
+    { name = "FS_OPTIONS", type = "int32", value = 16, compare = "bits_clear" }, # the other bits are yours
+    { name = "FENCE_ENABLE", type = "int8", value = 1 },
+    { name = "FENCE_TYPE", type = "int8", value = 3, compare = "bits_set" },     # maximum altitude and circle (7 adds the polygon)
+    { name = "FENCE_ALT_MAX", type = "real32", value = 100, compare = "at_most" }, # at most 120 m, the height the gate allows
+    { name = "FENCE_ACTION", type = "int8", value = 1 },                         # RTL or Land (4 would brake and hold after a breach)
+    { name = "BATT_FS_LOW_ACT", type = "int8", value = 1, compare = "at_least" }, # a battery failsafe, not "none" (2 is RTL)
+]
+```
+
+A `compare` of `bits_set` holds when every bit of `value` is set in what the autopilot reports and the others are free, `bits_clear` when every bit of `value` is clear in it, `at_most` when the report is no higher than `value`; the default is equality. `FS_OPTIONS` is an `AP_Int32`, so `int32`. If the autopilot reports another value, real mode refuses control as for any other entry. `at_least` holds when the report is no lower than `value`. `FENCE_RADIUS` stays your choice: size the circle to the site. The battery failsafe (`BATT_FS_LOW_ACT` of 1 or more, with `BATT_LOW_VOLT` or `BATT_LOW_MAH` set for the pack) is what ends a mission that runs long: a mission out of reach has no other bound on its duration than the battery and the 300 s hold caps below. Guided, Loiter, Brake and the stick modes still land or brake when control stops, whatever the switch says.
+
+A mission upload is held to what the fence cannot contain: at most 48 items (every item is a transaction and the vehicle remembers 64), and each item one of waypoint, takeoff, land, return to launch, a timed or counted loiter, change speed or delay, with a location relative to home and between 0 and 120 m (a landing may be at 0). Anything else (the fence, a mode, a servo, a relay, a gripper, a parachute) is refused. Item 0, the home placeholder, is not read by the autopilot (`AP_Mission::replace_cmd`, `read_cmd_from_storage`). A mission flown out of reach is a sequence that ends: there is no unlimited loiter and no jump, a waypoint's hold, a timed loiter and a delay last at most 300 s and a counted loiter at most 10 turns. An item marked `current` 2 or 3 (ArduPilot's Guided fly-to-here and altitude change, which it handles outside the mission) is refused.
+
+Know what this means before you switch it on. A mission in Auto keeps flying when the ground station goes quiet, because that is its purpose: the pilot has no control of it until the link is back, apart from a separate radio. If a required parameter changes in flight, the vehicle withdraws control as described below, and the mission carries on or not as the autopilot's own parameters then say. Whether a mission may be flown out of reach where you fly is the pilot's and the regulator's decision.
+
 ## What is authenticated, and what is not
 
 - **Control envelopes, lease requests and lease releases** are signed end to end with the controller's key. A relay, which holds no controller key, can drop or delay them, not forge or change them, and not use one for another kind of message (each signature starts with a constant for its kind) or for another vehicle (it carries the vehicle's id, `vehicle_id`, which `vehicle.toml` and `ground.toml` must share). The vehicle's challenge, sequence, epoch and nonce rules cover replay (`docs/architecture.md`, "Control protocol"); a ground whose clock steps backwards has its lease requests refused (`replayed_request`) until it passes the last nonce the vehicle accepted.
@@ -90,3 +118,4 @@ Props off for items 1 to 8; the first flight is yours, not this list's.
 7. Take the lease, arm with the props off, move the sticks and watch the autopilot's inputs; release the lease and confirm the GCS failsafe fires after `FS_GCS_TIMEOUT` (disarm first).
 8. Pull the link (the Pi's network) with the lease held and confirm the autopilot's failsafe acts as configured.
 9. Check the geofence and return-to-launch settings in the autopilot against the site, the weather and your licence conditions.
+10. Only with `allow_missions`: with the props off, upload a short mission from QGroundControl's Plan view, arm, start it, pull the link, and confirm the autopilot reports `Radio Failsafe - Continuing Auto` and `GCS Failsafe - Continuing Auto Mode` (STATUSTEXT) and keeps the mission running. Then change `FS_OPTIONS` to clear bit 1 and see `failsafe_params` fail.

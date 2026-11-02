@@ -29,7 +29,7 @@ gstreamer = "0.25.4"
 gstreamer-app = "0.25.2"
 gstreamer-video = "0.25.4"
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
-mavlink = { version = "0.21.0", default-features = false, features = ["std", "dialect-ardupilotmega"] }
+mavlink = { version = "0.21.0", default-features = false, features = ["std", "dialect-ardupilotmega", "mav2-message-extensions"] }
 rustix = { version = "1.1.6", features = ["fs"] }
 serialport = { version = "4.7.2", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }

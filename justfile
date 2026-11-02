@@ -458,10 +458,10 @@ video-hook action:
 # The simulated flight: the testbed with an ArduCopter flown in Gazebo, its rendered camera as the
 # vehicle's video. Builds first, so the testbed goes down first. `just lab-up` brings the default
 # rover testbed back. docs/simulation.md.
-sim-up:
+sim-up config="vehicle-sim.toml":
     just lab-down
     just sim-image
-    SIM=1 VEHICLE_CONFIG=vehicle-sim.toml just lab-up
+    SIM=1 VEHICLE_CONFIG={{config}} just lab-up
 
 # Grade the simulated flight through the emulated link of <profile>: takes off, flies a leg, loses
 # the ground adapter and must land safe (`sim-flight`), and records how the camera's video reads at
@@ -475,6 +475,22 @@ sim-check profile="lan" *args:
     just lab-check sim-flight {{profile}} {{args}} || failed=$((failed + 1))
     just lab-check qgc-status {{profile}} {{args}} || failed=$((failed + 1))
     exit "$((failed > 0))"
+
+# A mission flown out of reach (`sim-mission`) through the emulated link of <profile>, on the vehicle
+# with allow_missions on (the default) or off: with it on the copter flies the mission to its end
+# after the link is cut at the first waypoint, with it off the upload, the start and Auto are refused.
+sim-mission profile="geo" switch="on" *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export SIM=1
+    case "{{switch}}" in
+        on) config=vehicle-sim-missions.toml ;;
+        off) config=vehicle-sim.toml ;;
+        *) echo "switch is on or off" >&2; exit 2 ;;
+    esac
+    export VEHICLE_CONFIG="$config"
+    just sim-up "$config" || exit 2
+    just lab-check sim-mission {{profile}} {{args}}
 
 # Remove the sat-teleop containers and networks; nothing outside the project. On a Podman machine,
 # netavark#1497 leaves a forwarding = 0 sysctl drop-in behind for each internal network, which

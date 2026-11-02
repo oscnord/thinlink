@@ -259,7 +259,11 @@ fn heartbeat() -> MavMessage {
 }
 
 fn ack(command: MavCmd, result: MavResult) -> MavMessage {
-    MavMessage::COMMAND_ACK(COMMAND_ACK_DATA { command, result })
+    MavMessage::COMMAND_ACK(COMMAND_ACK_DATA {
+        command,
+        result,
+        ..COMMAND_ACK_DATA::default()
+    })
 }
 
 /// `text` as a NUL-padded 32-byte field.

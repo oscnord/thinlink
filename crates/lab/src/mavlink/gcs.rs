@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 
 use mavlink::MavHeader;
 use mavlink::dialects::ardupilotmega::{
-    CameraCapFlags, HEARTBEAT_DATA, MavAutopilot, MavCmd, MavMessage, MavModeFlag, MavResult,
-    MavState, MavType, VideoStreamStatusFlags, VideoStreamType,
+    CameraCapFlags, HEARTBEAT_DATA, MavAutopilot, MavCmd, MavMessage, MavMissionResult,
+    MavModeFlag, MavResult, MavState, MavType, VideoStreamStatusFlags, VideoStreamType,
 };
 use mavlink::types::CharArray;
 
@@ -47,10 +47,26 @@ pub(crate) enum Kind {
     Hud {
         throttle: u16,
     },
-    /// `GLOBAL_POSITION_INT`: the autopilot's boot time, altitude above home (m).
+    /// `GLOBAL_POSITION_INT`: the autopilot's boot time, altitude above home (m), latitude and
+    /// longitude in degrees times 1e7.
     Position {
         boot_ms: u32,
         rel_alt_m: f32,
+        lat: i32,
+        lon: i32,
+    },
+    /// The autopilot asking for mission item `seq` (`MISSION_REQUEST`, which is what `ArduPilot` sends,
+    /// or `MISSION_REQUEST_INT`).
+    MissionRequest {
+        seq: u16,
+    },
+    /// The end of a mission upload, or the ground adapter's refusal of one.
+    MissionAck {
+        result: MavMissionResult,
+    },
+    /// `MISSION_ITEM_REACHED`.
+    MissionReached {
+        seq: u16,
     },
     /// `GPS_RAW_INT`'s ground speed, in m/s.
     Gps {
@@ -253,7 +269,17 @@ fn kind(message: &MavMessage) -> Kind {
         MavMessage::GLOBAL_POSITION_INT(p) => Kind::Position {
             boot_ms: p.time_boot_ms,
             rel_alt_m: p.relative_alt as f32 / 1000.0,
+            lat: p.lat,
+            lon: p.lon,
         },
+        MavMessage::MISSION_REQUEST_INT(r) => Kind::MissionRequest { seq: r.seq },
+        #[expect(
+            deprecated,
+            reason = "ArduPilot asks for the items of an upload with MISSION_REQUEST"
+        )]
+        MavMessage::MISSION_REQUEST(r) => Kind::MissionRequest { seq: r.seq },
+        MavMessage::MISSION_ACK(a) => Kind::MissionAck { result: a.mavtype },
+        MavMessage::MISSION_ITEM_REACHED(r) => Kind::MissionReached { seq: r.seq },
         MavMessage::COMMAND_ACK(a) => Kind::Ack {
             command: a.command,
             result: a.result,

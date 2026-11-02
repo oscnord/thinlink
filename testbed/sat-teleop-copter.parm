@@ -34,10 +34,28 @@ FS_THR_ENABLE 7
 # brake was holding.
 FS_GCS_ENABLE 5
 FS_GCS_TIMEOUT 2
-# Bits of what a failsafe leaves alone: 0 a mission in Auto, 2 a guided flight, 3 a landing, on the
-# radio failsafe (so a guided takeoff or a landing needs no stick; the GCS failsafe still lands
-# them). The default, 16, would skip the GCS failsafe in the pilot-controlled modes.
-FS_OPTIONS 13
+# Bits of what a failsafe leaves alone (Copter.h, FailsafeOption): 0 a mission in Auto, on the radio
+# failsafe, 1 a mission in Auto, on the GCS failsafe (a mission flown out of reach, allow_missions:
+# docs/real-vehicle.md), 2 a guided flight, 3 a landing, on the radio failsafe (so a guided takeoff or a
+# landing needs no stick; the GCS failsafe still lands them). The default, 16, would skip the GCS
+# failsafe in the pilot-controlled modes. 15 is bits 0 to 3; real mode with missions requires bits 0
+# and 1 set (a lost link stops the sticks too) and bit 4 clear. Nothing but Auto is affected: Guided,
+# Loiter and the stick modes land or brake as before.
+FS_OPTIONS 15
+# The geofence a mission out of reach relies on (AC_Fence.cpp, ArduPilot fb773567): on, with RTL or
+# Land (1) on a breach. FENCE_ENABLE defaults to 0; FENCE_ACTION 1 is its default, set so that the
+# value real mode requires is the one the simulation runs. The circle (FENCE_RADIUS 300 m) is the
+# default, and the mission stays well inside it.
+FENCE_ENABLE 1
+FENCE_ACTION 1
+# What real mode requires of a fence for missions: the maximum altitude and the circle (bits 0 and 1;
+# no upload needed) and a ceiling of at most 120 m.
+FENCE_TYPE 3
+FENCE_ALT_MAX 100
+# The battery failsafe real mode requires for missions (AP_BattMonitor_Params.cpp, ArduPilot fb773567):
+# what ends a mission that runs long. 2 is RTL; the default, 0, does nothing. The simulated battery
+# has no low-voltage threshold set (BATT_LOW_VOLT 0), so it never fires in the checks.
+BATT_FS_LOW_ACT 2
 # The gimbal. The simulator's radio parks channels 6 to 8 low, which the stock gimbal parameters read
 # as roll, pitch and yaw at their limits (-30, -135 and -160 degrees): the camera looked up and back at
 # its own mount (/gimbal/cmd_* read -30, +135 and -120 degrees at the joints). Neutral mode holds

@@ -38,7 +38,7 @@ The vehicle learns what it is from the autopilot's heartbeat (`MAV_TYPE`) and re
 | Copter | Stabilize 0, AltHold 2, Guided 4, Loiter 5, RTL 6, Land 9, PosHold 16, Brake 17 | `ArduCopter/mode.h` `Mode::Number`; Guided, Land, RTL and Brake are what the Fly view's Takeoff, Land, Return and Pause use, Stabilize, AltHold, Loiter and PosHold are the stick modes suggested above |
 | Rover | Manual 0, Hold 4, RTL 11 | `Rover/mode.h` `Mode::Number`; Manual is the mode of the rover checks and of `docs/qgc.md` ("Manual for driving"), Hold of the `control-freshness` stop command and of the rover's GCS failsafe (`testbed/sat-teleop.parm`), RTL is added |
 
-Acro, Auto, Flip, Throw, Drift, Sport, AutoTune and the rest are denied. A mode change into Stabilize, AltHold, Loiter or PosHold also needs the joystick sending: with no fresh `MANUAL_CONTROL` from the lease holder (the freshness the vehicle applies to every continuous setpoint) it is denied, so a braked copter stays braked until the stream is back. A takeoff is denied unless its altitude is a positive number up to 120 m above home. The vehicle counts each refusal by reason (`mode_not_allowed`, `no_fresh_sticks`, `takeoff_altitude` under `mavlink.control.rejected` in its metrics) and QGC sees the command denied.
+Acro, Auto, Flip, Throw, Drift, Sport, AutoTune and the rest are denied. Auto (mode 3) is passed for a copter only when the vehicle has `allow_missions` on ("Missions" below). A mode change into Stabilize, AltHold, Loiter or PosHold also needs the joystick sending: with no fresh `MANUAL_CONTROL` from the lease holder (the freshness the vehicle applies to every continuous setpoint) it is denied, so a braked copter stays braked until the stream is back. A takeoff is denied unless its altitude is a positive number up to 120 m above home. The vehicle counts each refusal by reason (`mode_not_allowed`, `no_fresh_sticks`, `takeoff_altitude`, `mission_not_allowed` under `mavlink.control.rejected` in its metrics) and QGC sees the command denied.
 
 ### Which modes per profile
 
@@ -48,7 +48,7 @@ Acro, Auto, Flip, Throw, Drift, Sport, AutoTune and the rest are denied. A mode 
 | `lte-good`, `lte-bad` | Loiter or PosHold: the position hold forgives a late stick. |
 | `geo` | Guided takeoff, then short stick inputs in Loiter or PosHold, and Brake, Land or Return. Everything is about a third of a second late each way, so keep inputs short and let the copter settle. |
 
-Mission upload and Guided go-to are not allowed through the gate, so there are no waypoints. Pulling the throttle to the bottom in flight is a radio failsafe (the copter brakes); land with the Land button.
+Guided go-to is not allowed through the gate. A mission upload is, but only with `allow_missions` on ("Missions" below); otherwise there are no waypoints. Pulling the throttle to the bottom in flight is a radio failsafe (the copter brakes); land with the Land button.
 
 ## Failsafes
 
@@ -72,6 +72,26 @@ Under `geo` a video queue at the uplink makes the vehicle refuse control envelop
 A run that starts right after `just impair geo` on a stack that was on `lan` still shows the adaptation draining at its start: the round trip jumps from about 1 ms to 600 ms, which it reads as a queue, and takes the cut back as a base shift. Nothing is queued then and no envelope is refused.
 
 What can still fill the queue on `geo` is the first try of a quality with no uplink measured and a real fall of the uplink (`docs/architecture.md`, "Control under a filled uplink"); refusals in that time can brake or land the copter, which is the failsafe working. `sim-flight` records the refusals per reason and phase, the queue delay, the adaptation steps and every mode change with the autopilot's own words in `summary.json` (`readings`), and the vehicle's latest steps, refusals and pacer in `vehicle_at_end`, so a run that goes wrong says why.
+
+## Missions
+
+Off by default. `just sim-mission <profile> on|off` brings the simulation up with `testbed/config/vehicle-sim-missions.toml` (`allow_missions = true`) or `vehicle-sim.toml` and runs `lab check sim-mission` through the emulated link of the profile. Fly one by hand with the switch on: `just sim-up vehicle-sim-missions.toml`, `just take-control`, build a mission in QGC's Plan view (`docs/qgc.md`, "Missions"), upload it and start it from the Fly view.
+
+`testbed/sat-teleop-copter.parm` sets what a mission out of reach relies on: `FS_OPTIONS` 15 (bits 0 and 1, continue in Auto on the radio and the GCS failsafe, with the bits it had; ArduPilot `fb773567`, `ArduCopter/Copter.h`, `FailsafeOption`), `FENCE_ENABLE` 1, `FENCE_ACTION` 1 (RTL or Land on a breach), `FENCE_TYPE` 3 (maximum altitude and circle), `FENCE_ALT_MAX` 100 m, the default circle of 300 m and `BATT_FS_LOW_ACT` 2 (RTL; the simulated battery sets no low threshold, so it never fires in the checks). Nothing else changes: Guided, Loiter, Brake and the stick modes behave as above.
+
+What `sim-mission` does and what it measured (`geo`, `1793656806455` with the switch on, `1793657044906` with it off):
+
+| | Switch on | Switch off |
+|---|---|---|
+| Upload of 6 items (home placeholder, takeoff, three waypoints 20 m apart to the north at 10 m, landing) | accepted in 4.5 s: one `MISSION_COUNT`, six items, no repeat | `MISSION_COUNT` answered `MISSION_ACK` denied |
+| Start | Guided, arm, `MAV_CMD_MISSION_START` accepted, Auto 33.5 s to the first waypoint | `MISSION_START` and a change into Auto denied; the vehicle counted `mission_not_allowed` 2 and `mode_not_allowed` 1 |
+| Link cut (adapter killed) at the first waypoint | the autopilot said "Radio Failsafe - Continuing Auto" and "GCS Failsafe - Continuing Auto Mode"; items 3 and 4 reached, the landing item flown, always in Auto, on the ground and disarmed 42.1 s after the cut | |
+
+The upload takes about seven round trips (`geo` is about 0.6 s each way and back): QGC waits 1.5 s for each next request, so it never sent `MISSION_COUNT` a second time. ArduPilot asks for the items with `MISSION_REQUEST`, not `MISSION_REQUEST_INT` (`MissionItemProtocol::queued_request_send`, and QGC 5.1.5 handles both); the first run read only `MISSION_REQUEST_INT` and so saw no request in 9 s, with six `MISSION_COUNT` written to the autopilot.
+
+With the fence and `FS_OPTIONS` values in the parameter file, `sim-flight geo` passed 16 of 16 (`1793658892958`, real-time factor 1.00); an earlier run on the same stack (`1793658691410`) at a real-time factor of 0.62 on a loaded host failed the Brake, Land and Live budgets by about that factor, as in "A filled uplink under `geo`". Later `sim-mission geo` runs with the stricter item and parameter rules: `1793658459813` (on) and `1793658636373` (off) passed.
+
+The check cuts the link by killing the ground adapter, as `sim-flight` does, so the lease lapses and the autopilot's GCS heartbeat stops; the radio failsafe fires too, because the setpoint stream stops, and `FS_OPTIONS` bit 0 lets Auto carry on through that as well. A cut inside the fence is the only case it covers; a breach of the fence was not flown.
 
 ## The camera
 
@@ -97,7 +117,7 @@ Starting the simulation with other heavy containers running can run the machine 
 
 ## What the check grades
 
-`just sim-check <profile>` runs `lab check sim-flight` (arm, takeoff, a leg at about 4 m/s in Loiter within a 3 m height band, both failsafes, the refused mode change, the video Live at the ground) and `lab check qgc-status`. Results are in `results/<run>/`. The Brake and Land times, the sag, the time to the ground and the minimum Live share are graded against `[sim-flight.lan]` and `[sim-flight.geo]` in `perf/budgets.toml`, which cite the three runs each is derived from; Land's descent must stay under 1.875 m/s, 1.25 times ArduCopter 4.7.2's default `WP_SPD_DN` of 1.5 m/s (`LAND_SPD_HIGH_MS` is 0, so Land uses `WP_SPD_DN`: `ArduCopter/mode.cpp`, `land_run_vertical_control`; `AC_WPNav.cpp`; no pinned parameter file or `testbed/sat-teleop-copter.parm` sets either). Runs on `lan` and `geo`:
+`just sim-mission` runs `lab check sim-mission` ("Missions" above); it has no budget. `just sim-check <profile>` runs `lab check sim-flight` (arm, takeoff, a leg at about 4 m/s in Loiter within a 3 m height band, both failsafes, the refused mode change, the video Live at the ground) and `lab check qgc-status`. Results are in `results/<run>/`. The Brake and Land times, the sag, the time to the ground and the minimum Live share are graded against `[sim-flight.lan]` and `[sim-flight.geo]` in `perf/budgets.toml`, which cite the three runs each is derived from; Land's descent must stay under 1.875 m/s, 1.25 times ArduCopter 4.7.2's default `WP_SPD_DN` of 1.5 m/s (`LAND_SPD_HIGH_MS` is 0, so Land uses `WP_SPD_DN`: `ArduCopter/mode.cpp`, `land_run_vertical_control`; `AC_WPNav.cpp`; no pinned parameter file or `testbed/sat-teleop-copter.parm` sets either). Runs on `lan` and `geo`:
 
 | Run | Result |
 |---|---|

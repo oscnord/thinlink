@@ -13,8 +13,9 @@ use mavlink::MessageData;
 )]
 use mavlink::dialects::ardupilotmega::{
     ATTITUDE_DATA, AUTOPILOT_VERSION_DATA, COMMAND_ACK_DATA, GLOBAL_POSITION_INT_DATA,
-    HEARTBEAT_DATA, MISSION_ACK_DATA, MISSION_COUNT_DATA, MISSION_ITEM_DATA, MISSION_ITEM_INT_DATA,
-    PARAM_VALUE_DATA, SYS_STATUS_DATA,
+    HEARTBEAT_DATA, MISSION_ACK_DATA, MISSION_COUNT_DATA, MISSION_CURRENT_DATA, MISSION_ITEM_DATA,
+    MISSION_ITEM_INT_DATA, MISSION_ITEM_REACHED_DATA, MISSION_REQUEST_DATA,
+    MISSION_REQUEST_INT_DATA, PARAM_VALUE_DATA, SYS_STATUS_DATA,
 };
 use serde::Deserialize;
 
@@ -23,24 +24,28 @@ use sat_teleop_policy::rate::{Priority, TokenBucket};
 use crate::ControlError;
 use crate::frame::Frame;
 
-const STATE: [u32; 4] = [
+const STATE: [u32; 6] = [
     SYS_STATUS_DATA::ID,
     GLOBAL_POSITION_INT_DATA::ID,
     ATTITUDE_DATA::ID,
     COMMAND_ACK_DATA::ID,
+    MISSION_CURRENT_DATA::ID,
+    MISSION_ITEM_REACHED_DATA::ID,
 ];
 
 #[expect(
     deprecated,
     reason = "ArduPilot answers MISSION_REQUEST with MISSION_ITEM"
 )]
-const REPLIES: [u32; 6] = [
+const REPLIES: [u32; 8] = [
     AUTOPILOT_VERSION_DATA::ID,
     PARAM_VALUE_DATA::ID,
     MISSION_COUNT_DATA::ID,
     MISSION_ITEM_INT_DATA::ID,
     MISSION_ITEM_DATA::ID,
     MISSION_ACK_DATA::ID,
+    MISSION_REQUEST_INT_DATA::ID,
+    MISSION_REQUEST_DATA::ID,
 ];
 
 /// Holds a full `ArduRover` parameter list with room to spare.
@@ -235,6 +240,24 @@ mod tests {
 
     use super::*;
     use crate::frame::encoded;
+
+    #[test]
+    #[expect(
+        deprecated,
+        reason = "ArduPilot asks for upload items with MISSION_REQUEST"
+    )]
+    fn a_mission_uploads_requests_and_acks_are_never_bulk() {
+        let ids = [
+            (MISSION_REQUEST_DATA::ID, Class::Reply),
+            (MISSION_REQUEST_INT_DATA::ID, Class::Reply),
+            (MISSION_ACK_DATA::ID, Class::Reply),
+            (MISSION_CURRENT_DATA::ID, Class::State),
+            (MISSION_ITEM_REACHED_DATA::ID, Class::State),
+        ];
+        for (id, expected) in ids {
+            assert_eq!(class(id), expected, "message {id}");
+        }
+    }
 
     fn param() -> Frame {
         encoded(&MavMessage::PARAM_VALUE(PARAM_VALUE_DATA {

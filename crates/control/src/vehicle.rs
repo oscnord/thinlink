@@ -80,6 +80,12 @@ pub struct VehicleConfig {
     /// Real mode: the parameters the autopilot must report, with their values.
     #[serde(default)]
     pub require: Vec<Required>,
+    /// Off by default. On, the lease holder may upload a waypoint mission and fly it in Auto (a
+    /// copter only), and a copter that loses the link finishes it by the autopilot's own failsafe
+    /// (`docs/real-vehicle.md`). In real mode `require` must then hold the failsafe and fence
+    /// values that make that safe.
+    #[serde(default)]
+    pub allow_missions: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -104,6 +110,9 @@ impl VehicleConfig {
             return Err(ControlError::NoControllers);
         }
         params::validate(&self.require).map_err(ControlError::Real)?;
+        if self.allow_missions && self.mode == Mode::Real {
+            params::validate_missions(&self.require).map_err(ControlError::Real)?;
+        }
         let measured = matches!(self.clock, ClockSource::Chrony | ClockSource::ChronyAt(_));
         if self.mode == Mode::Real && !measured && !self.allows_sitl() {
             return Err(ControlError::Real(

@@ -248,6 +248,7 @@ fn bench() -> Bench {
         #[cfg(feature = "testbed")]
         sitl_in_real_mode: false,
         require: Vec::new(),
+        allow_missions: false,
     };
     let limits = TelemetryLimits {
         bytes_per_s: 8000,

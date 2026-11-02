@@ -392,7 +392,7 @@ fn station_to_relay(
                     controller.refuse(&message);
                     None
                 }
-                Route::Unsupported => controller.unsupported(&message),
+                Route::Unsupported => controller.unsupported(&frame, &message),
                 Route::Envelope(class) => controller.envelope(index, &frame, &message, class),
             };
             if let Some(ack) = ack {

@@ -52,6 +52,10 @@ gap_after_ms = 1500
 #     { name = "FS_GCS_ENABLE", type = "int8", value = 5 },
 #     { name = "FS_GCS_TIMEOUT", type = "real32", value = 5 },
 # ]
+# Off by default. On, the lease holder may upload a waypoint mission and fly it in Auto, and a copter
+# that loses the link finishes it by its own failsafe; real mode then also needs FS_OPTIONS, FENCE_ENABLE,
+# FENCE_TYPE, FENCE_ALT_MAX, FENCE_ACTION and BATT_FS_LOW_ACT in `require` (docs/real-vehicle.md, "Missions flown out of reach").
+# allow_missions = true
 # A flight controller over USB, or the Pi's UART (/dev/serial0 at 921600 baud, the TELEM port with
 # SERIALn_PROTOCOL=2 on the flight controller). Control reaches it only once it reports the SITL
 # marker parameter, which a real autopilot never does: control goes to the logging sink.

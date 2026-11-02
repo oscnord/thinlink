@@ -187,6 +187,14 @@ pub enum Refusal {
     NoFreshSticks,
     /// A takeoff altitude that is not a positive number up to the gate's limit.
     TakeoffAltitude,
+    /// A mission upload or start with `allow_missions` off, for anything but a copter, or of a
+    /// mission type other than the waypoint mission.
+    MissionNotAllowed,
+    /// A mission item the gate does not allow: a command outside the flying ones, a frame not
+    /// relative to home or an altitude outside 0 to 120 m.
+    MissionItemNotAllowed,
+    /// A mission upload announcing more items than the gate allows.
+    MissionTooLong,
 }
 
 impl From<Reason> for Refusal {

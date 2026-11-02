@@ -52,6 +52,8 @@ type Address = (u8, u8);
 #[derive(Debug, Default)]
 struct Real {
     policy: Policy,
+    /// `allow_missions` of the config.
+    allow_missions: bool,
     required: Vec<Required>,
     /// `required` as the config set it, which the test hooks change and restore.
     #[cfg(feature = "testbed")]
@@ -171,6 +173,8 @@ pub struct ControlSnapshot {
     /// Where control frames go now.
     pub target: ControlTarget,
     pub mode: identity::Mode,
+    /// Whether mission upload and Auto are admitted (`allow_missions`).
+    pub allow_missions: bool,
     /// The interlocks that do not hold, and why: the reasons control goes to the logging sink.
     pub interlocks: Vec<Failure>,
     /// The vehicle's clock bound.
@@ -186,6 +190,7 @@ impl ControlStats {
             sitl: self.sitl.snapshot(),
             target: self.target(),
             mode: self.policy().mode,
+            allow_missions: self.allow_missions(),
             interlocks: self.failures(),
             clock: self.clock().map(|clock| clock.snapshot()),
             counts: self.counts.lock().map(|c| c.clone()).unwrap_or_default(),
@@ -200,6 +205,11 @@ impl ControlStats {
     /// The interlocks that do not hold now.
     pub fn failures(&self) -> Vec<Failure> {
         identity::failures(self.policy(), &self.facts())
+    }
+
+    /// Whether the config switched mission upload and Auto on.
+    pub fn allow_missions(&self) -> bool {
+        self.real.lock().is_ok_and(|r| r.allow_missions)
     }
 
     fn policy(&self) -> Policy {
@@ -243,6 +253,7 @@ impl ControlStats {
                 mode: config.mode,
                 allow_sitl: config.allows_sitl(),
             };
+            real.allow_missions = config.allow_missions;
             real.required.clone_from(&config.require);
             #[cfg(feature = "testbed")]
             real.configured.clone_from(&config.require);
@@ -275,6 +286,7 @@ impl ControlStats {
             name: name.to_owned(),
             kind,
             value,
+            compare: params::Compare::Equal,
         });
     }
 
@@ -728,7 +740,12 @@ impl Endpoint<'_> {
             return self.result(from, txn, envelope::Outcome::Repeated);
         }
         let sticks_fresh = self.state.setpoint(now).is_some();
-        if let Some(refused) = gate::refused(self.stats.vehicle(), message, sticks_fresh) {
+        if let Some(refused) = gate::refused(
+            self.stats.vehicle(),
+            message,
+            sticks_fresh,
+            self.stats.allow_missions(),
+        ) {
             return self.refuse(from, None, Some(txn), refusal_of(refused));
         }
         self.stats.sitl.received(frame);
@@ -851,6 +868,9 @@ fn refusal_of(refused: Refused) -> Refusal {
         Refused::ModeNotAllowed => Refusal::ModeNotAllowed,
         Refused::NoFreshSticks => Refusal::NoFreshSticks,
         Refused::TakeoffAltitude => Refusal::TakeoffAltitude,
+        Refused::MissionNotAllowed => Refusal::MissionNotAllowed,
+        Refused::MissionItemNotAllowed => Refusal::MissionItemNotAllowed,
+        Refused::MissionTooLong => Refusal::MissionTooLong,
     }
 }
 
@@ -905,6 +925,7 @@ mod tests {
                 name: "FS_GCS_ENABLE".to_owned(),
                 kind: ParamType::Int8,
                 value: 5.0,
+                compare: crate::params::Compare::Equal,
             }];
         }
         let (autopilot, other) = ((1, 1), (1, 200));

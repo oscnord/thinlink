@@ -7,6 +7,8 @@
 //! are graded against `perf/budgets.toml`. `checks` only reads what the copter reports: a copter
 //! that falls is a failure, not a state to repair.
 
+pub mod mission;
+
 use std::net::SocketAddr;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -465,6 +467,22 @@ pub fn run(
     results
 }
 
+/// The ground station and the observer of the copter's telemetry, as the checks of the simulated
+/// flight play them.
+fn parts(settings: &Settings) -> std::io::Result<Parts> {
+    start(&super::Settings {
+        gcs_listen: settings.gcs_listen,
+        observer_listen: settings.observer_listen,
+        controller: "10.77.0.4:0".parse().map_err(std::io::Error::other)?,
+        controller_key: "/secrets/ctl-checks.key".into(),
+        vehicle_id: "testbed".parse().map_err(std::io::Error::other)?,
+        vehicle: "10.77.0.2:7700".parse().map_err(std::io::Error::other)?,
+        vehicle_metrics: settings.vehicle_metrics.clone(),
+        ground_metrics: settings.ground_metrics.clone(),
+        limits: settings.limits,
+    })
+}
+
 /// The ground station, the observer of the copter's telemetry and the receiver of the video.
 struct Flight {
     parts: Parts,
@@ -486,17 +504,7 @@ struct Flight {
 
 impl Flight {
     fn start(settings: &Settings) -> std::io::Result<Self> {
-        let parts = start(&super::Settings {
-            gcs_listen: settings.gcs_listen,
-            observer_listen: settings.observer_listen,
-            controller: "10.77.0.4:0".parse().map_err(std::io::Error::other)?,
-            controller_key: "/secrets/ctl-checks.key".into(),
-            vehicle_id: "testbed".parse().map_err(std::io::Error::other)?,
-            vehicle: "10.77.0.2:7700".parse().map_err(std::io::Error::other)?,
-            vehicle_metrics: settings.vehicle_metrics.clone(),
-            ground_metrics: settings.ground_metrics.clone(),
-            limits: settings.limits,
-        })?;
+        let parts = parts(settings)?;
         Ok(Self {
             parts,
             capture: Some(Capture::start(Source::Rtp(settings.output_listen))),

@@ -103,7 +103,7 @@ struct CheckArgs {
     /// skeleton: base URL of the relay's metrics endpoint.
     #[arg(long, default_value = "http://192.168.233.20:9100")]
     relay_metrics: String,
-    /// mavlink, control-freshness, sim-flight, qgc-status: where the ground adapter sends this ground station
+    /// mavlink, control-freshness, sim-flight, sim-mission, qgc-status: where the ground adapter sends this ground station
     /// its telemetry.
     #[arg(long, default_value = "192.168.232.40:14552")]
     gcs_listen: SocketAddr,
@@ -111,7 +111,7 @@ struct CheckArgs {
     /// endpoints.
     #[arg(long, default_value = "http://192.168.233.30:9100")]
     ground_metrics: String,
-    /// control-freshness, sim-flight: where mavlink-router sends this host SITL's telemetry, on the overlay.
+    /// control-freshness, sim-flight, sim-mission: where mavlink-router sends this host SITL's telemetry, on the overlay.
     #[arg(long, default_value = "10.77.0.4:14553")]
     observer_listen: SocketAddr,
     /// control-freshness: the key this host signs its envelopes with as a second controller.
@@ -147,6 +147,7 @@ enum Scenario {
     ControlFreshness,
     RealMode,
     SimFlight,
+    SimMission,
     QgcStatus,
     Adaptation,
     Recording,
@@ -163,6 +164,7 @@ impl Scenario {
             Self::ControlFreshness => "control-freshness",
             Self::RealMode => "real-mode",
             Self::SimFlight => "sim-flight",
+            Self::SimMission => "sim-mission",
             Self::QgcStatus => "qgc-status",
             Self::Adaptation => "adaptation",
             Self::Recording => "recording",
@@ -289,24 +291,15 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
         }
         Scenario::SimFlight => {
             let budgets = load_budgets()?;
-            let settings = control::sim_flight::Settings {
-                gcs_listen: args.gcs_listen,
-                observer_listen: args.observer_listen,
-                output_listen: args.output_listen,
-                vehicle_metrics: args.vehicle_metrics.clone(),
-                ground_metrics: args.ground_metrics.clone(),
-                limits: control::limits(
-                    &fs::read_to_string(LIMITS_PATH)
-                        .with_context(|| format!("cannot read {LIMITS_PATH}"))?,
-                )
-                .with_context(|| format!("{LIMITS_PATH} has no valid [control] table"))?,
-            };
             control::sim_flight::run(
                 &agent,
                 &text,
-                &settings,
+                &sim_settings(args)?,
                 budgets.get("sim-flight", profile_name),
             )
+        }
+        Scenario::SimMission => {
+            control::sim_flight::mission::run(&agent, &text, &sim_settings(args)?)
         }
         Scenario::QgcStatus => {
             let budgets = load_budgets()?;
@@ -434,6 +427,20 @@ fn control_settings(args: &CheckArgs) -> Result<control::Settings> {
         controller_key: args.controller_key.clone(),
         vehicle_id: args.vehicle_id.clone(),
         vehicle: args.vehicle_control,
+        vehicle_metrics: args.vehicle_metrics.clone(),
+        ground_metrics: args.ground_metrics.clone(),
+        limits: control::limits(&limits)
+            .with_context(|| format!("{LIMITS_PATH} has no valid [control] table"))?,
+    })
+}
+
+fn sim_settings(args: &CheckArgs) -> Result<control::sim_flight::Settings> {
+    let limits =
+        fs::read_to_string(LIMITS_PATH).with_context(|| format!("cannot read {LIMITS_PATH}"))?;
+    Ok(control::sim_flight::Settings {
+        gcs_listen: args.gcs_listen,
+        observer_listen: args.observer_listen,
+        output_listen: args.output_listen,
         vehicle_metrics: args.vehicle_metrics.clone(),
         ground_metrics: args.ground_metrics.clone(),
         limits: control::limits(&limits)

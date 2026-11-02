@@ -319,7 +319,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 
 - The simulation (`just sim-up`, `testbed/compose.sim.yml`) is opt-in. The default testbed and every default check stay as they are; `just sim-check <profile>` is its gate and is not in `gate-full`.
 - Gazebo peaks near 1 GB and settles near 650 MB in a 2 GiB machine. Never build, run `just check` or start another heavy container while it is up: `just lab-down` first. Keep its `mem_limit`; do not raise it.
-- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/simulation.md`. Failsafe values live in `testbed/sat-teleop-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
+- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/simulation.md`. Mission upload and Auto are admitted only behind `allow_missions` (`crates/control/AGENTS.md`). Failsafe values live in `testbed/sat-teleop-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
 - The camera enters through the existing ingest, never a new source kind.
 
 ## 14. Per-package instruction index
