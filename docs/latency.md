@@ -23,7 +23,7 @@ The end-to-end number is the stamp's age at the headless receiver, which reads M
 
 ## Per stage
 
-Snow source at the top rung, a fresh testbed, runs 1793649597475 (`lan`) and 1793649688711 (`geo`), built from `e3fb134` (x264 intra refresh on, since reverted). Milliseconds, p50 / p95 / max; percentiles of separate stages do not add up.
+Snow source at the top rung, a fresh testbed, runs 1793649597475 (`lan`) and 1793649688711 (`geo`), built from `e3fb134` with x264 intra refresh. Milliseconds, p50 / p95 / max; percentiles of separate stages do not add up.
 
 | Stage | `lan` | `geo` |
 |---|---|---|
@@ -56,7 +56,7 @@ What the pilot waits for: how old the picture is, and how long a command takes t
 | `geo` | 300 ± 10 / 300 ± 10 ms | 318 / 329 ms | 18 ms | 613 ms | 299 ms | assisted, move and wait |
 | `geo-degraded` | 300 ± 25 / 300 ± 10 ms, loss, 128 kbit/s up | 322 / 520 ms, 0.8 new frames/s | 22 ms | 595 ms | not measured | stop, land, return |
 
-Runs: video `lan` 1793592510178 (`docs/measurement.md`), `lte-good` 1793651328813, `lte-bad` 1793651419489, `geo` 1793651985136, `geo-degraded` 1793651626193; commands 1793643621351, 1793643771485, 1793651831283, 1793644143516 and 1793644435204, in the same order. A command is answered when SITL's `COMMAND_ACK` is back at the ground, so its floor is both directions' delay; `lte-bad` comes in under its nominal 120 ms because its jitter goes both ways. On the lossy profiles the check's ground station sends each command once, so a lost packet is a command without an answer (1 of 7 on `lte-bad`) and the setpoint phase did not run; QGroundControl resends a command that is not answered. Their few new frames per second come from loss: a lost packet breaks the picture until the next keyframe ("What was tried").
+Runs: video `lan` 1793592510178 (`docs/measurement.md`), `lte-good` 1793651328813, `lte-bad` 1793651419489, `geo` 1793651985136, `geo-degraded` 1793651626193; commands 1793643621351, 1793643771485, 1793651831283, 1793644143516 and 1793644435204, in the same order. A command is answered when SITL's `COMMAND_ACK` is back at the ground, so its floor is both directions' delay; `lte-bad` comes in under its nominal 120 ms because its jitter goes both ways. On the lossy profiles the check's ground station sends each command once, so a lost packet is a command without an answer (1 of 7 on `lte-bad`) and the setpoint phase did not run; QGroundControl resends a command that is not answered. These video runs used keyframes every 2 s. Their few new frames per second came from loss breaking the picture until the next keyframe ("What was tried").
 
 The thresholds behind the last column: remote driving work aims at about 100 ms for direct control and about 300 ms for indirect control ([arXiv 2503.14186](https://arxiv.org/html/2503.14186v1)), and operators switch to moving and waiting from a delay of 0.25 s, with task time growing linearly with the delay ([NASA TM-85653](https://ntrs.nasa.gov/api/citations/19830027375/downloads/19830027375.pdf)). The loop is the picture's age plus the command's way out: about 8 ms on `lan`, 90 ms on `lte-good`, 140 ms on `lte-bad` and 620 ms on both `geo` profiles.
 
@@ -68,7 +68,7 @@ The thresholds behind the last column: remote driving work aims at about 100 ms 
 
 `PI=pi4 just lab-up` or `PI=pi-zero-2w just lab-up` caps the vehicle's companion container to roughly that board (`testbed/compose.pi4.yml`, `testbed/compose.pi-zero-2w.yml`; set the same `PI` for `just lab-check`). It is a quota of CPU time, not a slower core: a Pi 4's Cortex-A72 core at 1.5 GHz does roughly an eighth of what an Apple M-series core does, so its four cores get about half a host core, and a Pi Zero 2 W's four Cortex-A53 cores at 1 GHz about a quarter. Memory bandwidth, caches and the hardware encoder are not emulated: the testbed encodes with x264, which a Pi 4 or Zero 2 W leaves to its hardware encoder, so these runs are the pessimistic case for those boards.
 
-Snow source, one 60 s `skeleton` run each, CPU as a share of one host core averaged over the whole run (podman's CPU time over the run's wall time), memory in use at the end. Runs 1793649597475 to 1793650946169, built from `e3fb134`, which had x264's intra refresh on (since reverted).
+Snow source, one 60 s `skeleton` run each, CPU as a share of one host core averaged over the whole run (podman's CPU time over the run's wall time), memory in use at the end. Runs 1793649597475 to 1793650946169, built from `e3fb134` with x264 intra refresh.
 
 Only the vehicle is capped; the relay and the ground run as usual and show their own cost per rung.
 
@@ -98,18 +98,18 @@ Minimum hardware, from these runs:
 
 ## What was tried
 
-**Mending the picture after loss.** When a frame is lost on the way, every frame after it is broken until the next keyframe, every 2 s. Under `geo` with the snow source, four ways to mend it, two 60 s runs each, alternated (new frames per second / unreadable stamps / longest gap without a frame):
+With keyframes every 2 s, loss can break the picture until the next keyframe. The vehicle's x264 encoder uses intra refresh: each frame carries a column of intra blocks, sweeping the picture every 2 s. Under `geo` with the snow source, four ways to mend it were measured in two 60 s runs each, alternated (new frames per second / unreadable stamps / longest gap without a frame):
 
 | Configuration | Round 1 | Round 2 |
 |---|---|---|
-| A keyframe every 2 s (what the vehicle does) | 5.0 / 66 % / 8.6 s | 12.1 / 19 % / 3.5 s |
+| A keyframe every 2 s | 5.0 / 66 % / 8.6 s | 12.1 / 19 % / 3.5 s |
 | A keyframe asked for by the relay when it sees loss | 7.2 / 51 % / 8.8 s | 9.6 / 33 % / 4.5 s |
-| x264's intra refresh (the picture refreshed a column at a time, no keyframes) | 14.5 / 3 % / 0.8 s | 12.8 / 14 % / 6.3 s |
+| x264's intra refresh (what the vehicle uses, no periodic IDRs) | 14.5 / 3 % / 0.8 s | 12.8 / 14 % / 6.3 s |
 | A keyframe every 500 ms | 3.9 / 24 % / 1.9 s | 7.5 / 50 % / 4.0 s |
 
-Runs 1793641433786 to 1793642472162. The runs vary a lot, but intra refresh was best in both rounds, and frame age was the same in all (p50 316 to 320 ms): mending decides how much of the video is usable, not how old it is. Intra refresh is still not used: after the first frame the encoder never sends a whole keyframe again, so a viewer that joins mid-stream cannot start decoding. The adaptation check's second viewer got no frame in 8 s (run 1793642676089), a ground adapter that restarts would stay without a picture, and recovery after the skeleton check's cut took 5.0 to 5.3 s (runs 1793649688711, 1793650771209). It becomes usable once the vehicle sends a keyframe whenever a viewer joins.
+Runs 1793641433786 to 1793642472162. The runs vary a lot, but intra refresh was best in both rounds, and frame age was the same in all (p50 316 to 320 ms). Current quality and recovery measurements, including a ground restart during streaming, are in `docs/measurement.md`, "Picture quality" and "Results summary".
 
-The picture-quality baseline (`docs/measurement.md`, "Picture quality") shows the other side of age. At the same rung, `lan` scores SSIM 0.92 and `lte-good` 0.82 while `lte-good`'s frame age is 51 ms: a link can deliver young frames and still show a broken picture after each loss. `geo` is 317 ms old at rung 2 and scores the same 0.82.
+The picture-quality baseline with keyframes every 2 s (`docs/measurement.md`, "Picture quality") shows the other side of age. At the same rung, `lan` scores SSIM 0.92 and `lte-good` 0.82 while `lte-good`'s frame age is 51 ms: a link can deliver young frames and still show a broken picture after each loss. `geo` is 317 ms old at rung 2 and scores the same 0.82.
 
 **Encoder settings.** Nothing to change; see "Recommended settings".
 

@@ -38,7 +38,7 @@ Frame ids increase by one per stamped frame for the life of the vehicle process,
 `lab check skeleton --profile <name>` runs in `checks`:
 
 1. Apply the profile through the router agent (`profile_applied`).
-2. Wait until the vehicle's ladder settles, as the adaptation check does (`ladder_settled`), so the window measures the path at a steady rung. Then start the headless receiver on `rtsp://192.168.232.20:8554/live` and wait the warm-up (default 5 s) so it has connected and decoded a keyframe.
+2. Wait until the vehicle's ladder settles, as the adaptation check does (`ladder_settled`), so the window measures the path at a steady rung. Then start the headless receiver on `rtsp://192.168.232.20:8554/live` and wait the warm-up (default 5 s) so it has connected and begun decoding.
 3. Read router counters and the vehicle and relay metrics, measure for the duration (default 30 s), read them again.
 4. Cut router forwarding. Frames already queued at the router still arrive for a while, so the check waits a drain time (the largest frame age seen in the window plus 0.5 s, at most 10 s), then requires 2 s with no frame at all (`forwarding_cut`).
 5. Restore forwarding and wait up to 15 s for a fresh frame: a readable stamp, captured after the cut began, received after the restore (`video_recovery`).
@@ -145,7 +145,7 @@ The ground adapter decodes MediaMTX's stream and sends every frame on to QGC wit
 Where the thresholds come from:
 
 - `stale_after_ms = 600`: under `geo` frames arrive 321-322 ms old at the median, 333-337 ms at p95 and at most 351 ms (skeleton runs), and without loss the next new frame follows within 99 ms, so live video is at most about 450 ms old when the next frame replaces it; 600 ms leaves a third on top. Once the source stops, Stale shows when the last frame turns 0.6 s old, so an operator never watches older video without being told, and under `geo` that is about 0.2 s after the next frame was due.
-- `frozen_after_ms = 500`: new frames come every 67 ms at 15 fps, at most 105 ms apart without loss (skeleton runs). Loss breaks the video until the next keyframe, and the decoder then conceals it with an earlier picture; the output does not send a picture older than the newest it has (it would carry the newest frame's state), so the newest picture stays on screen and turns Frozen or Stale, which it is.
+- `frozen_after_ms = 500`: new frames come every 67 ms at 15 fps, at most 105 ms apart without loss (skeleton runs). Loss breaks the picture until intra refresh has swept over the damage, and the decoder may conceal it with an earlier picture; the output does not send a picture older than the newest it has (it would carry the newest frame's state), so the newest picture stays on screen and turns Frozen or Stale, which it is.
 - `disconnected_after_ms = 2000`: well above any wait for a decoded frame seen with the source running (the longest wait for a new frame under `geo`, with loss, was 1272 ms), so No video means the source is gone; Stale has said so since 0.6 s.
 - `min_readable_percent = 50`: `geo` runs lost up to 8.4 % of their stamps over a run; below half a second's worth, the age is a guess.
 - `low_rate_interval_ms = 150`: a picture stays below the 600 ms stale threshold until its next frame only if that frame follows within 600 ms minus its arrival age, about 250 ms under `geo` (frames arrive up to about 350 ms old), less on a slow link where a frame takes longer to cross. At two frames a second under `geo` the picture is 330-830 ms old between frames and would flicker between Live and Stale with every frame. Frames more than 150 ms apart (below about 7 fps) are therefore a low rate: the source's own interval, read from the capture times and frame ids of the stamps, not the network's timing.
@@ -168,7 +168,7 @@ Latency: the output is event-driven. A newly decoded frame is copied, gets its s
 7. With a profile whose timeline blacks out both directions (`outage-10s`): start the timeline and watch the blackout (at 10 s) and the restore (at 20 s) the same way, timed from the planned transitions (`blackout_indicated`, `blackout_recovered`). This one takes MAVLink down too.
 8. Over the whole run, no frame may read Live while its stamp, as received here, is older than `stale_after_ms` plus 100 ms for the output path after the adapter's decision, nor LowRate while it is older than `low_rate_stale_after_ms` plus 100 ms (`never_falsely_live`).
 
-Why the vehicle hook pauses the video: a router blackout of the uplink would take MAVLink (and the lease) down with the video, and dropping RTP at the relay would break the encoder's reference chain, so the stream would only recover at the next keyframe, and the relay has no control endpoint. Dropping frames at the vehicle's stamp probe, before the encoder, changes nothing else: MAVLink, WireGuard, the relay, MediaMTX and every RTSP session stay up, no frame id is skipped, and the stream resumes with the next frame. The hooks are described in `docs/testbed.md`, "Live video path".
+Why the vehicle hook pauses the video: a router blackout of the uplink would take MAVLink (and the lease) down with the video, and dropping RTP at the relay would break the encoder's reference chain, leaving intra refresh to repair the picture. The relay has no control endpoint. Dropping frames at the vehicle's stamp probe, before the encoder, changes nothing else: MAVLink, WireGuard, the relay, MediaMTX and every RTSP session stay up, no frame id is skipped, and the stream resumes with the next frame. The hooks are described in `docs/testbed.md`, "Live video path".
 
 | Metric | Definition |
 |---|---|
@@ -193,7 +193,7 @@ Why the vehicle hook pauses the video: a router blackout of the uplink would tak
 3. Second viewer: the vehicle's offered uplink over 6 s with one receiver, over 6 s with a second one playing as well, and over 6 s with one again (`second_viewer`, `viewer_change_percent`: the second window against the mean of the other two, which cancels the encoder's own drift in the half minute after a rung change; the budget allows 10 %). The offered uplink is the router's bytes received from `vehicle_net`: everything the vehicle sends, on the wire, before the router's queue and rate limit.
 4. The base frame age: the median of the last 5 s.
 5. Start the profile's timeline, if it has one, and observe until 20 s after its last step (80 s for `bandwidth-steps`), otherwise for `--duration-s`. Meanwhile read the vehicle's metrics every 0.5 s and the router's counters every second. Each step's time is when the router applied it (`GET /timeline`).
-6. For each downward step of the uplink rate (512 to 128, 128 to 64 kbit/s): the offered uplink, in 2 s windows sliding by 1 s that begin after the step, must end the phase below the new cap (`step_<n>_offered_below_cap`), and the frame age must come back to the phase's own level (`step_<n>_age_recovered`). A 2 s window holds one keyframe interval and two of SITL's once-a-second telemetry bursts, so every window carries the same bursts wherever it starts; 1 s windows alternated by a keyframe's worth at a rung near the cap. Each router reading is timed when it is read, since the request around it takes a varying while.
+6. For each downward step of the uplink rate (512 to 128, 128 to 64 kbit/s): the offered uplink, in 2 s windows sliding by 1 s that begin after the step, must end the phase below the new cap (`step_<n>_offered_below_cap`), and the frame age must come back to the phase's own level (`step_<n>_age_recovered`). A 2 s window holds one intra-refresh period and two of SITL's once-a-second telemetry bursts. With keyframes every 2 s, 1 s windows alternated by a keyframe's worth at a rung near the cap. Each router reading is timed when it is read, since the request around it takes a varying while.
 
 | Metric | Definition |
 |---|---|
@@ -279,7 +279,7 @@ Each decoded frame is scored in the receiver's callback, 20 ms at p95 at 1280x72
 
 ### Baseline
 
-`PI=pi4`, `--warmup-s 8 --duration-s 30`, one run per profile, the testbed on `vehicle-quality.toml`:
+`PI=pi4`, `--warmup-s 8 --duration-s 30`, one run per profile, the testbed on `vehicle-quality.toml`, with keyframes every 2 s:
 
 ```
 PI=pi4 VEHICLE_CONFIG=vehicle-quality.toml just lab-up
@@ -300,12 +300,26 @@ The ladder moved during two runs. `geo` settled at rung 2 (640x360, 8 fps) and w
 
 What the table shows:
 
-- At the same rung 0 and 1200 kbit/s, `lan` scores 0.919 and `lte-good` 0.824. The difference is loss: after a lost packet the decoder shows a broken picture until the next keyframe, every 2 s. The frame age of `lte-good` is 51 ms.
+- At the same rung 0 and 1200 kbit/s, `lan` scored 0.919 and `lte-good` 0.824. After a lost packet the decoder showed a broken picture until the next keyframe, every 2 s. The frame age of `lte-good` was 51 ms.
 - `geo` has the age of the satellite link (317 ms) and a picture as good as `lte-good`'s, at a lower rung.
 - `lte-bad` and `geo-degraded` score lowest and lose frames. In `geo-degraded` a frame arrives about every 750 ms.
 - The profiles fall in three groups by SSIM p50: `lan` (0.92), `geo` and `lte-good` (0.82), `lte-bad` and `geo-degraded` (0.75 to 0.76). The share under 0.8 groups them the same way (0 %, 26 to 31 %, 88 to 91 %).
 
 Budgets are `quality.<profile>` in `perf/budgets.toml`, derived from the two runs of each profile.
+
+With intra refresh, `PI=pi4`:
+
+| Profile | Run | Rung | SSIM p50 / p5 | Missing | Age p50 / p95 |
+|---|---|---|---|---|---|
+| `lte-good` | 1793711234258 | 0 | 0.931 / 0.846 | 0 % | 59 / 71 ms |
+| `lan` | 1793711936773 | 0 | 0.934 / 0.847 | 0 % | 17 / 24 ms |
+| `lte-bad` | 1793713612005 | 1 (640x360) | 0.740 / 0.683 | 2.3 % | 89 / 320 ms |
+| `geo-degraded` | 1793713461014 | 5 | 0.756 / 0.743 | 0 % | 330 / 1695 ms |
+| `geo-degraded` | 1793713536836 | 5 | 0.742 / 0.166 | 15.7 % | 341 / 2245 ms |
+
+`lte-good` and `lan` used the same rung as the baseline. `lte-bad` settled at rung 1 instead of rung 0, so its picture quality is not a comparison at the same rung. The second `geo-degraded` run is outside the profile's SSIM p5 budget. Its cause is not known.
+
+Forward error correction is not used. Under `lte-bad`, one run each, `rtpulpfecenc` at 30 % overhead gave 2.6 % missing frames against 3.6 % without it, with frame age p50 113 ms against 95 ms. At 50 % overhead, 5.7 % were missing (runs 1793707541599, 1793707714637, 1793707883530).
 
 ## Following
 
@@ -402,7 +416,7 @@ min = { new_frames_per_s = 14.0 }
 - `enforced`: at least one limit and a rationale are required. Each limit becomes an assertion `budget.<metric>`; a metric that was not measured is `incomplete`.
 - No budget for the profile: `incomplete`.
 
-Limits are never derived from the impairment the run applied; they come from measured runs with an explicit margin, and the rationale names those runs. Today `skeleton.lan`, `skeleton.geo`, `mavlink.lan`, `mavlink.geo`, `control-freshness` under `lan`, `geo` and `outage-10s` and `adaptation.bandwidth-steps`, `recording.lan` and `retrieval.geo` are enforced (limits 1.25 x worst measured + 10 ms for ages and gaps, 0.95 x worst for the frame rate, the keyframe interval plus the worst recovery frame age, times 1.25, for recovery); every other profile is still in calibration. The MAVLink budgets use the same margins for gaps and round trips, 1.25 x worst for the telemetry rate, 0.95 x worst for the heartbeat rate, zero for counts that were zero, and the 1 s stream period plus half the round trip, times 1.25, for recovery; they grade medians, not maxima, because single answers now and then take about 1 s. The control budgets use the same margin for acknowledgement and setpoint delays and for the vehicle's refresh and SITL's throttle release, zero for applications that were zero, and grade medians; SITL's throttle release is graded against `throttle_release_deadline_ms` in `testbed/limits.toml`, the vehicle's last refresh against the setpoint lifetime plus one tick, and the rover's coast to a stop is recorded only. `geo` grades only frame age and recovery: its frame rate, longest gap and unreadable stamps follow the number of reordered packets in a run (see below) and stay recorded but ungraded until the latency task handles reordered packets. `qgc-status` under `lan`, `geo` and `outage-10s` is enforced too: the times to each state, the longest wait for an output frame during a stall and the latency the output adds get 1.25 x worst + 10 ms, and so do the recoveries under `lan`; under `geo` and `outage-10s` a recovery waits for the vehicle's next keyframe whenever a lost packet broke the picture just before the release, so it gets 1.25 x the larger of the worst measured and (the 2 s keyframe interval + 0.6 s for 8 of the last 15 frames to read back again + the worst freeze recovery); the Live share of the healthy window gets 0.95 x worst under `lan` and a floor of 0.5 under `geo` and `outage-10s`, where it follows the lost packets of a run.
+Limits are never derived from the impairment the run applied; they come from measured runs with an explicit margin, and the rationale names those runs. Today `skeleton.lan`, `skeleton.geo`, `mavlink.lan`, `mavlink.geo`, `control-freshness` under `lan`, `geo` and `outage-10s` and `adaptation.bandwidth-steps`, `recording.lan` and `retrieval.geo` are enforced (limits 1.25 x worst measured + 10 ms for ages and gaps, 0.95 x worst for the frame rate, the 2 s keyframe interval used in those measurements plus the worst recovery frame age, times 1.25, for recovery); every other profile is still in calibration. The MAVLink budgets use the same margins for gaps and round trips, 1.25 x worst for the telemetry rate, 0.95 x worst for the heartbeat rate, zero for counts that were zero, and the 1 s stream period plus half the round trip, times 1.25, for recovery; they grade medians, not maxima, because single answers now and then take about 1 s. The control budgets use the same margin for acknowledgement and setpoint delays and for the vehicle's refresh and SITL's throttle release, zero for applications that were zero, and grade medians; SITL's throttle release is graded against `throttle_release_deadline_ms` in `testbed/limits.toml`, the vehicle's last refresh against the setpoint lifetime plus one tick, and the rover's coast to a stop is recorded only. `geo` grades only frame age and recovery: its frame rate, longest gap and unreadable stamps follow the number of reordered packets in a run (see below) and stay recorded but ungraded until the latency task handles reordered packets. `qgc-status` under `lan`, `geo` and `outage-10s` is enforced too: the times to each state, the longest wait for an output frame during a stall and the latency the output adds get 1.25 x worst + 10 ms, and so do the recoveries under `lan`; under `geo` and `outage-10s` the measurements used keyframes every 2 s, and recovery waited for the vehicle's next keyframe whenever a lost packet broke the picture just before the release. The budget therefore uses 1.25 x the larger of the worst measured and (the 2 s keyframe interval + 0.6 s for 8 of the last 15 frames to read back again + the worst freeze recovery); the Live share of the healthy window gets 0.95 x worst under `lan` and a floor of 0.5 under `geo` and `outage-10s`, where it follows the lost packets of a run.
 
 ## Measured (container-only)
 
@@ -410,7 +424,7 @@ All numbers below come from the compose testbed on the development Mac (Podman m
 
 ### Results summary
 
-The numbers a reader usually wants, each with the runs it comes from. Everything is container-only: no Pi, no real link, no optical measurement. The runs are the `gate-full` series of 2026-11-02 (images built from `dad4064`, with documentation changes uncommitted), `sim-check lan` of the same day, and the earlier runs the later sections list.
+The numbers a reader usually wants, each with the runs it comes from. Everything is container-only: no Pi, no real link, no optical measurement. The runs include the `gate-full` series of 2026-11-02 (images built from `dad4064`, with documentation changes uncommitted), `sim-check lan` of the same day, and the runs the later sections list. Intra-refresh results are labelled and use `PI=pi4`; the other video results used keyframes every 2 s.
 
 | What | `lan` | `geo` | Runs |
 |---|---|---|---|
@@ -421,8 +435,10 @@ The numbers a reader usually wants, each with the runs it comes from. Everything
 | Discrete command acknowledged, p50 | 18.3 ms | about 626 ms | 1793592668376 (`control-freshness lan`); `geo` (626.1 ms worst of 3) from runs 1793508778117, 1793508994123, 1793509209562 (`control-freshness geo`, not in `gate-full`) |
 | Time from a pause to `STALE`, to `NO VIDEO` | 0.60 s, 2.01 s | 0.55 s, 2.28 s | the `qgc-status` runs above |
 | Time from a freeze to `FROZEN` | 0.54 s | 0.88 s | the `qgc-status` runs above |
-| Under `outage-10s`, a 10 s blackout: `STALE` after 0.60 s, `NO VIDEO` after 2.33 s, `LIVE` again 3.7 s after the link returns | | | 1793704717934 |
-| Under `bandwidth-steps` (uplink 512, 128, 64 kbit/s): oldest frame 1.07 s, backlog gone after 7.4 s, 3.0 rung changes a minute | | | 1793592891254 |
+| Under `outage-10s`, a 10 s blackout, with keyframes every 2 s: `STALE` after 0.60 s, `NO VIDEO` after 2.33 s, `LIVE` again 3.7 s after the link returns | | | 1793704717934 |
+| With intra refresh, `LIVE` after the link returns: `outage-10s` 2.9 s; `outage-30s` 2.4 s | | | 1793713827696, 1793713920258 |
+| Under `bandwidth-steps` (uplink 512, 128, 64 kbit/s), with keyframes every 2 s: oldest frame 1.07 s, backlog gone after 7.4 s, 3.0 rung changes a minute | | | 1793592891254 |
+| With intra refresh, the 512 to 128 kbit/s drop: oldest frame 0.57 s, age back to normal within 7.6 s | | | 1793713307556 |
 | Retrieval of a crop (7.3 kB) and of a snapshot (15.6 kB) | | 4.0 s, 6.0 s | 1793593098148 |
 | Live frame age p50 / p95 with and without retrieval | | 319 / 332 ms for both | 1793593098148 |
 | `recording`: snapshots dropped when every write takes 3 s, and the live frame age p95 meanwhile | 11 of 20; 11 ms | | 1793593012375 |
@@ -435,7 +451,7 @@ Control and SITL identification: on the rover (`control-freshness lan`, 17935926
 
 Not measured: anything on a Raspberry Pi or a real link, the relay's and the ground adapter's CPU and memory per resolution, glass to glass, or the vehicle's CPU per rung (`docs/pi.md`, "What to measure first").
 
-Skeleton runs at the default rung (640x360, 15 fps, 500 kbit/s):
+Skeleton runs at the default rung (640x360, 15 fps, 500 kbit/s), with keyframes every 2 s:
 
 | | `lan` | `geo` |
 |---|---|---|
@@ -451,8 +467,12 @@ The `lan` maximum of 39 ms was one stall: three frames at 31-39 ms within 0.3 s 
 
 - The ball pattern is cheap to encode: x264 produces about 20 kB/s (160 kbit/s) of RTP against the 500 kbit/s target, so `geo`'s 512 kbit/s uplink is not saturated. A camera image will use the full bitrate.
 - The uplink carries about 1.5 times the RTP bytes. `tune=zerolatency` encodes with sliced threads, one slice per thread, and each slice is its own RTP packet: about 6 packets per frame, each with about 100 bytes of RTP, UDP, IP and WireGuard headers on the wire.
-- Recovery waits for the next keyframe (every 2 s): P-frames that reference lost data decode as concealed copies of an older frame (counted `repeated`) or as grey or black frames.
-- The `geo` profile's 10 ms per-packet jitter reorders packets (so `ordering = "preserve"` does not prevent reordering under jitter). Some packets arrive more than 50 ms behind their neighbours; the relay receives every packet but counts these late and lost (0-20 per 30 s run), and with no loss repair yet each one breaks video until the next keyframe. That is what spreads the frame rate, gaps and unreadable stamps between `geo` runs.
+- Recovery in these runs waited for the next keyframe (every 2 s): P-frames that referenced lost data decoded as concealed copies of an older frame (counted `repeated`) or as grey or black frames.
+- The `geo` profile's 10 ms per-packet jitter reorders packets (so `ordering = "preserve"` does not prevent reordering under jitter). Some packets arrived more than 50 ms behind their neighbours; the relay received every packet but counted these late and lost (0-20 per 30 s run), and each one broke video until the next keyframe. That spread the frame rate, gaps and unreadable stamps between these `geo` runs.
+
+With intra refresh, ten `skeleton geo` runs recovered video after the forwarding cut in a median of about 1.3 s. Eight were within the 2.9 s budget. Two took 3.7 and 4.9 s (1793714924919, 1793714027659).
+
+The stream's recovery-point SEIs show a 2.0 s refresh period at the 15, 5, 2 and 1 fps rungs. A ground restarted while the drone streams shows `LIVE` about 3.6 s after its start under both `geo` and `lan`. At 1280x720, 15 fps on `lan`, the largest frame was 8244 B, 1.5 times the mean.
 
 MAVLink runs (`lab check mavlink`, four per profile with the `ardupilotmega` dialect, listed in `perf/budgets.toml`), SITL at its default streams:
 
@@ -489,7 +509,7 @@ Control freshness runs (`lab check control-freshness`, three per profile on e1d5
 - After the adapter dies, the vehicle's last refresh comes 422-427 ms after the last setpoint (refreshes every 200 ms on a 20 ms tick; the next would fall after the 500 ms setpoint lifetime), SITL's override ends 0.5 s later and `checks` sees zero throttle one uplink later. The rest of the stop is SITL's rover coasting: it has no brakes and loses speed with a 2 s time constant.
 - The expired-challenge envelope was refused as `challenge_expired` under `lan` and as `unknown_challenge` under `geo` and `outage-10s`: by the time it arrives over 300 ms more, the vehicle has issued its fourth newer challenge.
 
-QGC status runs (`lab check qgc-status`, three per profile on e72ac9f, alternating, listed in `perf/budgets.toml`), the output at 640x360, 15 fps, 2000 kbit/s:
+QGC status runs (`lab check qgc-status`, three per profile on e72ac9f, alternating, listed in `perf/budgets.toml`), the vehicle sending keyframes every 2 s, the output at 640x360, 15 fps, 2000 kbit/s:
 
 | | `lan` | `geo` | `outage-10s` |
 |---|---|---|---|
@@ -509,7 +529,7 @@ QGC status runs (`lab check qgc-status`, three per profile on e72ac9f, alternati
 - The output adds 2.4-3.0 ms (`lan`) to 3.1-3.6 ms (`geo`) to the frame age: the copy and state stamp, the overlay, x264 and RTP on the ground, the local hop and the receiver's decode. MediaMTX and the TCP pull add little: the adapter decodes frames 3.0-3.7 ms old under `lan`, counting the vehicle's encoder, WireGuard, the relay, MediaMTX, the TCP hop and the decoder.
 - While the source is healthy the output carries its 15 frames per second and nothing else: a repeat goes out only when nothing went out for two periods (133 ms) or the state is about to change. With the earlier rule (a repeat after one period, on c12554d) a quarter to a third of the output frames were repeats, sent a few milliseconds before the next real frame, and the added latency was 2.9-3.7 ms.
 - During a stall a frame goes out every two periods, and each change of state shows when it is due (thresholds above). Under `geo` the last frame was captured up to one uplink before the request, so Stale can show before Frozen.
-- `geo` loses a packet now and then (the relay's jitter buffer drops late ones), and each loss breaks the picture until the next keyframe: the decoder shows concealed frames whose stamps do not read back (Frozen, then AgeUnknown). A run with many losses (1793519290484, 8.8 new frames per second) kept Live for only 0.56 of its healthy window, and when a loss falls just before a pause the recovery waits for the keyframe the pause postponed (2781 ms in run 1793518944364). After a blackout the same happens every time, and Live returns once 8 of the last 15 frames read back again.
+- In these runs with keyframes every 2 s, `geo` lost a packet now and then (the relay's jitter buffer drops late ones), and each loss broke the picture until the next keyframe: the decoder showed concealed frames whose stamps did not read back (Frozen, then AgeUnknown). A run with many losses (1793519290484, 8.8 new frames per second) kept Live for only 0.56 of its healthy window, and when a loss fell just before a pause the recovery waited for the keyframe the pause postponed (2781 ms in run 1793518944364). After a blackout the same happened every time, and Live returned once 8 of the last 15 frames read back again.
 - The ground container used 3.0-5.5 % of one core over 20 s windows of these runs (its cgroup's `cpu.stat`, against 4.9-8.2 % with the one-period repeats) and 31-33 MB of memory (cgroup).
 
 Adaptation runs (`lab check adaptation`, listed in `perf/budgets.toml`; `lte-bad` and `geo-degraded` observed for 120 s), the ball pattern. Four `bandwidth-steps` runs, three on cf21fa5 alternating with one run of each other profile and one on 91cfdcf (the vehicle's code is the same; the check counts drains only during the observation, as computed from the vehicle's listed changes for the others). Earlier figures (before the vehicle drained a deep queue with the video paused and sized telemetry to what SITL offers) come from runs on 2bc8bf2 and c5d5ef9.
@@ -533,25 +553,25 @@ Adaptation runs (`lab check adaptation`, listed in `perf/budgets.toml`; `lte-bad
 - The uplink measured at that cut can reach back to before the queue (25.5 kB/s against the 16 kB/s link in run 1793538848051 on bcec3c6, which then sat at 2 fps over the 64 kbit/s cap); the answers that come back through the queue while the video is paused measure it again, and the video resumes at the rung that fits: 12.3-14.0 kB/s in these runs, and once a step from 2 fps to 1 fps at the resume.
 - Telemetry now takes 2.5 times what SITL offers (a cap of 1970-2070 B/s, plus 3.3 kB/s of headers) instead of the configured 8000. At 128 kbit/s that still leaves video only about 3-4 kB/s of the 75 % a cut fits into (12.3-14.0 kB/s measured, less control and telemetry), so the ladder lands on the floor; at twice what SITL offers one telemetry message in 45-49 was dropped (6963bc5), at 2.5 times none was, apart from 57 at the first check after each `lab-up`, whose profile switch reads as a deep queue for about 4 s until the base shift clears the capacity measured at it.
 - The 64 kbit/s step found the vehicle at the floor in every run, and the climb back went a rung every 10 s once the capacity's hold ran out.
-- `lte-bad` held 640x360 or 1280x720 at 15 fps: its 5 % random loss reads in the hold band over 10 s and 500 packets. Of 15 frames a second only about 4.5 arrived readable: each lost packet breaks the picture until the next keyframe, with no repair yet.
+- With keyframes every 2 s, `lte-bad` held 640x360 or 1280x720 at 15 fps: its 5 % random loss reads in the hold band over 10 s and 500 packets. Of 15 frames a second only about 4.5 arrived readable: each lost packet broke the picture until the next keyframe.
 - The slow rungs send about half to two thirds of their nominal bitrate (`docs/architecture.md`, "Adaptation"). At the floor that is about 12.5 of the 25 kbit/s.
 - `geo-degraded` cycles from the floor up to 640x360 at 8 fps, a rung every 10-30 s, which overloads the 128 kbit/s and is cut back to the floor, about every 80 s; no cut there was deep enough to drain. It stays in calibration with `lte-bad`.
-- After the 10 s blackout of `outage-10s` the output reads Live again 3.7 s after the restore (run 1793704717934; current, at the floor's low rate, after 1.7 s). Four answers at the base bring back the rung before the outage; before, the vehicle climbed back a rung every 10 s, about 50 s to the top. Where the time goes, from that run and three before it (1793549585140, 1793703435258 and 1793703621291 on the code before the change), with the restore at 0:
+- With keyframes every 2 s, after the 10 s blackout of `outage-10s` the output read Live again 3.7 s after the restore (run 1793704717934; current, at the floor's low rate, after 1.7 s). Four answers at the base brought back the rung before the outage; before, the vehicle climbed back a rung every 10 s, about 50 s to the top. Where the time went, from that run and three before it (1793549585140, 1793703435258 and 1793703621291 on the code before the change), with the restore at 0:
   - 1.1 to 1.3 s: the first answer. The probes sent into the blackout are lost, and one sent after the restore takes a round trip (0.6 s) plus its wait for the 250 ms tick.
-  - Before: the floor's picture came 0.8, 2.7 and 4.8 s after the restore. The floor's frames cannot be decoded without a keyframe and the periodic one comes every 2 s, so the ground waited for whichever came after the relay was reachable. Now the first answer makes the next floor frame a keyframe: current at 1.6 to 1.7 s (runs 1793704717934 and 1793704817720: 1.67 and 1.46 s).
-  - Before: 2.0 s of healthy answers, then the rung. Now 1.0 s after the first answer.
-  - Before: 1.0 to 1.9 s from the decision to the first frame in the new rung, because the test pattern followed the rung's frame rate and, produced at 1 fps, took up to a second to speed up. Now 0.2 to 0.9 s (run 1793704717934: 0.9 s).
+  - Before: the floor's picture came 0.8, 2.7 and 4.8 s after the restore. The floor's frames could not be decoded without a keyframe and the periodic one came every 2 s, so the ground waited for whichever came after the relay was reachable. In runs 1793704717934 and 1793704817720, the first answer made the next floor frame a keyframe: current at 1.6 to 1.7 s (1.67 and 1.46 s).
+  - The earlier runs waited for 2.0 s of healthy answers before restoring the rung. Run 1793704717934 waited 1.0 s after the first answer.
+  - Before: 1.0 to 1.9 s from the decision to the first frame in the new rung, because the test pattern followed the rung's frame rate and, produced at 1 fps, took up to a second to speed up. In the later keyframe runs, 0.2 to 0.9 s (run 1793704717934: 0.9 s).
   - 0.3 s for the first frame to cross to the ground, where the output reads Live at once.
   Live after the restore was 4.9, 6.2 and 4.9 s before (runs 1793549585140, 1793703435258, 1793703621291) and 3.7 s after. `outage-30s` (run 1793705396140 before, 1793704817720 after; both ungraded): current after 2.2 and 1.5 s, Live after 4.3 and 2.3 s.
   Nothing else moved: `quality geo` (1793705147175) read SSIM p50 0.8160, p5 0.7530 and frame age p95 331 ms; `quality lte-bad` (1793705221678 and 1793705289465) p50 0.7304 and 0.7310, 9.8 % and 5.9 % of frames missing (the budget is 9.5 %: the missing share follows where random loss falls relative to the keyframes, and neither run saw a fall or a recovery); the vehicle made no rung change during `adaptation lte-bad` (1793705032188) or the two quality runs after their first climb. The `outage-10s` recovery budget stays as it was, with these runs well inside it.
 - The second viewer moves the offered uplink by 1.2-6.1 % (more under `bandwidth-steps` and `lte-bad`, less under `geo-degraded`); the vehicle cannot see the receivers (MediaMTX serves them on `ground_net`); the cause of the few per cent was not found, and it stays within the 10 %.
-- The climb from 640x360 to 1280x720 under `geo` once broke the picture for a keyframe interval: the relay's jitter buffer gave up on three packets of the first 720p keyframe, which then came late, so the ground showed AgeUnknown for 2 s. This is the reordering of the skeleton `geo` runs above, which the latency task owns.
+- With keyframes every 2 s, the climb from 640x360 to 1280x720 under `geo` once broke the picture for a keyframe interval: the relay's jitter buffer gave up on three packets of the first 720p keyframe, which then came late, so the ground showed AgeUnknown for 2 s. This is the reordering of the skeleton `geo` runs above, which the latency task owns.
 
 Relay timing. `rtspclientsink` synced its internal sinks to the ingress pipeline's latency, which turned the relay's jitter buffer latency into a hold on every frame: `lan` p50 was 35, 73 and 225 ms with a relay jitter latency of 0, 50 and 200 ms (runs 1793487491551, 1793487541132, 1793487445892). Worse, after the path delay dropped (`geo` then `lan`, run 1793488338310) the relay kept the old delay for about 8 s, its blocked jitter buffer dropped packets, and only keyframes decoded cleanly: p95 133 ms, max 3744 ms, 11.3 new frames per second. The relay now sets `sync=false` on those sinks; `lan` p50 is 7 ms and a `lan` run straight after `geo` is clean (1793488563825).
 
 Sender timing. `videorate` held every frame until the next one arrived when allowed to duplicate frames, one frame interval (67 ms at 15 fps, 500 ms at 2 fps) before the stamp, so no frame age could show it; GStreamer debug logs showed the hold, and `drop-only=true` removes it.
 
-Stamp survival at low rungs on `lan`, 2 fps and 50 kbit/s unless noted, keyframe every 2 s:
+Stamp survival measured at low rungs on `lan`, 2 fps and 50 kbit/s unless noted, with keyframes every 2 s:
 
 | Run | Source and rung | Encoded RTP | Unreadable |
 |---|---|---|---|
@@ -653,7 +673,7 @@ Question (issue 4): at ladder rungs 2 to 5, do x265 or SVT-AV1 give clearly bett
 ### Method
 
 - Sources, 60 s each: `foreman_cif.y4m` (cropped to 16:9, played forward and backward three times so there is no scene cut, 30 fps) and ffmpeg's `testsrc2` at 1280x720 (a synthetic card with fine detail and a moving counter, called "card" below). Each is scaled to the rung's size and frame rate once; that file is both the encoders' input and the reference the scores are measured against.
-- Encoders, all with no B-frames and no lookahead, a keyframe every 2 s, and the vehicle's one-frame VBV (`encoder_kbit` and `vbv_ms` in `crates/video/src/sender.rs`; the rung's bitrate scaled so any second stays within it): x264 `ultrafast` + `zerolatency`; x265 `ultrafast` + `zerolatency`, `bframes=0`, `rc-lookahead=0`, `vbv-maxrate` and `vbv-bufsize` as x264; SVT-AV1 preset 10 (real-time), constant bitrate, `pred-struct=1` (low delay), `lookahead=0`, `buf-sz` of one frame.
+- Encoders in this measurement, all with no B-frames and no lookahead, keyframes every 2 s, and the vehicle's one-frame VBV (`encoder_kbit` and `vbv_ms` in `crates/video/src/sender.rs`; the rung's bitrate scaled so any second stays within it): x264 `ultrafast` + `zerolatency`; x265 `ultrafast` + `zerolatency`, `bframes=0`, `rc-lookahead=0`, `vbv-maxrate` and `vbv-bufsize` as x264; SVT-AV1 preset 10 (real-time), constant bitrate, `pred-struct=1` (low delay), `lookahead=0`, `buf-sz` of one frame.
 - Quality: host ffmpeg 9.0.2 (x264 core 165, x265 4.3, SVT-AV1 4.2.0), decode, `ssim` and `psnr` filters against the reference (SSIM is the all-planes value). The achieved bitrate is the sum of the packet sizes over the clip, since all three encoders undershoot the target. To compare at equal quality, each encoder was also run at 25, 50, 75, 150, 200 and 300 % of the rung's bitrate, and "bitrate for x264's SSIM" is read off that curve (log-linear) as a share of x264's achieved bitrate at the rung's setting. A `<` means the encoder's lowest point (25 % of the rung) already beat x264's SSIM; a `>` means the curve ended below it.
 - CPU: Debian 13 container (ffmpeg 7.1.5 with its own libx264, libx265 and libsvtav1) limited with `podman run --cpus 0.5` (Pi 4) and `--cpus 0.25` (Pi Zero 2 W), `-threads 4` or the encoder's equivalent. Encode time per frame is (wall time of the whole clip minus wall time of its first 5 s) over the frames in between, one run per cell. Same caveat as "Small boards" in `docs/latency.md`: a CPU-time quota on Apple cores, not a slower core.
 - Ground side, in the runtime image (GStreamer 1.26.2): `x265enc`, `svtav1enc`, `avdec_h265` (and `libde265dec`), `avdec_h264` and `av1dec` are present; `dav1ddec`, `avdec_av1` and `rtpav1depay` are not. QGroundControl never sees the uplink codec, because the ground re-encodes.
