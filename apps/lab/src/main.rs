@@ -104,7 +104,7 @@ struct CheckArgs {
     /// skeleton: base URL of the relay's metrics endpoint.
     #[arg(long, default_value = "http://192.168.233.20:9100")]
     relay_metrics: String,
-    /// mavlink, control-freshness, sim-flight, sim-mission, qgc-status, sightings: where the ground adapter sends this ground station
+    /// mavlink, control-freshness, sim-flight, sim-mission, sim-landing, qgc-status, sightings: where the ground adapter sends this ground station
     /// its telemetry.
     #[arg(long, default_value = "192.168.232.40:14552")]
     gcs_listen: SocketAddr,
@@ -112,7 +112,7 @@ struct CheckArgs {
     /// endpoints.
     #[arg(long, default_value = "http://192.168.233.30:9100")]
     ground_metrics: String,
-    /// control-freshness, sim-flight, sim-mission: where mavlink-router sends this host SITL's telemetry, on the overlay.
+    /// control-freshness, sim-flight, sim-mission, sim-landing: where mavlink-router sends this host SITL's telemetry, on the overlay.
     #[arg(long, default_value = "10.77.0.4:14553")]
     observer_listen: SocketAddr,
     /// control-freshness: the key this host signs its envelopes with as a second controller.
@@ -154,6 +154,7 @@ enum Scenario {
     SimFlight,
     SimMission,
     Follow,
+    SimLanding,
     QgcStatus,
     Adaptation,
     Recording,
@@ -174,6 +175,7 @@ impl Scenario {
             Self::SimFlight => "sim-flight",
             Self::SimMission => "sim-mission",
             Self::Follow => "follow",
+            Self::SimLanding => "sim-landing",
             Self::QgcStatus => "qgc-status",
             Self::Adaptation => "adaptation",
             Self::Recording => "recording",
@@ -313,6 +315,9 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
             control::sim_flight::mission::run(&agent, &text, &sim_settings(args)?)
         }
         Scenario::Follow => control::sim_flight::follow::run(&agent, &text, &sim_settings(args)?),
+        Scenario::SimLanding => {
+            control::sim_flight::landing::run(&agent, &text, &sim_settings(args)?)
+        }
         Scenario::QgcStatus => {
             let budgets = load_budgets()?;
             let limits = fs::read_to_string(LIMITS_PATH)

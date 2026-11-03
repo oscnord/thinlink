@@ -45,10 +45,10 @@ Packages that exist today:
 
 | Layer | Package | Dir | Responsibility |
 |---|---|---|---|
-| L0 | `sat-teleop-policy` | `crates/policy` | Pure decisions; today the in-picture stamp and the state stamp, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the control lease, video freshness, snapshot retention and when retrieval may send |
+| L0 | `sat-teleop-policy` | `crates/policy` | Pure decisions; today the in-picture stamp and the state stamp, the landing target decision, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the control lease, video freshness, snapshot retention and when retrieval may send |
 | L1 | `sat-teleop-media` | `crates/media` | Sender with live rung changes and its snapshot branch, relay ingress and its feedback, the vehicle's adaptation loop, headless receiver and the ground's freshness output, `GET /metrics` endpoint |
 | L1 | `sat-teleop-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
-| L1 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions |
+| L1 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
 | L1 | `sat-teleop-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
 | L2 | `sat-teleop-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
 | L3 | `sat-teleop-vehicle`, `sat-teleop-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |

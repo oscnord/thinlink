@@ -245,7 +245,7 @@ pub fn stream_request(
 }
 
 /// `message` from the bridge's own identity on the autopilot's link.
-fn own_frame(message: &MavMessage) -> Option<Frame> {
+pub(crate) fn own_frame(message: &MavMessage) -> Option<Frame> {
     let header = MavHeader {
         system_id: PROBE_SYSTEM.into(),
         component_id: PROBE_COMPONENT,

@@ -29,6 +29,7 @@ pub mod receiver;
 pub mod region;
 pub mod sender;
 pub mod stages;
+pub mod tags;
 
 /// Pause between a failed pipeline run and the next attempt.
 const RESTART_DELAY: Duration = Duration::from_secs(1);

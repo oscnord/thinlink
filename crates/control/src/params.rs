@@ -183,23 +183,89 @@ fn has_bits(value: f32, mask: u32) -> bool {
 
 /// Whether `required` holds all of that. Checked when `allow_missions` is on in real mode.
 pub fn validate_missions(required: &[Required]) -> Result<(), String> {
+    unmet(required, &MISSION_RULES).map_or(Ok(()), |missing| {
+        Err(format!(
+            "allow_missions in real mode needs `require` to hold {missing}"
+        ))
+    })
+}
+
+/// What a landing target needs the autopilot to be set to (`ArduPilot` `fb773567`,
+/// `libraries/AC_PrecLand/AC_PrecLand.cpp`): precision landing on (`PLND_ENABLED` 1), fed by the
+/// `MAVLink` backend (`PLND_TYPE` 1, the companion computer), no turn of the sensor's yaw
+/// (`PLND_YAW_ALIGN` 0: `retrieve_los_meas` rotates every target by it, and the vehicle's angles are
+/// of a picture whose top is the nose), and a retrying reaction to a lost target (`PLND_STRICT` 1,
+/// "Retry Landing (Normal Strictness)", between 0 "Not strict" and 2 "Do not land (just Hover)":
+/// `AC_PrecLand_StateMachine.cpp`). A
+/// lost target is descended on for `PLND_TIMEOUT`, then retried above where it was last seen; when
+/// that fails, and when no target was ever seen, `get_failsafe_actions` holds for
+/// `FAILSAFE_INIT_TIMEOUT_MS` (7 s: "vehicle is completely stopped to give user the time to take
+/// over") and then lands vertically. 0 lands at once, a guess. 2 ("Do not land (just Hover)") holds
+/// with no end, which would also stop every failsafe Land and the end of RTL from ever landing. And no
+/// altitude window (`PLND_ALT_MIN` and `PLND_ALT_MAX` 0): without a rangefinder, or outside the window,
+/// `check_if_sensor_in_range` reports the target out of range and the state machine just descends
+/// whatever `PLND_STRICT` says (`AC_PrecLand.cpp`, `check_target_status`).
+const LANDING_RULES: [Rule; 6] = [
+    Rule {
+        name: "PLND_ENABLED",
+        compare: Compare::Equal,
+        ok: |v| bits(v) == Some(1),
+        text: "PLND_ENABLED equal to 1",
+    },
+    Rule {
+        name: "PLND_TYPE",
+        compare: Compare::Equal,
+        ok: |v| bits(v) == Some(1),
+        text: "PLND_TYPE equal to 1 (the companion computer)",
+    },
+    Rule {
+        name: "PLND_YAW_ALIGN",
+        compare: Compare::Equal,
+        ok: |v| v == 0.0,
+        text: "PLND_YAW_ALIGN (real32) equal to 0",
+    },
+    Rule {
+        name: "PLND_STRICT",
+        compare: Compare::Equal,
+        ok: |v| bits(v) == Some(1),
+        text: "PLND_STRICT equal to 1 (retry, then pause and land straight down)",
+    },
+    Rule {
+        name: "PLND_ALT_MIN",
+        compare: Compare::Equal,
+        ok: |v| bits(v) == Some(0),
+        text: "PLND_ALT_MIN equal to 0 (no altitude window)",
+    },
+    Rule {
+        name: "PLND_ALT_MAX",
+        compare: Compare::Equal,
+        ok: |v| bits(v) == Some(0),
+        text: "PLND_ALT_MAX equal to 0 (no altitude window)",
+    },
+];
+
+/// Whether `required` holds all of that. Checked when `[landing] target` is on in real mode.
+pub fn validate_landing(required: &[Required]) -> Result<(), String> {
+    unmet(required, &LANDING_RULES).map_or(Ok(()), |missing| {
+        Err(format!(
+            "`[landing] target` in real mode needs `require` to hold {missing}"
+        ))
+    })
+}
+
+/// The words for the rules `required` does not meet, or `None` when it meets them all.
+fn unmet(required: &[Required], rules: &[Rule]) -> Option<String> {
     let met = |rule: &Rule| {
         required
             .iter()
             .any(|r| r.name == rule.name && r.compare == rule.compare && (rule.ok)(r.value))
     };
-    let missing: Vec<&str> = MISSION_RULES
+    let missing: Vec<&str> = rules
         .iter()
         .filter(|rule| !met(rule))
         .map(|rule| rule.text)
         .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "allow_missions in real mode needs `require` to hold {}",
-        missing.join("; ")
-    ))
+    (!missing.is_empty()).then(|| missing.join("; "))
 }
 
 /// The name, value and type in `message` when it is a `PARAM_VALUE`.
@@ -553,6 +619,58 @@ mod tests {
         for (required, expected) in cases {
             assert_eq!(
                 validate_missions(&required).is_ok(),
+                expected,
+                "{required:?}"
+            );
+        }
+    }
+
+    /// A lost marker is retried and then landed on straight down after a pause: `PLND_STRICT` 1 with
+    /// no altitude window, and the target is not turned (`PLND_YAW_ALIGN` 0).
+    #[test]
+    fn a_landing_target_in_real_mode_needs_precision_landing_and_a_retrying_hold() {
+        let entry = |name: &str, value| Required {
+            name: name.to_owned(),
+            kind: ParamType::Int8,
+            value,
+            compare: Compare::Equal,
+        };
+        let with = |enabled, kind, strict| {
+            vec![
+                entry("PLND_ENABLED", enabled),
+                entry("PLND_TYPE", kind),
+                entry("PLND_YAW_ALIGN", 0.0),
+                entry("PLND_STRICT", strict),
+                entry("PLND_ALT_MIN", 0.0),
+                entry("PLND_ALT_MAX", 0.0),
+            ]
+        };
+        let with_window = |max| {
+            let mut all = with(1.0, 1.0, 1.0);
+            all.pop();
+            all.push(entry("PLND_ALT_MAX", max));
+            all
+        };
+        let turned = |degrees| {
+            let mut all = with(1.0, 1.0, 1.0);
+            all.retain(|r| r.name != "PLND_YAW_ALIGN");
+            all.push(entry("PLND_YAW_ALIGN", degrees));
+            all
+        };
+        let cases = [
+            (with(1.0, 1.0, 1.0), true),
+            (with(0.0, 1.0, 1.0), false),
+            (with(1.0, 2.0, 1.0), false),
+            (with(1.0, 1.0, 2.0), false),
+            (with(1.0, 1.0, 0.0), false),
+            (with_window(8.0), false),
+            (turned(90.0), false),
+            (with(1.0, 1.0, 1.0)[..2].to_vec(), false),
+            (vec![], false),
+        ];
+        for (required, expected) in cases {
+            assert_eq!(
+                validate_landing(&required).is_ok(),
                 expected,
                 "{required:?}"
             );

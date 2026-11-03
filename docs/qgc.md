@@ -68,6 +68,10 @@ With the detector on (`docs/architecture.md`, "Sightings"), the people (and, if 
 
 The same detector draws each thing it finds as an outline in the picture, with a small letter in a solid tab at the box's top-left corner so the kind reads at a low bitrate: amber P for a person, green B bicycle, cyan C car, magenta M motorcycle, red U bus, white T truck, deep blue S boat (the sea-going one; B is taken). Which kinds it looks for is `[region] detector.kinds` in the vehicle config (people only by default). A box too small to hold the tab gets the outline alone. An outline shows what was found, never what was ruled out: no outline does not mean nothing is there.
 
+## Landing on a marker
+
+Off by default (`[landing] target` in the vehicle's config, `docs/real-vehicle.md`, "Landing on a marker"). With it on, a printed AprilTag in the picture of a camera that looks straight down is reported to the autopilot, and nothing else changes: the drone does not move because of it. Fly over the tag, a couple of metres off is fine, hold, and choose Land in QGC's flight mode list (or its Land button). ArduPilot's precision landing then steers the descent onto the tag; you can take over as in any Land. If the camera is not pointing down, QGC's message list says `Landing target off: camera N deg from straight down` once, and the copter pauses about 7 s and then lands straight down where it is (ArduPilot says `PrecLand: Failsafe Measures`; the same page has the details). If the tag is lost during the descent ArduPilot says `PrecLand: Target Lost`, retries above where it last saw it, pauses and lands straight down: change the mode to take over. Not tried with QGC on screen; `lab check sim-landing` plays QGC's part.
+
 ## What QGC can and cannot do
 
 The ground adapter is QGC's only command endpoint. QGC's read-only traffic goes raw to the vehicle, lease or not, so QGC can always load the vehicle: parameters, mission download, autopilot version and stream rates. It may also set the vehicle's clock (`SYSTEM_TIME`, which ArduPilot can take its real-time clock from), the one raw message that writes something, though no flight state.

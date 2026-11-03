@@ -84,6 +84,68 @@ A mission upload is held to what the fence cannot contain: at most 48 items (eve
 
 Know what this means before you switch it on. A mission in Auto keeps flying when the ground station goes quiet, because that is its purpose: the pilot has no control of it until the link is back, apart from a separate radio. If a required parameter changes in flight, the vehicle withdraws control as described below, and the mission carries on or not as the autopilot's own parameters then say. Whether a mission may be flown out of reach where you fly is the pilot's and the regulator's decision.
 
+## Landing on a marker
+
+Off by default. With `[landing] target = true` in `vehicle.toml` the vehicle looks for a printed AprilTag (family tag36h11, the number `tag_id`, 0 unless set) in the camera's picture and tells ArduPilot where it is, so that ArduPilot's precision landing can steer the final descent onto it. It only reports. The vehicle never moves the copter, never changes a mode and never writes a parameter; the pilot chooses Land (QGroundControl: Land, with the copter over the tag, `docs/qgc.md`), and ArduPilot does the rest. The pilot may take over at any time as for any Land.
+
+```toml
+[camera]
+hfov_deg = 60        # the picture's horizontal field of view, from the lens and the sensor's crop
+tilt_deg = -90       # a fixed camera, which must be exactly -90 (straight down); leave it out for a gimbal on the first mount (simulation only)
+[landing]
+target = true
+tag_id = 0
+```
+
+What the vehicle sends: `LANDING_TARGET` (`MAV_FRAME_BODY_FRD`, for a fixed camera and for a mount whose camera moves with the airframe; `position_valid` 0) with the angles of the tag's centre from the picture's centre, from the vehicle's own identity (system 254, component 191), once per detection, at the rate the detector gives (`tag_fps`, 10 by default, up to 15: while ArduPilot's target estimator starts, it gives up after 500 ms without a reading it accepts, `EKF_INIT_SENSOR_MIN_UPDATE_MS` in `AC_PrecLand.cpp`). The fields and what ArduPilot does with them are in `libraries/AC_PrecLand/AC_PrecLand_MAVLink.cpp`, `handle_msg`, at the commit the simulation is built from (`fb773567`). The angles assume the picture's top is the front of the vehicle (`PLND_YAW_ALIGN` stays 0: `retrieve_los_meas` rotates every target by it); `distance` is the line of sight to a flat ground at the autopilot's height above home, because without a rangefinder ArduPilot has no other height (`AC_PrecLand.cpp`, `construct_pos_meas_using_rangefinder`). On sloping ground, or with a barometer that has drifted, that height is wrong and so is the offset ArduPilot corrects. Not measured on hardware, and not tried with a rangefinder (a positive `distance` replaces it).
+
+Nothing is sent that was not seen in the current frame window: no prediction, no repeat of the last position. A sighting older than 500 ms by the time it would go out, counted from when the frame left the sender's tee (a little after the camera captured it), is dropped, and each one is sent once. When the tag leaves the picture the messages stop, and ArduPilot treats the target as lost 2 s later (`LANDING_TARGET_TIMEOUT_MS`).
+
+### The camera must point down
+
+The angles are only right for a camera that looks straight down with its picture's top towards the nose, so the vehicle sends nothing otherwise. A fixed camera must be configured at exactly `tilt_deg = -90`; the config is refused otherwise, because a tilt is not corrected. A gimbal camera is the camera on the first mount, and counts when the autopilot's own report of that mount's attitude (`GIMBAL_DEVICE_ATTITUDE_STATUS`, which ArduPilot sends from `AP_Mount_Backend::send_gimbal_device_attitude_status`, with `gimbal_device_id` `_instance + 1`, so 1 for the first mount; the quaternion is the servo backend's demanded body-frame angles, `AP_Mount_Servo::get_attitude_quaternion`, with no feedback from the mount) puts two things right: its axis within 5 degrees of straight down, and the picture's top (the camera's up axis, turned by the quaternion, on the horizontal plane) within 5 degrees of the nose. The second matters because a gimbal that looks down but is panned gives a picture turned by the pan. The target goes out in the body frame, so the rule holds only for a mount whose camera moves with the airframe: the servo backend does not stabilise in neutral (`AP_Mount_Servo::update_angle_outputs`), and its report is the demanded angle, not a measurement. A mount that stabilises its camera, or a backend whose quaternion means something else, has not been tried, so real mode refuses the landing target with a gimbal and accepts it only with a fixed camera; a gimbal is for the simulation. To bring a gimbal to real mode, trace it first (the sent angle's error against the copter's pitch and roll should be about 1 degree per degree for a camera that follows the airframe, 0 for one held level). Readings of other mounts come from the same autopilot address and are ignored. The vehicle asks for the attitude with `SET_MESSAGE_INTERVAL` every 5 s while none is fresh and the autopilot then streams it every 200 ms; a sighting is judged only against a reading at most 500 ms from it, before or after. Otherwise, with a tag in the picture, the pilot is told once in QGroundControl's message list, as a warning from the autopilot's address, and told again only after a target has gone out in between:
+
+| Message | Why nothing is sent |
+|---|---|
+| `Landing target off: camera 70 deg from straight down` | The camera is further than 5 degrees from down. |
+| `Landing target off: camera picture turned 90 deg from the nose` | The picture's top is more than 5 degrees from the nose (a panned gimbal). |
+| `Landing target off: camera angle unknown` | The first mount's attitude has not been reported within 500 ms of the sighting. |
+| `Landing target off: no height above home` | No fresh `GLOBAL_POSITION_INT`, or the copter is not above home. |
+
+The decision is `sat_teleop_policy::landing::decide`, a pure function with a table test, and `sat_teleop_control::landing::Landing::next_frame` is the only place a `LANDING_TARGET` is made; it is written under the connection's lock like any control frame, only while `mavlink.control.target` is `autopilot`. The vehicle's metrics show `mavlink.landing` (`sent`, `withheld` by reason, and `last`: the newest target's angles in degrees, distance, the picture's turn and its age) and `tag` (the detector thread's state, runs, finds and time per run).
+
+### Real mode
+
+In real mode with the switch on, the vehicle refuses to start unless `require` holds the entries below, as `allow_missions` does for its parameters, and then, like every entry, compares them with what the autopilot reports:
+
+```toml
+require = [
+    # ... the entries above, and:
+    { name = "PLND_ENABLED", type = "int8", value = 1 },     # precision landing on
+    { name = "PLND_TYPE", type = "int8", value = 1 },        # the MAVLink backend: a companion computer's LANDING_TARGET
+    { name = "PLND_YAW_ALIGN", type = "real32", value = 0 }, # the picture's top is the nose
+    { name = "PLND_STRICT", type = "int8", value = 1 },      # a lost target: retry, then pause and land straight down
+    { name = "PLND_ALT_MIN", type = "real32", value = 0 },   # no altitude window (below)
+    { name = "PLND_ALT_MAX", type = "real32", value = 0 },
+]
+```
+
+The meanings are those of `libraries/AC_PrecLand/AC_PrecLand.cpp` and `AC_PrecLand_StateMachine.cpp` at `fb773567`. `PLND_TYPE` 1 is called "MAVLink" there. `PLND_YAW_ALIGN` (centidegrees, 0 by default) turns every target by that yaw (`retrieve_los_meas`), so it must be 0 for angles of a picture whose top is the nose. `PLND_STRICT` is 0 "Land Vertically (Not strict)", 1 "Retry Landing (Normal Strictness)" and 2 "Do not land (just Hover)". Real mode requires 1: 0 lands at once whether the tag is in view or not, and 2 (`VERY_STRICT`) returns `HOLD_POS` from `get_failsafe_actions` with no end, so a Land that has no tag in view would hover until the battery or the pilot ends it, including a failsafe Land and the descent at the end of RTL. The altitude window must be off because ArduPilot calls a target out of range, and then simply descends whatever `PLND_STRICT` says, below `PLND_ALT_MIN` or above `PLND_ALT_MAX` and whenever there is no valid rangefinder (`check_target_status`, `check_if_sensor_in_range`); both zero removes the window, so a lost target is judged lost at any height. The types are from the parameter definitions and not checked against a flight controller: confirm them in the parameter editor.
+
+**`PLND_LAG` is yours to set, and is not checked.** `AC_PrecLand` pairs each sighting with the vehicle's attitude and motion `PLND_LAG` seconds back (default 0.02, range 0.02 to 0.25, needs a reboot) and uses the message's `time_usec` only for its 1 s validity (`GCS_MAVLINK::handle_landing_target`, `correct_offboard_timestamp_usec_to_ms`; `AC_PrecLand::init`, `construct_pos_meas_using_rangefinder`). So `PLND_LAG` should match the delay of the setup from the camera seeing the tag to ArduPilot receiving the message: exposure, encoding of the picture the detector reads, the detector and the link to the flight controller. A value that is too small pairs a sighting with a pose that is too new, and the copter overshoots the tag. Measure the delay for the camera in use; the vehicle neither measures nor checks it. The simulation's way: fly with `mavlink.landing.last` polled, record the copter's position and attitude beside each sent target's sighting time (`lab check sim-landing` writes them to `timeseries.csv`), compute the angles a body-fixed camera would see and find the time shift that best aligns them with the sent angles, then add the time from the sighting to the send (`to_send_ms`). A value measured that way still has to be flown: in the simulation 0.06 (the measured age) landed 2.8 m from the tag where 0.15 landed 0.01 m from it, one run each.
+
+**What the pilot gets with the switch on.** `PLND_ENABLED` is not specific to the pilot's Land: a failsafe Land (`FS_GCS_ENABLE` 5, `FS_THR_ENABLE`, a fence breach), a mission's Land item and the descent of RTL run the same code (`Mode::land_run_normal_or_precland`, `Mode::precland_run`), so all of them behave as follows, whether or not the vehicle ever sends a target:
+
+- **No tag was ever seen.** The state machine reports `TARGET_NEVER_SEEN` and `update` returns `FAILSAFE`; `get_failsafe_actions` says `HOLD_POS` for `FAILSAFE_INIT_TIMEOUT_MS` (7 s: "vehicle is completely stopped to give user the time to take over", with `PrecLand: Failsafe Measures` in the message list) and then `DESCEND`, a vertical landing where the copter is. Every such Land pauses about 7 s before it descends.
+- **The tag is lost on the way down.** ArduPilot reports `PrecLand: Target Lost` 2 s after the last message (`LANDING_TARGET_TIMEOUT_MS`), keeps descending for `PLND_TIMEOUT` (4 s by default), flies back above where it last saw the tag and retries (up to `PLND_RET_MAX`, 4), and when a retry does not find the tag again, or those are used up, takes the same failsafe path (`retry_landing`): hold 7 s, then land vertically.
+- **The tag stays in view.** The descent is steered onto it.
+
+So with the switch on the copter is never steered down by a guess, and it always ends on the ground. The cost is the pause, and a vertical landing where the copter stands when the tag was not found: check that is acceptable over the site you fly, and that your failsafes allow the extra 7 s. With the switch off nothing here is required, but a `PLND_ENABLED` 1 left in the autopilot has the same pause.
+
+### Checking it
+
+Props off, with the real camera: point the camera forward and show it the tag; the pilot's message list says the camera is not down and `mavlink.landing.sent` stays 0. Point it down: `sent` counts up at about `tag_fps` and stops within a frame of covering the tag. Then, only on a test site and with a spare pilot ready to take over: hover 2 m off the tag, choose Land, cover the tag once the copter is descending, and see it keep descending for a few seconds, return above the tag, pause for about 7 s and land straight down.
+
 ## What is authenticated, and what is not
 
 - **Control envelopes, lease requests and lease releases** are signed end to end with the controller's key. A relay, which holds no controller key, can drop or delay them, not forge or change them, and not use one for another kind of message (each signature starts with a constant for its kind) or for another vehicle (it carries the vehicle's id, `vehicle_id`, which `vehicle.toml` and `ground.toml` must share). The vehicle's challenge, sequence, epoch and nonce rules cover replay (`docs/architecture.md`, "Control protocol"); a ground whose clock steps backwards has its lease requests refused (`replayed_request`) until it passes the last nonce the vehicle accepted.

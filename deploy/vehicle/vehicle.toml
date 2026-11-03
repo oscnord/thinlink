@@ -43,6 +43,18 @@ max_age_s = 3600
 min_free_bytes = 536870912
 gap_after_ms = 1500
 
+# Landing on a printed AprilTag (tag36h11), docs/real-vehicle.md, "Landing on a marker". Off by default.
+# With it on the vehicle tells the autopilot where the tag is, and only while the camera looks straight
+# down; it never moves the copter, the pilot chooses Land. It needs the picture's field of view, and
+# either a fixed camera's tilt (exactly -90, straight down) or, without `tilt_deg`, a gimbal whose attitude
+# the autopilot reports. Real mode also needs PLND_ENABLED 1, PLND_TYPE 1, PLND_YAW_ALIGN 0 (real32), PLND_STRICT 1, PLND_ALT_MIN 0 and PLND_ALT_MAX 0 in `require`.
+# [camera]
+# hfov_deg = 60
+# tilt_deg = -90
+# [landing]
+# target = true
+# tag_id = 0
+
 [mavlink]
 # SITL mode is the default and sends control nowhere on a real flight controller. Real mode sends it
 # only while its interlocks hold (docs/real-vehicle.md); the required parameters are the operator's

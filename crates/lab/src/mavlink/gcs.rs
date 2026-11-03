@@ -16,6 +16,7 @@ use mavlink::types::CharArray;
 
 use sat_teleop_control::frame::{MAX_DATAGRAM, datagram_frames};
 use sat_teleop_media::unix_ms;
+use sat_teleop_policy::landing;
 
 /// SITL's system id and autopilot component.
 const VEHICLE_SYSTEM: u32 = 1;
@@ -55,6 +56,20 @@ pub(crate) enum Kind {
         rel_alt_m: f32,
         lat: i32,
         lon: i32,
+    },
+    /// `GIMBAL_DEVICE_ATTITUDE_STATUS`: how far the camera's axis is from straight down and how far
+    /// the picture's top is turned from the nose (degrees).
+    Mount {
+        off_nadir_deg: f32,
+        turn_deg: f32,
+        /// The reported quaternion, for the landing trace.
+        q: [f32; 4],
+    },
+    /// `ATTITUDE` in radians: yaw is north 0 and clockwise positive.
+    Attitude {
+        roll: f32,
+        pitch: f32,
+        yaw: f32,
     },
     /// The autopilot asking for mission item `seq` (`MISSION_REQUEST`, which is what `ArduPilot` sends,
     /// or `MISSION_REQUEST_INT`).
@@ -278,6 +293,18 @@ fn kind(message: &MavMessage) -> Kind {
             lat: p.lat,
             lon: p.lon,
         },
+        MavMessage::ATTITUDE(a) => Kind::Attitude {
+            roll: a.roll,
+            pitch: a.pitch,
+            yaw: a.yaw,
+        },
+        MavMessage::GIMBAL_DEVICE_ATTITUDE_STATUS(g) => landing::off_nadir_deg(g.q)
+            .zip(landing::picture_turn_deg(g.q))
+            .map_or(Kind::Other, |(off_nadir_deg, turn_deg)| Kind::Mount {
+                off_nadir_deg,
+                turn_deg,
+                q: g.q,
+            }),
         MavMessage::MISSION_REQUEST_INT(r) => Kind::MissionRequest { seq: r.seq },
         #[expect(
             deprecated,

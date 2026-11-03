@@ -1,0 +1,4 @@
+# The gimbal's camera looks straight down (`just sim-landing`, docs/simulation.md), loaded after
+# sat-teleop-copter.parm: Neutral mode holds MNT1_NEUTRAL_* (degrees, body frame), and -90 in pitch is
+# straight down.
+MNT1_NEUTRAL_Y -90

@@ -22,6 +22,7 @@ use mavlink::MessageData;
 use mavlink::dialects::ardupilotmega::{GLOBAL_POSITION_INT_DATA, MavMessage};
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::landing::Setup;
 use sat_teleop_policy::sighting::Sightings;
 
 use self::control::{ControlSnapshot, ControlStats};
@@ -32,6 +33,7 @@ use crate::envelope::ControlLimits;
 use crate::frame::{Frame, FrameReader, MAX_DATAGRAM, datagram_frames};
 use crate::gate::{self, Decision};
 use crate::identity::{self, Mode};
+use crate::landing::{self, Landing};
 use crate::params::{self, Required};
 use crate::position::NewestPosition;
 use crate::sighting::Announcer;
@@ -158,6 +160,8 @@ pub struct VehicleStats {
     /// The people seen while the ground was out of reach: told to the ground when it is heard
     /// again, listed on request.
     pub sightings: Mutex<Sightings>,
+    /// The landing target switch and the sightings it may send (`landing`).
+    pub landing: Landing,
 }
 
 #[derive(Debug, Serialize)]
@@ -169,13 +173,17 @@ pub struct VehicleSnapshot {
     pub gcs: FlowCounts,
     pub gcs_refused: BTreeMap<String, u64>,
     pub control: ControlSnapshot,
+    pub landing: landing::LandingSnapshot,
 }
 
 impl VehicleStats {
     /// Counters for a vehicle configured as `config` says: the controllers' keys, the mode, the
-    /// required parameters and the clock.
-    pub fn new(config: &VehicleConfig) -> Self {
-        let stats = Self::default();
+    /// required parameters and the clock. `landing` is `None` with the landing target switch off.
+    pub fn new(config: &VehicleConfig, landing: Option<Setup>) -> Self {
+        let stats = Self {
+            landing: Landing::new(landing),
+            ..Self::default()
+        };
         stats.control.configure(config);
         stats
     }
@@ -189,6 +197,7 @@ impl VehicleStats {
             gcs: self.gcs.snapshot(),
             gcs_refused: self.gcs_refused.snapshot(),
             control: self.control.snapshot(),
+            landing: self.landing.snapshot(),
         }
     }
 
@@ -299,8 +308,20 @@ fn serve_sitl(
         if let Some(frame) = told {
             send_up(&frame, socket, relay, &stats.telemetry);
         }
+        let notice = stats.landing.notice_frame(Instant::now(), autopilot, cap);
+        if let Some(frame) = notice {
+            send_up(&frame, socket, relay, &stats.telemetry);
+        }
+        send_landing_target(writer, stats);
         let needs_position = stats.position.fresh(Instant::now()).is_none();
-        probe.ask_if_due(autopilot, writer, &stats.control, needs_position);
+        let needs_mount = stats.landing.wants_mount(Instant::now());
+        probe.ask_if_due(
+            autopilot,
+            writer,
+            &stats.control,
+            needs_position,
+            needs_mount,
+        );
         let frame = match frames.next_frame() {
             Ok(frame) => frame,
             Err(e) if timed_out(&e) && last_frame.elapsed() < SITL_SILENCE => continue,
@@ -310,6 +331,7 @@ fn serve_sitl(
         last_frame = Instant::now();
         autopilot = learn_vehicle(&frame, &stats.control).or(autopilot);
         stats.position.note(&frame, autopilot, last_frame);
+        stats.landing.note_mount(&frame, autopilot, last_frame);
         stats
             .sitl_bytes
             .fetch_add(frames.source_mut().take(), Ordering::Relaxed);
@@ -323,7 +345,19 @@ fn serve_sitl(
     set_writer(writer, None);
     stats.control.forget_autopilot();
     stats.position.forget();
+    stats.landing.forget();
     error
+}
+
+/// The only place a `LANDING_TARGET` reaches the autopilot: the newest sighting, if the control target
+/// and the policy allow it (`landing`), written under the connection's lock like any control frame.
+fn send_landing_target(writer: &SitlWriter, stats: &VehicleStats) {
+    let now = Instant::now();
+    let height = stats.position.fresh(now).map(|p| p.rel_alt_mm);
+    let target = stats.control.target();
+    if let Some(frame) = stats.landing.next_frame(now, target, height) {
+        write_to_sitl(&frame, writer, &Flow::default());
+    }
 }
 
 /// Takes the vehicle type from the autopilot's own heartbeat (a type the gate does not know
@@ -368,10 +402,17 @@ impl Probe {
         writer: &SitlWriter,
         control: &ControlStats,
         needs_position: bool,
+        needs_mount: bool,
     ) {
         let Some((system, component)) = autopilot else {
             return;
         };
+        let mount = needs_mount
+            .then(|| landing::mount_request(system, component))
+            .flatten();
+        if let Some(frame) = mount {
+            write_to_sitl(&frame, writer, &Flow::default());
+        }
         if let Some(frame) = self.next_request(system, component, control, needs_position) {
             write_to_sitl(&frame, writer, &Flow::default());
         }

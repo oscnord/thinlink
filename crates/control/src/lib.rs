@@ -18,6 +18,7 @@ pub mod frame;
 pub mod gate;
 pub mod ground;
 pub mod identity;
+pub mod landing;
 pub mod params;
 pub mod position;
 pub mod sighting;

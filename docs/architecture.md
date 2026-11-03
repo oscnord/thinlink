@@ -24,6 +24,7 @@ This describes how the system is built and what each part does today. The plan a
 - Camera ingest and the webcam demo: the sender's `ingest` source decodes RTP/H.264 from a camera outside the container (`sat-teleop-media`, source-address filter and decode timing included) before the stamp, `ingest_net` carries it to the vehicle's one port and nothing else, `just demo <profile>` streams the Mac's camera through it and `just ingest-check` grades it with a test-pattern feeder (`docs/demo.md`).
 
 - Real hardware (never run on hardware, `docs/pi.md`, `docs/deploy.md`): the sender's V4L2 (USB webcam, MJPEG or YUYV) and libcamera sources, the choice of `v4l2h264enc` with `x264enc` as the fallback and `sat-teleop-vehicle probe-camera` (`sat-teleop-media`); the vehicle's autopilot link over a serial port (`sat-teleop-control`); provisioning, a systemd unit, config templates and compose files for a Pi, a relay server and a ground machine, and the recipes that build and package them (`deploy/`).
+- Landing on a marker (off by default, `docs/real-vehicle.md`): a fourth branch of the sender's tee hands greyscale frames to a tag thread in the vehicle app (`sat-teleop-detect`, the reference AprilTag detector), whose finds become `LANDING_TARGET` messages for ArduPilot's precision landing when the policy allows (`sat-teleop-policy::landing`, `sat-teleop-control::landing`; "Landing on a marker" below). `lab check sim-landing` flies it in the simulation.
 - SITL identification: control frames reach the autopilot only after it has identified itself as a simulator, and a normal flight controller build gets only the read-only traffic ("Control protocol").
 
 ## Layers and ownership
@@ -232,6 +233,21 @@ sender: source -> tee -> scale/rate -> I420 rung -> soften outside RegionCell::r
 - Softening. Off by default; `[region] soften_factor` of the vehicle config turns it on (2 to 4). Blocks of `soften_factor` x `soften_factor` luma pixels (half of it on chroma) outside every region are replaced by their average, on the rung-sized frame, before the stamp is drawn: the stamp, and so the age, is exact. A region keeps its place across rung changes because it is a fraction of the picture.
 - Bound. Softening takes detail away and adds none; at most `max_regions` regions are kept, and when they cover more than `max_area_percent` of the picture nothing is softened. A region envelope carries no MAVLink frame (one that does is refused `not_allowlisted`) and nothing in this feature adds a path to the autopilot. Cost on emulated hardware (`docs/measurement.md`, "Regional video check"): softening a frame took 0.8 to 2.0 ms at p95, one detector run 29.4 ms at p95 at the Pi 4's limits, and the vehicle process used 4.8 to 6.6 % of a host core with the box tracked.
 - Measured: cost is small (above), but on the lab's test card softening did not gain: its SSIM changed by -0.016 to +0.003 pilot only, and the outside scored 0.005 to 0.042 below the plain picture one rung down at the top rung (`docs/measurement.md`, "Regional video check"). The V4L2 hardware encoder has no testbed path, so its gain is unmeasured.
+
+## Landing on a marker
+
+The pilot lands over a printed tag (tag36h11) and ArduPilot's precision landing steers the last metres. The vehicle only reports where the tag is; it never moves the copter, and the pilot chooses Land.
+
+```text
+sender tee -> (about tag_fps) greyscale, tag_width wide -> tag thread (vehicle app, AprilTag detector) -> Landing::see
+bridge loop: Landing::next_frame (policy::landing::decide) -> LANDING_TARGET -> autopilot (the connection's lock)
+autopilot: GIMBAL_DEVICE_ATTITUDE_STATUS of the first mount (asked for every 5 s while none is fresh, then streamed every 200 ms) -> Landing::note_mount
+```
+
+- The branch is leaky, one buffer, like the detector's, and drops its own frames; a slow tag thread gives fewer updates, never a slower picture. It is made only with `[landing] target = true`. The tag thread makes its detector itself (the C detector is not `Send`), looks for the one `tag_id`, takes no bit errors and no decimation, and finds nothing when that id is in the frame twice.
+- One sighting is held (latest only) and taken when judged: it is sent once or never. `decide` withholds it when the frame left the tee more than 500 ms ago, when the camera is more than 5 degrees from straight down (a fixed camera's `tilt_deg`, or the first mount's attitude from at most 500 ms before or after the sighting), when the picture's top is more than 5 degrees from the nose (the mount's yaw is relative to the airframe), or when there is no fresh height above home. The pilot hears the camera and height reasons once as a `STATUSTEXT` warning. In real mode it is also dropped while control goes to the logging sink (`mavlink.control.target` is not `autopilot`), so the required parameters (`PLND_*`) were read back before any target goes out.
+- The message carries angles from the picture's centre from the camera's field of view (`atan((2x - 1) tan(hfov / 2))`, and the same down the picture scaled by its shape), the line of sight to a flat ground at the autopilot's height as `distance`, `MAV_FRAME_BODY_FRD` (ArduPilot turns it by the whole attitude, so the camera must move with the airframe, as a fixed camera and the servo mount in neutral do), `position_valid` 0 and `time_usec` on the vehicle's monotonic clock from its start, which ArduPilot's jitter correction maps into its own (`libraries/AP_RTC/JitterCorrection.cpp`).
+- Nothing is sent without a fresh sighting: a lost tag ends the messages and ArduPilot's own lost-target logic takes over (`PLND_STRICT`, `docs/real-vehicle.md`).
 
 ## Deployments
 

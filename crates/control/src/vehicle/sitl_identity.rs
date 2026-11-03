@@ -256,7 +256,7 @@ fn bench() -> Bench {
         offered_percent: 250,
         essential_bytes_per_s: 200,
     };
-    let stats = Arc::new(VehicleStats::new(&config));
+    let stats = Arc::new(VehicleStats::new(&config, None));
     let (started, running) = mpsc::channel();
     {
         let stats = Arc::clone(&stats);

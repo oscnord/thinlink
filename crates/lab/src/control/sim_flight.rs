@@ -8,6 +8,7 @@
 //! that falls is a failure, not a state to repair.
 
 pub mod follow;
+pub mod landing;
 pub mod mission;
 
 use std::net::SocketAddr;

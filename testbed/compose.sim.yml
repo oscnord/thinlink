@@ -7,6 +7,8 @@ services:
   # loopback on UDP 9002 (JSON, lockstep).
   sitl:
     image: localhost/sat-teleop-sitl-copter:dev
+    environment:
+      SITL_EXTRA_PARMS: ${SITL_EXTRA_PARMS:-}
 
   # Gazebo (physics and camera, headless). Its camera streams RTP/H.264 to the companion's ingest
   # address in the same namespace, so the video enters the sender through the ingest and then the

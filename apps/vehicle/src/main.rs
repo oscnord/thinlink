@@ -27,6 +27,7 @@ use sat_teleop_media::region::{
     RegionSettings, Regional, RegionalSnapshot, validate_soften_factor,
 };
 use sat_teleop_media::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
+use sat_teleop_media::tags::TagFeed;
 use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
 use sat_teleop_policy::budget::{Budget, wire_bytes};
 use sat_teleop_policy::follow::{Follower, Luma, Step};
@@ -37,6 +38,7 @@ use sat_teleop_policy::sighting::Seen;
 
 #[cfg(feature = "testbed")]
 mod hooks;
+mod landing;
 mod process;
 
 #[derive(Parser)]
@@ -105,6 +107,8 @@ struct Config {
     detector: Option<DetectorConfig>,
     /// Block size of the softened area outside the pilot's box and the people found; 1 is off.
     soften_factor: u8,
+    /// The landing target switch, when it is on.
+    landing: Option<landing::On>,
     /// Whether the pilot's box is followed from frame to frame.
     follow: bool,
 }
@@ -233,6 +237,7 @@ struct Metrics {
     regional: RegionalSnapshot,
     process: Option<process::ProcessSnapshot>,
     mavlink: VehicleSnapshot,
+    tag: Option<landing::TagSnapshot>,
     adapt: AdaptMetrics,
     retained: Option<RetainedMetrics>,
     retrieval: RetrievalSnapshot,
@@ -303,6 +308,7 @@ fn run(
         detail,
         detector,
         soften_factor,
+        landing: landing_on,
         follow,
     } = load(config)?;
     let token = tokens
@@ -346,7 +352,24 @@ fn run(
         .map(|settings| open_store(settings, sender.snapshot.is_some()))
         .transpose()?
         .map(Arc::new);
-    let bridge = Arc::new(VehicleStats::new(&mavlink));
+    let tag_feed = landing_on
+        .as_ref()
+        .map(|on| TagFeed::new(on.fps, on.width))
+        .transpose()?;
+    let bridge = Arc::new(VehicleStats::new(
+        &mavlink,
+        landing_on.as_ref().map(|on| on.setup),
+    ));
+    let tag_stats = Arc::new(landing::TagStats::default());
+    if let (Some(feed), Some(on)) = (&tag_feed, &landing_on) {
+        let (feed, bridge, tag_stats, id) = (
+            Arc::clone(feed),
+            Arc::clone(&bridge),
+            Arc::clone(&tag_stats),
+            on.tag_id(),
+        );
+        thread::spawn(move || landing::find_tags(&feed, id, &bridge, &tag_stats));
+    }
     let adaptation = Arc::new((AdaptStats::default(), Health::default()));
     let (snapshots, writer_queue) = sync_channel(WRITER_QUEUE);
     if let Some(retained) = &retained {
@@ -405,7 +428,7 @@ fn run(
         let (video, regional) = (Arc::clone(&video), Arc::clone(&regional));
         thread::spawn(move || {
             supervise(&video.health, || {
-                sender::run(&sender, &video, &regional, &snapshots)
+                sender::run(&sender, &video, &regional, tag_feed.as_ref(), &snapshots)
             });
         });
     }
@@ -478,6 +501,7 @@ fn run(
         regional: regional.snapshot(),
         process: process::snapshot(),
         mavlink: bridge.snapshot(),
+        tag: landing_on.as_ref().map(|_| tag_stats.snapshot()),
         adapt: AdaptMetrics {
             state: adaptation.0.snapshot(),
             health: adaptation.1.snapshot(),
@@ -707,6 +731,20 @@ fn load(path: &Path) -> Result<Config> {
     }
     let soften_factor = validate_soften_factor(region.soften_factor.unwrap_or(1))
         .with_context(|| format!("{} has an invalid [region] table", path.display()))?;
+    let camera: landing::CameraConfig = table
+        .remove("camera")
+        .map(toml::Value::try_into)
+        .transpose()
+        .with_context(|| format!("{} has an invalid [camera] table", path.display()))?
+        .unwrap_or_default();
+    let landing_config: landing::LandingConfig = table
+        .remove("landing")
+        .map(toml::Value::try_into)
+        .transpose()
+        .with_context(|| format!("{} has an invalid [landing] table", path.display()))?
+        .unwrap_or_default();
+    let landing = landing::resolve(&camera, &landing_config, &mavlink)
+        .with_context(|| format!("{} has an invalid landing target setup", path.display()))?;
     let sender: SenderConfig = table
         .try_into()
         .with_context(|| format!("{} is not a sender config", path.display()))?;
@@ -724,6 +762,7 @@ fn load(path: &Path) -> Result<Config> {
         detector: region.detector,
         follow: region.follow,
         soften_factor,
+        landing,
     })
 }
 
@@ -874,6 +913,90 @@ mod tests {
         );
         assert!(with(", kinds = [\"tank\"]").is_err());
         assert!(with(", kinds = []").is_err());
+    }
+
+    #[test]
+    fn the_landing_target_is_off_unless_the_config_names_a_camera_and_turns_it_on() {
+        let base = config("deploy/vehicle/vehicle.toml");
+        let real = |require: &str| {
+            let mode = format!("[mavlink]\nmode = \"real\"\nrequire = [{require}]\n");
+            base.replacen("[mavlink]", &mode, 1)
+        };
+        let precland = r#"
+            { name = "PLND_ENABLED", type = "int8", value = 1 },
+            { name = "PLND_TYPE", type = "int8", value = 1 },
+            { name = "PLND_YAW_ALIGN", type = "real32", value = 0 },
+            { name = "PLND_STRICT", type = "int8", value = @STRICT@ },
+            { name = "PLND_ALT_MIN", type = "real32", value = 0 },
+            { name = "PLND_ALT_MAX", type = "real32", value = 0 },"#;
+        let on = "\n[landing]\ntarget = true\n";
+        let down = "\n[camera]\nhfov_deg = 60\ntilt_deg = -90\n";
+        let cases = [
+            ("default", base.clone(), true, false),
+            ("on, fixed camera", format!("{base}{on}{down}"), true, true),
+            ("on without a camera", format!("{base}{on}"), false, false),
+            (
+                "on, gimbal",
+                format!("{base}{on}\n[camera]\nhfov_deg = 60\n"),
+                true,
+                true,
+            ),
+            (
+                "a tilt that is not an angle",
+                format!("{base}{on}\n[camera]\nhfov_deg = 60\ntilt_deg = -120\n"),
+                false,
+                false,
+            ),
+            (
+                "a fixed camera tilted off straight down",
+                format!("{base}{on}\n[camera]\nhfov_deg = 60\ntilt_deg = -80\n"),
+                false,
+                false,
+            ),
+            (
+                "no frames to search",
+                format!("{base}{on}tag_fps = 0\n{down}"),
+                false,
+                false,
+            ),
+            (
+                "real mode with retry and a straight-down landing",
+                format!("{}{on}{down}", real(&precland.replace("@STRICT@", "1"))),
+                true,
+                true,
+            ),
+            (
+                "real mode with a gimbal, whose frame is verified only in the simulation",
+                format!(
+                    "{}{on}\n[camera]\nhfov_deg = 60\n",
+                    real(&precland.replace("@STRICT@", "1"))
+                ),
+                false,
+                false,
+            ),
+            (
+                "real mode that holds with no end",
+                format!("{}{on}{down}", real(&precland.replace("@STRICT@", "2"))),
+                false,
+                false,
+            ),
+            (
+                "real mode without the parameters",
+                format!(
+                    "{}{on}{down}",
+                    real(r#"{ name = "FS_GCS_ENABLE", type = "int8", value = 5 }"#)
+                ),
+                false,
+                false,
+            ),
+        ];
+        for (name, text, loads, enabled) in cases {
+            let loaded = load_text(&text);
+            assert_eq!(loaded.is_ok(), loads, "{name}: {:?}", loaded.as_ref().err());
+            if let Ok(config) = loaded {
+                assert_eq!(config.landing.is_some(), enabled, "{name}");
+            }
+        }
     }
 
     #[test]

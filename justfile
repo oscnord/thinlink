@@ -515,6 +515,27 @@ sim-mission profile="geo" switch="on" *args:
     just sim-up "$config" || exit 2
     just lab-check sim-mission {{profile}} {{args}}
 
+# Landing on a marker (`sim-landing`): a tag on the ground a few metres from the take-off point, the
+# copter hovering about 2 m from above it, then Land. <run> is `on` (switch on, camera straight down:
+# lands on the tag), `off` (camera down, switch off) or `forward` (switch on, camera 20 degrees below
+# the horizon): neither of the last two may land on the tag. The simulator's precision landing
+# parameters and the camera's pitch come from SITL_EXTRA_PARMS (testbed/Containerfile.sitl-copter).
+sim-landing run="on" profile="lan" *args:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export SIM=1
+    precland=/sitl/sat-teleop-copter-precland.parm
+    down=/sitl/sat-teleop-copter-camera-down.parm
+    case "{{run}}" in
+        on) config=vehicle-sim-landing.toml; extra="$precland,$down" ;;
+        off) config=vehicle-sim.toml; extra="$precland,$down" ;;
+        forward) config=vehicle-sim-landing.toml; extra="$precland" ;;
+        *) echo "run is on, off or forward" >&2; exit 2 ;;
+    esac
+    export VEHICLE_CONFIG="$config" SITL_EXTRA_PARMS="$extra"
+    just sim-up "$config" || exit 2
+    just lab-check sim-landing {{profile}} {{args}}
+
 # Remove the sat-teleop containers and networks; nothing outside the project. On a Podman machine,
 # netavark#1497 leaves a forwarding = 0 sysctl drop-in behind for each internal network, which
 # would later disable forwarding on any network reusing the bridge name; sat-teleop's are removed.

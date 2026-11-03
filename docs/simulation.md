@@ -111,6 +111,12 @@ The copter's gimbal camera is rendered headless by Gazebo at 640x360 and 15 fram
 
 Gazebo runs in the vehicle's network namespace and the ingest accepts only the vehicle's own address, so the picture cannot reach the ground except through the link.
 
+## Landing on a marker
+
+The world has a printed AprilTag on the ground 6 m east and 3 m south of the take-off point. `just sim-landing <on|off|forward> <profile>` (`lab check sim-landing`) takes the copter off, steers it on `MANUAL_CONTROL` to a point 2.3 m from above the tag, holds it there, watches the vehicle for 4 s and switches to Land. `on` has the landing target on and the gimbal's camera straight down (`testbed/sat-teleop-copter-camera-down.parm`); `off` has the switch off; `forward` has the switch on and the camera at its usual 20 degrees below the horizon. The autopilot's precision landing is set by `testbed/sat-teleop-copter-precland.parm` (the values real mode requires, `docs/real-vehicle.md`, plus `PLND_LAG` 0.15 for the simulated camera path; its measured age is about 0.06 s, see `docs/measurement.md`, "Landing tag").
+
+With the target on and the camera down the check requires the last target sent to agree within 3 degrees with the angles the tag has from the copter's position, height and heading (`aim_matches_geometry`), and the copter to land within 1 m of the tag's centre. Otherwise it requires no target sent, the pilot told (with the switch on) and the copter landed more than 1 m away after the autopilot's pause. The runs are in `docs/measurement.md`, "Landing tag".
+
 ## Resources
 
 The Podman machine has 2 GiB and no GPU, so Gazebo renders in software (Mesa llvmpipe) and the world is kept lean: no shadows, no GUI services, 21 models, one grass texture. Measured next to the testbed:

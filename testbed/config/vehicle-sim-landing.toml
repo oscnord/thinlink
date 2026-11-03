@@ -1,0 +1,55 @@
+# The same companion with its video from the simulated flight's camera (just sim-up): Gazebo streams
+# RTP/H.264 from the vehicle's own namespace, so its datagrams come from the ingest address itself
+# (docs/simulation.md). Everything else is as in vehicle-ingest.toml.
+#
+# This one has the landing target switch on (`just sim-landing`): the gimbal camera's picture is 2.0 rad
+# (114.59 degrees) wide, from `horizontal_fov` of its model, and the gimbal's attitude is read back from
+# the autopilot, so there is no tilt_deg.
+destination = "10.77.0.1:5004"
+feedback = "10.77.0.1:5006"
+debug_hooks = true
+detail = "http://10.77.0.1:8080"
+
+[source]
+kind = "ingest"
+listen = "192.168.234.10:5700"
+# Only the vehicle itself: the simulator runs in this namespace and nothing else may feed the sender.
+from = ["192.168.234.10"]
+
+[snapshot]
+fps = 1
+quality = 90
+
+[store]
+dir = "/snapshots"
+max_bytes = 524288
+max_age_s = 120
+min_free_bytes = 4194304
+gap_after_ms = 1500
+
+# Regional video (see vehicle.toml): off unless this is set.
+# [region]
+# soften_factor = 2
+# detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+
+[camera]
+hfov_deg = 114.59
+
+[landing]
+target = true
+tag_id = 0
+
+[mavlink]
+autopilot = "tcpout:127.0.0.1:5760"
+relay = "10.77.0.1:14550"
+control = "10.77.0.2:7700"
+# This vehicle's name. Every signed control message is made for it, so one signed for another vehicle
+# is refused; the ground adapter's config (testbed/config/ground.toml) names the same one.
+vehicle_id = "testbed"
+controllers = [
+    { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
+    { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
+]
+# The testbed's containers read one kernel clock, so its bound is 0 (docs/measurement.md, "Clock
+# assumption"). A vehicle on its own clock says "chrony".
+clock = "shared"

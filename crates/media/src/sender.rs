@@ -30,6 +30,7 @@ use crate::camera::{self, CameraFormat, CaptureClock, Encoder, EncoderWish};
 use crate::ingest::{self, IngestSnapshot, IngestStats};
 use crate::region::{DetectorFrame, FollowFrame, Regional};
 use crate::stages::{InEncoder, Marks, Stage, StageSnapshot};
+use crate::tags::{TagFeed, TagFrame};
 use crate::{
     Health, HealthSnapshot, MediaError, Running, Traffic, TrafficSnapshot, failure, luma_geometry,
     unix_ms,
@@ -618,13 +619,14 @@ pub fn run(
     config: &SenderConfig,
     stats: &Arc<SenderStats>,
     regional: &Arc<Regional>,
+    tags: Option<&Arc<TagFeed>>,
     snapshots: &SyncSender<Snapshot>,
 ) -> Result<(), MediaError> {
     let rung = stats
         .requested()
         .ok_or(MediaError::Missing("requested rung"))?;
     rung.validate()?;
-    let (pipeline, handles) = build(config, rung, stats, regional, snapshots)?;
+    let (pipeline, handles) = build(config, rung, stats, regional, tags, snapshots)?;
     let running = Running(pipeline);
     let _attached = stats.attach(handles);
     running.set(gst::State::Playing)?;
@@ -651,6 +653,7 @@ fn build(
     rung: Rung,
     stats: &Arc<SenderStats>,
     regional: &Arc<Regional>,
+    tags: Option<&Arc<TagFeed>>,
     snapshots: &SyncSender<Snapshot>,
 ) -> Result<(gst::Pipeline, Handles), MediaError> {
     let (mut head, ingest) = source(&config.source, &stats.ingest)?;
@@ -725,6 +728,12 @@ fn build(
     if let Some(input) = regional.detector_input() {
         let mut branch = vec![head.last().cloned().ok_or(MediaError::Missing("tee"))?];
         branch.extend(detector_branch(input, regional)?);
+        pipeline.add_many(branch.iter().skip(1))?;
+        gst::Element::link_many(&branch)?;
+    }
+    if let Some(feed) = tags {
+        let mut branch = vec![head.last().cloned().ok_or(MediaError::Missing("tee"))?];
+        branch.extend(tag_branch(feed)?);
         pipeline.add_many(branch.iter().skip(1))?;
         gst::Element::link_many(&branch)?;
     }
@@ -1253,6 +1262,77 @@ fn offer_to_detector(regional: &Regional, sample: &gst::Sample) {
             rgb,
         });
     }
+}
+
+/// The landing marker's branch after the tee: frames thinned to the tag rate and copied as they enter
+/// a leaky queue of one buffer, scaled to the feed's width as greyscale and handed to the tag thread
+/// by an appsink that drops what it cannot take. Like the detector's, it never holds the live
+/// frames back.
+fn tag_branch(feed: &Arc<TagFeed>) -> Result<Vec<gst::Element>, MediaError> {
+    let queue = gst::ElementFactory::make("queue")
+        .property_from_str("leaky", "downstream")
+        .property("max-size-buffers", 1u32)
+        .property("max-size-bytes", 0u32)
+        .property("max-size-time", 0u64)
+        .build()?;
+    copy_frames(&queue, feed.fps())?;
+    let width = i32::try_from(feed.width()).map_err(|e| MediaError::Config(e.to_string()))?;
+    let grey = gst::ElementFactory::make("capsfilter")
+        .property(
+            "caps",
+            gst::Caps::builder("video/x-raw")
+                .field("format", "GRAY8")
+                .field("width", width)
+                .build(),
+        )
+        .build()?;
+    let sink = gst_app::AppSink::builder()
+        .max_buffers(1)
+        .drop(true)
+        .sync(false)
+        .build();
+    let feed = Arc::clone(feed);
+    sink.set_callbacks(
+        gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                if let Some(frame) = tag_frame(&sample) {
+                    feed.offer(frame);
+                }
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+    Ok(vec![
+        queue,
+        gst::ElementFactory::make("videoscale").build()?,
+        gst::ElementFactory::make("videoconvert").build()?,
+        grey,
+        sink.upcast(),
+    ])
+}
+
+/// The greyscale rows of `sample` without the padding `GStreamer` may add to each.
+fn tag_frame(sample: &gst::Sample) -> Option<TagFrame> {
+    let at = Instant::now();
+    let info = gst_video::VideoInfo::from_caps(sample.caps()?).ok()?;
+    let (width, height) = (
+        usize::try_from(info.width()).ok()?,
+        usize::try_from(info.height()).ok()?,
+    );
+    let stride = usize::try_from(*info.stride().first()?).ok()?;
+    let map = sample.buffer()?.map_readable().ok()?;
+    let mut luma = Vec::with_capacity(width.checked_mul(height)?);
+    for row in 0..height {
+        let start = row.checked_mul(stride)?;
+        luma.extend_from_slice(map.as_slice().get(start..start.checked_add(width)?)?);
+    }
+    Some(TagFrame {
+        at,
+        width: info.width(),
+        height: info.height(),
+        luma,
+    })
 }
 
 /// Thins the frames entering `element` to about `fps` a second and replaces each one it keeps with

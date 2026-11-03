@@ -51,8 +51,9 @@ impl Announcer {
                     component_id: component,
                     sequence: self.sequence,
                 };
-                sent =
-                    frame(header, &status_text(sighting)).filter(|f| cap.take_bulk(now, f.size()));
+                let text = status_text(sighting);
+                sent = status_frame(header, MavSeverity::MAV_SEVERITY_INFO, &text)
+                    .filter(|f| cap.take_bulk(now, f.size()));
                 sent.is_some()
             });
         if sent.is_some() {
@@ -63,9 +64,10 @@ impl Announcer {
     }
 }
 
-fn frame(header: MavHeader, text: &str) -> Option<Frame> {
+/// A `STATUSTEXT` of `severity` as a frame to send up from `header`'s identity.
+pub(crate) fn status_frame(header: MavHeader, severity: MavSeverity, text: &str) -> Option<Frame> {
     let message = MavMessage::STATUSTEXT(STATUSTEXT_DATA {
-        severity: MavSeverity::MAV_SEVERITY_INFO,
+        severity,
         text: text.into(),
         ..STATUSTEXT_DATA::default()
     });

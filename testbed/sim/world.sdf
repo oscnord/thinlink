@@ -65,6 +65,11 @@
       <uri>model://hatchback</uri>
       <pose degrees="true">-5.0 9.0 0 0 0 20</pose>
     </include>
+    <!-- An AprilTag on the ground, 6 m east and 3 m south of the take-off point, for the landing target. -->
+    <include>
+      <uri>model://landing_tag</uri>
+      <pose degrees="true">6.0 -3.0 0.02 0 0 0</pose>
+    </include>
     <model name="landing_pad"><static>true</static><pose degrees="true">0 10.0 0.01 0 0 0</pose><link name="l">
       <visual name="disc"><geometry><cylinder><radius>1.6</radius><length>0.02</length></cylinder></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual>
       <visual name="h_left"><pose>-0.5 0 0.02 0 0 0</pose><geometry><box><size>0.25 1.6 0.02</size></box></geometry><material><ambient>0.1 0.1 0.1 1</ambient><diffuse>0.1 0.1 0.1 1</diffuse></material></visual>

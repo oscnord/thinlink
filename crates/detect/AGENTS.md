@@ -10,6 +10,10 @@ NanoDet-Plus-m 320, Apache-2.0, run with `tract-onnx` (pure Rust, nothing native
 - Output: `[1, 2125, 112]`: the cells of the stride 8, 16, 32 and 64 maps, then per cell 80 class scores (already 0..1; person is class 0, bicycle 1, car 2, motorcycle 3, bus 5, truck 7, boat 8) and four sides of 8 box-edge logits. `decode` turns a cell into a box with the softmax-weighted bin times the stride, clamps it to the picture and drops a box under 1 % of a side.
 - `Detector::load` takes the kinds to find; a cell is the best scoring of them at or over `min_score`, and `Detector::detect` returns each detection with its kind. It runs on a frame of exactly the input size; any other size, or a failed run, finds nothing. Overlapping boxes (IoU over 0.5) keep the better score.
 
+## Tag
+
+`TagDetector` finds one tag36h11 tag (the wanted id) in a luma frame with `AprilRobotics`' reference detector (BSD-2-Clause) through the `apriltag` crate, which builds the C library with `cmake` (in the build image, `testbed/Containerfile`). The detector holds a raw pointer and is not `Send`: make it on the thread that uses it. It takes no bit errors and no decimation, and finds nothing when the wanted id is in the frame twice. Its choice over the pure-Rust `kornia-apriltag` is in `docs/measurement.md`, "Landing tag".
+
 ## Checks
 
 ```sh

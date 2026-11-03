@@ -2,6 +2,7 @@
 //! frame already scaled to the model's input size; it never sees the video pipeline.
 
 mod decode;
+mod tag;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::NormRect;
 
 pub use self::decode::non_max_suppression;
+pub use self::tag::{TagDetector, TagFound};
 
 /// Boxes overlapping a better one by more than this are the same object.
 const NMS_IOU: f32 = 0.5;
@@ -32,6 +34,8 @@ pub struct Detection {
 pub enum DetectError {
     #[error("cannot load the detector model {path}: {cause}")]
     Load { path: PathBuf, cause: String },
+    #[error("cannot start the tag detector: {0}")]
+    Tag(String),
 }
 
 pub struct Detector {
