@@ -231,6 +231,9 @@ pub enum Decision {
     },
     /// The queue has drained: send video again, starting with a keyframe.
     Resume,
+    /// The first answer after a fall for silence: the link is back, and what the relay holds of
+    /// the video from before cannot be decoded, so the next frame is a keyframe.
+    LinkBack,
 }
 
 /// What the controller makes of its recent answers, for metrics.
@@ -343,6 +346,8 @@ pub struct Controller {
     grown_base: bool,
     /// The rung before a fall to the floor that no queue led to, until the link is back.
     fallen_from: Option<usize>,
+    /// Fallen for silence and no answer since.
+    silent: bool,
     /// Round trips that arrived before this do not count towards the base.
     base_from_ms: u64,
     last_base_shift_ms: Option<u64>,
@@ -378,6 +383,7 @@ impl Controller {
             draining: false,
             grown_base: false,
             fallen_from: None,
+            silent: false,
             base_from_ms: 0,
             last_base_shift_ms: None,
             samples: VecDeque::new(),
@@ -411,6 +417,14 @@ impl Controller {
     /// least every probe interval, so silence is noticed.
     pub fn observe(&mut self, feedback: Option<Feedback>, now_ms: u64) -> Decision {
         let fresh = feedback.filter(|f| self.record(f, now_ms));
+        let back = fresh.is_some() && std::mem::take(&mut self.silent);
+        match self.decide(fresh, now_ms) {
+            Decision::Hold if back => Decision::LinkBack,
+            decision => decision,
+        }
+    }
+
+    fn decide(&mut self, fresh: Option<Feedback>, now_ms: u64) -> Decision {
         if self.stale(now_ms) {
             return self.fall(now_ms);
         }
@@ -784,6 +798,7 @@ impl Controller {
     /// last answer showed a deep queue, the silence is an outage, which says nothing about the
     /// uplink: the rung before it and the capacity are kept for when the link is back.
     fn fall(&mut self, now_ms: u64) -> Decision {
+        self.silent = true;
         let queued = self
             .samples
             .back()
@@ -1081,7 +1096,7 @@ mod tests {
         loss_low_percent: 2,
         loss_high_percent: 10,
         stale_after_ms: 3000,
-        outage_recovery_ms: 2000,
+        outage_recovery_ms: 1000,
         dwell_ms: 10_000,
         min_change_interval_ms: 2000,
         capacity_hold_ms: 30_000,
@@ -1131,6 +1146,7 @@ mod tests {
         To(usize, Reason),
         Drain(usize),
         Resume,
+        LinkBack,
     }
 
     #[expect(
@@ -1188,6 +1204,7 @@ mod tests {
                 Decision::Step { to, reason } => Some((at, Change::To(to, reason))),
                 Decision::Drain { to } => Some((at, Change::Drain(to))),
                 Decision::Resume => Some((at, Change::Resume)),
+                Decision::LinkBack => Some((at, Change::LinkBack)),
                 Decision::Hold => None,
             })
             .collect()
@@ -1272,7 +1289,7 @@ mod tests {
                     Decision::Step { to, .. } => (rung, paused) = (to, false),
                     Decision::Drain { to } => (rung, paused) = (to, true),
                     Decision::Resume => paused = false,
-                    Decision::Hold => {}
+                    Decision::Hold | Decision::LinkBack => {}
                 }
                 decisions.push((at, decision));
             }
@@ -1326,7 +1343,7 @@ mod tests {
 
     #[test]
     fn walks_the_ladder_down_fast_and_up_slowly() {
-        use Change::{Drain, Resume, To};
+        use Change::{Drain, LinkBack, Resume, To};
         use Reason::{BaseShift, Healthy, Loss, QueueDelay, Recovered, Stale};
         let cases: &[Case] = &[
             (
@@ -1526,14 +1543,19 @@ mod tests {
             ),
             (
                 // The last answer before the outage (to the probe sent at 4.75 s) arrives at
-                // 5.35 s; the first after it at 12.6 s, and 2 s healthy bring back the rung before.
+                // 5.35 s; the first after it at 12.6 s asks for a keyframe, and 1 s healthy brings
+                // back the rung before.
                 "an outage falls to the floor and comes back to the rung before it",
                 0,
                 Link::Script(|sent| {
                     (!(5000..12_000).contains(&sent)).then_some((600, 100, 0, ROOMY))
                 }),
                 16_000,
-                &[(8500, To(3, Stale)), (14_600, To(0, Recovered))],
+                &[
+                    (8500, To(3, Stale)),
+                    (12_600, LinkBack),
+                    (13_600, To(0, Recovered)),
+                ],
             ),
             (
                 // A queue growing two seconds a second, then silence: no outage but a queue too
@@ -1549,6 +1571,7 @@ mod tests {
                 &[
                     (6350, Drain(1)),
                     (9500, To(3, Stale)),
+                    (12_600, LinkBack),
                     (22_600, To(2, Healthy)),
                 ],
             ),
@@ -1609,7 +1632,8 @@ mod tests {
                     (71_850, To(1, Healthy)),
                     (118_350, To(0, Healthy)),
                     (143_500, To(3, Stale)),
-                    (152_600, To(0, Recovered)),
+                    (150_600, LinkBack),
+                    (151_600, To(0, Recovered)),
                 ],
             ),
             (
@@ -1632,12 +1656,14 @@ mod tests {
                 100_000,
                 &[
                     (8500, To(3, Stale)),
-                    (17_600, To(1, Recovered)),
-                    (18_682, Drain(2)),
-                    (21_850, Resume),
-                    (78_850, To(1, Healthy)),
+                    (15_600, LinkBack),
+                    (16_600, To(1, Recovered)),
+                    (17_682, Drain(2)),
+                    (20_850, Resume),
+                    (77_850, To(1, Healthy)),
                     (82_500, To(3, Stale)),
-                    (91_850, To(2, Recovered)),
+                    (89_699, LinkBack),
+                    (90_850, To(2, Recovered)),
                 ],
             ),
             (
@@ -1678,7 +1704,8 @@ mod tests {
                     (11_682, Drain(2)),
                     (14_850, Resume),
                     (23_500, To(3, Stale)),
-                    (32_600, To(2, Recovered)),
+                    (30_600, LinkBack),
+                    (31_600, To(2, Recovered)),
                     (71_850, To(1, Healthy)),
                     (74_530, To(2, QueueDelay)),
                     (194_600, To(1, Healthy)),

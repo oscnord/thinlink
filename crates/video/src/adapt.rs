@@ -700,6 +700,7 @@ impl<U, C, R> Adapter<'_, U, C, R> {
             } => self.pace(to, at_ms),
             Decision::Step { to, reason } => self.change(to, reason.name(), false, at_ms),
             Decision::Drain { to } => self.change(to, "drain", true, at_ms),
+            Decision::LinkBack => self.sender.want_keyframe(),
             Decision::Resume => {
                 self.sender.set_draining(false);
                 let rungs = &self.setup.rungs;

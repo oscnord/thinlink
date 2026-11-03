@@ -110,8 +110,8 @@ loss_high_percent = 10
 stale_after_ms = 3000
 # Healthy this long after a fall that no deep queue led to: back to the rung before it, or the best
 # below it that the capacity measured at the last cut carries;
-# like a climb, cut within a dwell it doubles that rung's hold.
-outage_recovery_ms = 2000
+# like a climb, cut within a dwell it doubles that rung's hold. Four answers at the base.
+outage_recovery_ms = 1000
 # Healthy this long before one rung up.
 dwell_ms = 10000
 # At most one change this often, a deep queue aside.

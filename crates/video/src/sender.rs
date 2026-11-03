@@ -43,6 +43,8 @@ const RTP_PAYLOAD_TYPE: u32 = 96;
 const MAX_WIDTH: u16 = 3840;
 const MAX_HEIGHT: u16 = 2160;
 const MAX_FPS: u16 = 60;
+/// A camera keeps its mode whatever the rung: the test pattern is held to one rate too.
+const TEST_PATTERN_FPS: i32 = 30;
 const MAX_SNAPSHOT_FPS: u16 = 10;
 /// Snapshot frames waiting for their identity or their JPEG.
 const SNAPSHOT_IN_FLIGHT: usize = 4;
@@ -499,6 +501,11 @@ impl SenderStats {
         self.draining.store(draining, Ordering::Relaxed);
     }
 
+    /// The next frame is a keyframe.
+    pub fn want_keyframe(&self) {
+        self.keyframe_wanted.store(true, Ordering::Relaxed);
+    }
+
     /// Holds the video to `bytes_per_s` on the wire from now on; `None` lets it go as it comes.
     pub fn set_pace(&self, bytes_per_s: Option<u32>) {
         self.pace.store(bytes_per_s.unwrap_or(0), Ordering::Relaxed);
@@ -889,7 +896,8 @@ fn test_pattern(
     pattern: TestPattern,
 ) -> Result<Vec<gst::Element>, MediaError> {
     let pattern = pattern.source(true)?;
-    let mut size = gst::Caps::builder("video/x-raw");
+    let mut size = gst::Caps::builder("video/x-raw")
+        .field("framerate", gst::Fraction::new(TEST_PATTERN_FPS, 1));
     if let Some(width) = width {
         size = size.field("width", i32::from(width));
     }
