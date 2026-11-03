@@ -541,10 +541,17 @@ struct Told {
     lost: u64,
     target: Option<NormRect>,
     at_ms: u64,
+    /// The sequence number of the last region envelope applied.
+    region_seq: u64,
+    /// The sequence number named by the lost message, and when the follow ended.
+    lost_seq: u64,
+    lost_at_ms: Option<u64>,
 }
 
 /// The followed box is told to the holder when it moves, no more often than this.
 const FOLLOW_REPORT_EVERY_MS: u64 = 250;
+/// The lost message is repeated on that tick for this long.
+const LOST_REPEAT_FOR_MS: u64 = 3000;
 
 impl Endpoint<'_> {
     /// Writes `frame` to SITL once it is identified, otherwise to the logging sink; false when SITL
@@ -697,6 +704,7 @@ impl Endpoint<'_> {
             applied,
         };
         if envelope.kind == Kind::Region {
+            self.told.region_seq = envelope.seq;
             return self.set_region(region, from);
         }
         let Some(carried) = carried else {
@@ -889,16 +897,27 @@ impl Endpoint<'_> {
                 lost,
                 target: None,
                 at_ms: now,
+                lost_seq: self.told.region_seq,
+                lost_at_ms: Some(now),
+                ..self.told
             };
         }
         let Some(holder) = self.holder else {
             return;
         };
+        let lost_message = ToGround::Lost {
+            region_seq: self.told.lost_seq,
+        };
         if ended {
-            return self.reply(holder, &ToGround::Lost);
+            return self.reply(holder, &lost_message);
+        }
+        let due = now.saturating_sub(self.told.at_ms) >= FOLLOW_REPORT_EVERY_MS;
+        let following = self.stats.region.follow_order().is_some();
+        if due && !following && lost_is_repeated(self.told.lost_at_ms, now) {
+            self.told.at_ms = now;
+            return self.reply(holder, &lost_message);
         }
         let target = self.stats.region.followed();
-        let due = now.saturating_sub(self.told.at_ms) >= FOLLOW_REPORT_EVERY_MS;
         if target.is_none() || target == self.told.target || !due {
             return;
         }
@@ -996,6 +1015,11 @@ fn txn(kind: Kind) -> Option<TxnId> {
 
 fn ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Whether the lost message is still repeated at `now`, given when the follow ended.
+fn lost_is_repeated(lost_at_ms: Option<u64>, now: u64) -> bool {
+    lost_at_ms.is_some_and(|at| now.saturating_sub(at) < LOST_REPEAT_FOR_MS)
 }
 
 #[cfg(test)]
@@ -1223,9 +1247,20 @@ mod tests {
 
         rig.stats.region.follow_lost(generation, Lost::Score);
         endpoint.tick();
-        assert!(matches!(rig.reply(), Some(ToGround::Lost)));
+        assert!(matches!(
+            rig.reply(),
+            Some(ToGround::Lost { region_seq: 1 })
+        ));
         endpoint.tick();
-        assert!(rig.reply().is_none(), "told once");
+        assert!(
+            rig.reply().is_none(),
+            "not again before the next report tick"
+        );
+        thread::sleep(Duration::from_millis(FOLLOW_REPORT_EVERY_MS + 50));
+        endpoint.tick();
+        let repeated = std::iter::from_fn(|| rig.reply())
+            .find(|reply| !matches!(reply, ToGround::Challenge { .. }));
+        assert!(matches!(repeated, Some(ToGround::Lost { region_seq: 1 })));
         rig.nothing_reached_the_autopilot();
     }
 

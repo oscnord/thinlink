@@ -372,20 +372,27 @@ impl Controller {
             let wanted = camera.tracking();
             let now_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
             if region_needed(wanted, sent, last_sent_ms, now_ms, every_ms)
-                && self.send_region(wanted)
+                && let Some(seq) = self.send_region(wanted)
             {
+                camera.box_sent(seq, wanted);
                 (sent, last_sent_ms) = (wanted, Some(now_ms));
             }
             thread::sleep(TRACKING_TICK);
         }
     }
 
-    /// Sends `region` (none clears it) in a region envelope; false without the lease and a fresh
-    /// challenge.
-    fn send_region(&self, region: Option<NormRect>) -> bool {
+    /// Sends `region` (none clears it) in a region envelope and returns its sequence number; none
+    /// without the lease and a fresh challenge.
+    fn send_region(&self, region: Option<NormRect>) -> Option<u64> {
         let mut state = self.lock();
         state.expire(self.limits);
-        state.fresh(self.limits) && self.wrap(&mut state, Kind::Region, None, region)
+        if !(state.fresh(self.limits) && self.wrap(&mut state, Kind::Region, None, region)) {
+            return None;
+        }
+        let Lease::Held(held) = &state.lease else {
+            return None;
+        };
+        Some(held.next_seq.region)
     }
 
     /// Binds the control socket and handles the vehicle's messages until the process ends.
@@ -523,9 +530,9 @@ impl Controller {
                     camera.applied(region, Instant::now());
                 }
             }
-            ToGround::Lost => {
+            ToGround::Lost { region_seq } => {
                 if let Some(camera) = self.camera.get() {
-                    camera.lost();
+                    camera.lost(region_seq);
                 }
             }
             ToGround::Rejected { reason, .. } => state.vehicle_rejected(reason),

@@ -85,6 +85,8 @@ struct State {
     counts: CameraCounts,
     /// The box a station asked for.
     tracking: Option<NormRect>,
+    /// The sequence number of the first region envelope that carried `tracking`; none until sent.
+    box_from: Option<u64>,
     /// The box the vehicle last said it applies, and when it said so.
     applied: Option<(NormRect, Instant)>,
     /// The box a retained crop was last fetched for, and when it arrived.
@@ -149,11 +151,26 @@ impl Camera {
         Some(reported.map_or(drawn, |(rect, _)| rect))
     }
 
-    /// The vehicle lost the box it followed: nothing is tracked any more, so the station's
-    /// tracking status goes idle and nothing is sent to the vehicle until a new box is drawn.
-    pub fn lost(&self) {
+    /// Region envelope `seq` carrying `sent` went to the vehicle: the first to carry the box asked
+    /// for, if none did. Ignored when the pilot has drawn another box since `sent` was read.
+    pub fn box_sent(&self, seq: u64, sent: Option<NormRect>) {
         let mut state = self.lock();
+        if state.tracking == sent {
+            state.box_from.get_or_insert(seq);
+        }
+    }
+
+    /// The vehicle lost the box it followed, as of its region envelope `region_seq`: if that is the
+    /// box still tracked, nothing is tracked any more, so the station's tracking status goes idle
+    /// and nothing is sent to the vehicle until a new box is drawn. A message for an older box, or
+    /// one that reaches a box not yet sent, changes nothing.
+    pub fn lost(&self, region_seq: u64) {
+        let mut state = self.lock();
+        if !lost_is_for_box(state.box_from, region_seq) {
+            return;
+        }
         state.tracking = None;
+        state.box_from = None;
         state.applied = None;
         state.detail = None;
     }
@@ -232,6 +249,7 @@ impl Camera {
             }
             MavCmd::MAV_CMD_CAMERA_STOP_TRACKING => {
                 state.tracking = None;
+                state.box_from = None;
                 state.detail = None;
                 return Some(MavResult::MAV_RESULT_ACCEPTED);
             }
@@ -247,6 +265,7 @@ impl Camera {
         };
         if state.tracking != Some(rect) {
             state.detail = None;
+            state.box_from = None;
         }
         state.tracking = Some(rect);
         Some(MavResult::MAV_RESULT_ACCEPTED)
@@ -350,6 +369,12 @@ fn command(message: &MavMessage) -> Option<(MavCmd, Params)> {
         MavMessage::COMMAND_INT(c) => Some((c.command, [c.param1, c.param2, c.param3, c.param4])),
         _ => None,
     }
+}
+
+/// Whether a lost message naming region envelope `region_seq` is for the box tracked, which first
+/// went out in `box_from`: a box sent after that envelope, or not sent yet, is never the one lost.
+fn lost_is_for_box(box_from: Option<u64>, region_seq: u64) -> bool {
+    box_from.is_some_and(|from| region_seq >= from)
 }
 
 fn is_tracking_status(message_id: f32) -> bool {
@@ -684,6 +709,19 @@ mod tests {
     }
 
     #[test]
+    fn a_lost_message_drops_only_the_box_it_was_for() {
+        // (first envelope of the tracked box, envelope the lost message names, dropped)
+        for (box_from, region_seq, dropped) in [
+            (Some(3), 3, true),
+            (Some(3), 5, true),
+            (Some(6), 5, false),
+            (None, 5, false),
+        ] {
+            assert_eq!(lost_is_for_box(box_from, region_seq), dropped);
+        }
+    }
+
+    #[test]
     fn crops_follow_the_reported_box_and_a_lost_one_stops_the_tracking() {
         let camera = camera();
         let (_, now) = camera.lock().heard.expect("the vehicle was heard");
@@ -702,7 +740,8 @@ mod tests {
         );
 
         camera.detail_received(drawn, now);
-        camera.lost();
+        camera.box_sent(1, Some(drawn));
+        camera.lost(1);
         assert_eq!(camera.target(now), None);
         let state = camera.lock();
         assert_eq!(served_box(state.applied, TTL, state.detail, now), None);

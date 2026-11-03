@@ -136,8 +136,13 @@ pub enum ToGround {
         region: Option<NormRect>,
     },
     /// The vehicle followed the pilot's box and lost it. The box is gone: the ground stops
-    /// tracking, so tracking status goes idle and the pilot draws another.
-    Lost,
+    /// tracking, so tracking status goes idle and the pilot draws another. Sent again for a few
+    /// seconds, so one dropped datagram does not leave the old box tracked; `region_seq` is the
+    /// last region envelope the vehicle applied before the loss, so the ground ignores it once it
+    /// holds a box sent after that.
+    Lost {
+        region_seq: u64,
+    },
     /// A refused liveness, continuous or region envelope, lease release or unreadable datagram; `seq` when
     /// it could be read.
     Rejected {
