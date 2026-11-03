@@ -1,55 +1,55 @@
 # sat-teleop
 
-Live video over satellite and cellular links, as fresh as the link allows, with every frame's age shown on the screen. The picture adapts to the link as it changes, and old, frozen or unverifiable video never reads as live. Flying a drone remotely with QGroundControl is what it is built and tested for.
+Low-latency video from a drone over satellite and cellular links, shown in QGroundControl with the age of each frame.
 
-A bench prototype. You can run all of it on one computer: a test setup emulates the link between the drone and the ground (satellite-like delay, jitter, loss, narrow bandwidth, outages) and a simulated autopilot stands in for the drone. The drone side is written for a Raspberry Pi (see "Running it on real hardware").
+It is a prototype. Everything runs on one machine: a container testbed emulates the link (delay, jitter, loss, narrow bandwidth, outages) and ArduPilot SITL stands in for the drone. The drone side targets a Raspberry Pi.
 
-## The video path
+## Video
 
-- **Every frame labelled with its age.** The drone stamps each frame as its software receives it, so the age is known all the way to the screen (the camera's own delay is not included). Each frame reads `LIVE`, `LOW RATE`, `STALE`, `FROZEN`, `NO VIDEO` or `AGE UNKNOWN` with that age. QGroundControl finds the video as the drone's camera without setup, and any RTSP player can watch it too.
-- **Adaptive to the link.** The drone watches the link. When delay builds or the link narrows, it makes the picture smaller or slower and pauses briefly to empty a backlog rather than let video queue; when the link recovers it climbs back. Control and telemetry keep their share of the link.
-- **Retained detail.** The drone keeps a full-size snapshot every second. Ask for one from a few seconds ago, whole or cropped: it is sent only while live video and control leave room, and is labelled as historical. Snapshots taken while the ground could not hear the drone are kept, with where the drone was, until you fetch them (`just detail-outage` lists them).
-- **Measured, not assumed.** Each check measures one behaviour under an emulated link profile and grades it against a stored budget; `docs/measurement.md` and `docs/latency.md` have the method and every number.
+- The drone stamps each frame. The ground labels it `LIVE`, `LOW RATE`, `STALE`, `FROZEN`, `NO VIDEO` or `AGE UNKNOWN`, with its age. The camera's own delay is not included.
+- When delay builds or the link narrows, the drone lowers the resolution or frame rate, and raises them again when the link recovers. Control and telemetry keep a share of the link.
+- The drone keeps a full-size snapshot every second. You can fetch one from the last few seconds, whole or cropped, when the link has room. Snapshots taken while the link was down are kept until fetched (`just detail-outage` lists them).
+- QGroundControl finds the video as the drone's camera. Any RTSP player works too.
 
-The video path is two crates that know nothing about drones: `sat-teleop-video-core` (the link logic) and `sat-teleop-video` (the GStreamer pipelines). Everything below builds on them.
+The video code is in `crates/video-core` and `crates/video`, with nothing drone-specific in it.
 
-## Built on it: flying a drone
+## Drone
 
-- **A prediction of where the camera will point.** While the picture is live, the ground draws a dashed ring where the camera's centre will be by the time a command sent now takes effect, and a dashed horizon line, so the pilot can steer ahead of the delay. The ring is hollow and the age label stays, so old video never passes for current.
-- **Telemetry** from the autopilot to QGroundControl through the link, within a fixed budget.
-- **Control under a lease.** Only one listed controller may command the drone at a time. Every command must be fresh and runs at most once. When commands stop, the drone stops.
-- **Missions out of reach (off by default).** With a switch on the drone, the lease holder can upload a waypoint mission from QGroundControl's Plan view, and a copter that loses the link inside its geofence finishes it by the autopilot's own failsafe. `docs/real-vehicle.md` says what that requires and whose decision it is.
-- **Detail where you point.** Draw a box in QGroundControl and the ground fetches a full-resolution crop of it from the drone's snapshots every few seconds and shows the newest as a labelled `DETAIL` inset, only while the live picture is current. The drone can follow what you boxed as it moves, and drops the box rather than guess when it loses it. A small detector on the drone can box the people and vehicles it finds, and tells QGroundControl who it saw while out of reach once the link returns (`just sightings` lists them).
-- **Landing on a marker.** Off by default: with a camera that looks straight down, the drone can tell the autopilot where a printed AprilTag is, and you choose Land over it.
+- A dashed ring shows where the camera will point by the time a command sent now takes effect.
+- Telemetry reaches QGroundControl within a fixed share of the link.
+- One controller at a time holds a lease. Commands must be fresh and run at most once; when they stop, the drone stops.
+- Waypoint missions can continue on the autopilot's failsafe when the link is lost (off by default, see `docs/real-vehicle.md`).
+- Draw a box in QGroundControl to get a full-resolution crop of it as an inset. The drone can follow what you boxed. An on-board detector marks people and vehicles and reports what it saw while out of reach (`just sightings` lists them).
+- Precision landing on a printed AprilTag (off by default).
 
-Measured in the test setup:
+## Numbers
 
 | | `lan` | `geo` |
 |---|---|---|
 | Video age at the ground | 7 ms | 320 ms |
 | Command acknowledged | 18 ms | 620 ms |
 
-Paused video reads `STALE` within 0.65 s. When the uplink drops from 512 to 128 kbit/s, the oldest frame was 1.1 s old (0.32 s of that is the link's own delay) and the picture was back to its normal age within 7.4 s. `docs/measurement.md` has the method and every number.
+Paused video shows `STALE` within 0.65 s. When the uplink drops from 512 to 128 kbit/s, the oldest frame is 1.1 s old (0.32 s of that is the link's own delay) and the age is back to normal within 7.4 s. Method and all numbers: `docs/measurement.md`.
 
 ## Quickstart
 
-You need Rust (through rustup; `rust-toolchain.toml` pins the version), Podman with a compose provider, `just`, and QGroundControl to watch and fly. Docker works too: set `CONTAINER_ENGINE=docker`.
+You need Rust (through rustup; `rust-toolchain.toml` pins the version), Podman with a compose provider, `just`, and QGroundControl. Docker works too with `CONTAINER_ENGINE=docker`.
 
 ```sh
-just lab-up                    # build the images, make keys, start the test setup
+just lab-up                    # build the images, make keys, start the testbed
 just lab-check boot geo        # check the emulated link; results go to results/<run-id>/
 just lab-check skeleton geo    # the live video under geo
 just lab-check qgc-status geo  # the labelled video and the camera under geo
 just lab-down                  # stop and remove it
 ```
 
-For development, `just check` runs format, lint and tests in a container, and `just gate-full` runs every scenario.
+`just check` runs format, lint and tests in a container. `just gate-full` runs every scenario.
 
-## Watching and flying in QGroundControl
+## QGroundControl
 
-Start QGroundControl on the same computer while the test setup runs; it connects to the simulated drone by itself. Turn on Low Latency Mode in Application Settings, Video.
+Start QGroundControl on the same machine while the testbed runs; it connects by itself. Turn on Low Latency Mode in Application Settings, Video.
 
-To arm and drive from QGroundControl, give it the control lease first:
+To arm and drive, take the control lease first:
 
 ```sh
 just take-control
@@ -57,27 +57,25 @@ just control-status
 just release-control
 ```
 
-Two ways to watch without the labels, for a lower delay or a quick look:
+To watch without the labels:
 
-- Direct RTSP: turn the camera component off as described in `docs/qgc.md`, run `just lab-up`, set Video Source to "RTSP Video Stream" in QGroundControl and use `rtsp://127.0.0.1:8554/live`.
-- Any player: `ffplay -rtsp_transport tcp -fflags nobuffer -flags low_delay rtsp://127.0.0.1:8554/live`.
-
-`docs/qgc.md` has the details and what QGroundControl can and cannot do here.
+- In QGroundControl: turn the camera component off (`docs/qgc.md`), run `just lab-up`, set Video Source to "RTSP Video Stream" and use `rtsp://127.0.0.1:8554/live`.
+- With any player: `ffplay -rtsp_transport tcp -fflags nobuffer -flags low_delay rtsp://127.0.0.1:8554/live`.
 
 ## Demo with the Mac's camera
 
-See your own camera in QGroundControl after the delay, loss and limited bandwidth of a simulated link:
+Your own camera through an emulated link:
 
 ```sh
 just demo lan      # or geo, lte-good, ...
 just demo-stop
 ```
 
-You need `ffmpeg` (`brew install ffmpeg`), and the first run asks to let your terminal use the camera. Start QGroundControl and the picture appears with its age, for example `LIVE 0.33 s` under `geo`. `just video-hook pause` shows how stale video is marked. `docs/demo.md` has the rest.
+Needs `ffmpeg` (`brew install ffmpeg`); the first run asks for camera access. The picture appears in QGroundControl with its age, for example `LIVE 0.33 s` under `geo`. `just video-hook pause` shows how stale video is marked. More in `docs/demo.md`.
 
-## Fly a simulated drone
+## Simulated drone
 
-Fly a quadcopter in a simulated world from QGroundControl, with its camera coming through the emulated link:
+A quadcopter in a simulated world, its camera coming through the emulated link:
 
 ```sh
 just sim-up          # the first run builds large images
@@ -85,48 +83,46 @@ just impair geo      # optional: pick the link
 just take-control    # then fly it in QGroundControl, with a gamepad or the virtual joystick
 ```
 
-If the control stops the drone brakes and holds; if the ground side goes away it lands. It needs about 1.5 GB of memory in the Podman machine. `just lab-up` brings the rover back. `docs/simulation.md` covers gamepad setup, which flight modes suit which link, and how it was measured. The first time QGroundControl meets the quadcopter after the rover it shows its first-run Preferences dialog (firmware, vehicle and units); fill it in once.
+If control stops, the drone brakes and holds; if the ground side goes away, it lands. It needs about 1.5 GB of memory in the Podman machine. `just lab-up` brings the rover back. The first time QGroundControl sees the quadcopter after the rover, fill in its first-run Preferences dialog once. Gamepad setup and flight modes per link: `docs/simulation.md`.
 
 ## Retained detail
-
-To look at something you saw a few seconds ago:
 
 ```sh
 just lab-up
 id=$(just detail-request 10 0.25,0.25,0.5,0.5)   # 10 seconds ago, the middle quarter
-just detail-fetch "$id" crop.jpg                 # saves the JPEG and says which frame it is
+just detail-fetch "$id" crop.jpg                 # saves the JPEG and prints its capture time and age
 ```
 
-`detail-fetch` prints the frame's capture time and age. `docs/architecture.md` ("Retained detail") explains how it works.
+How it works: `docs/architecture.md`, "Retained detail".
 
-## Running it on real hardware
+## Real hardware
 
-The files to set up a Raspberry Pi as the drone, a small public server as the relay and a laptop as the ground station are in `deploy/`, with a step-by-step guide and a checklist for the first bench tests (props off) in `docs/deploy.md` and `docs/pi.md`. A Pi Zero 2 W is the smallest target and a Pi 4 the recommended one. Follow the checklist on the first run.
+`deploy/` has the files for a Raspberry Pi as the drone, a small public server as the relay and a laptop as the ground station. `docs/deploy.md` and `docs/pi.md` walk through the setup and a bench checklist (props off). A Pi 4 is recommended; a Pi Zero 2 W is the smallest target.
 
-Control reaches a real flight controller only in real mode, which is off by default, and only while its safety checks hold: the flight controller is not a simulator, every control command is signed by your ground computer's key (the relay server cannot make one), the failsafe and geofence settings you listed are what the flight controller reports, and the drone's clock is known to be accurate. If any check fails the drone refuses control and says which. Whether and where you may fly is your decision and your regulator's. `docs/real-vehicle.md` has the setup, the settings and a pre-flight checklist.
+Control reaches a real flight controller only in real mode, which is off by default, and only while its checks hold: the flight controller is not a simulator, every command is signed by your ground computer's key, the failsafe and geofence parameters match what you listed, and the drone's clock is accurate. If a check fails, the drone refuses control and says which. `docs/real-vehicle.md` has the setup and a pre-flight checklist.
 
 ## Limitations
 
-- **A sudden drop in the uplink can briefly refuse control.** Before the drone has measured the uplink, and when a narrow link such as `geo` suddenly carries much less, video can fill the uplink for about a second and the drone refuses commands that arrive late. The picture then says `LOW RATE` or `AGE UNKNOWN`, and the drone can brake or land by itself. See `docs/simulation.md` ("A filled uplink under geo") for what was measured.
-- **What you see is not authenticated.** Control commands are signed and the status and picture requests need a token, but the video, the telemetry and the drone's answers are not signed: a compromised relay server could show you a wrong picture or wrong readings, and could delay or drop your commands (it cannot forge them or take the control lease away from you). Keep the relay server secure.
-- **Clocks.** Video age needs both computers' clocks to be synchronised. The drone measures how accurate its clock is from chrony and tells the ground; the ground adds its own. If either is unknown the label reads `AGE UNKNOWN`. Real mode checks the clock only before it starts sending control; a clock lost later only changes the label.
-- **A stuck camera is only partly detected.** A USB camera that repeats its last frame is shown as frozen. Other cameras, and a driver that makes a repeated picture look new, still look live.
+- Right after start, or when the uplink suddenly narrows, video can fill it for about a second and late commands are refused. The drone may then brake or land by itself, and the picture reads `LOW RATE` or `AGE UNKNOWN`. See `docs/simulation.md`, "A filled uplink under geo".
+- Video, telemetry and the drone's replies are not signed. A compromised relay can show a wrong picture or delay and drop commands, but cannot forge them or take the lease.
+- The age needs synchronised clocks. The drone reports its clock accuracy from chrony; if either side's is unknown, the label reads `AGE UNKNOWN`. Real mode checks the clock only before it starts sending control.
+- A USB camera that repeats its last frame shows as frozen. Other stuck cameras can still look live.
 
 ## Documentation
 
-- [docs/latency.md](docs/latency.md): how old the picture and the commands are on each kind of link, where the time goes, and the settings for the lowest delay.
+- [docs/latency.md](docs/latency.md): picture and command age per link, where the time goes, settings for the lowest delay.
 - [docs/architecture.md](docs/architecture.md): how it is built and why.
-- [docs/measurement.md](docs/measurement.md): metrics, budgets and every measured number.
-- [docs/testbed.md](docs/testbed.md): the test setup, link profiles and checks.
-- [docs/qgc.md](docs/qgc.md): QGroundControl's connection, video, camera discovery and control.
+- [docs/measurement.md](docs/measurement.md): metrics, budgets and measured numbers.
+- [docs/testbed.md](docs/testbed.md): the testbed, link profiles and checks.
+- [docs/qgc.md](docs/qgc.md): QGroundControl's connection, video, camera and control.
 - [docs/demo.md](docs/demo.md): the Mac's camera over an emulated link.
 - [docs/simulation.md](docs/simulation.md): the simulated flight.
-- [docs/real-vehicle.md](docs/real-vehicle.md): real mode, its safety checks, the keys, clocks and parameters, and the pre-flight checklist.
-- [docs/deploy.md](docs/deploy.md): setting up the relay, the drone and the ground, and the bench checklist.
-- [docs/pi.md](docs/pi.md): the Raspberry Pi in detail.
-- [docs/development.md](docs/development.md): toolchain, builds, gates, code layout and adding a package.
+- [docs/real-vehicle.md](docs/real-vehicle.md): real mode, its checks, keys, clocks, parameters and pre-flight checklist.
+- [docs/deploy.md](docs/deploy.md): setting up the relay, the drone and the ground.
+- [docs/pi.md](docs/pi.md): the Raspberry Pi.
+- [docs/development.md](docs/development.md): toolchain, builds, gates and code layout.
 - [AGENTS.md](AGENTS.md): rules for contributors and coding agents.
 
 ## Licence
 
-Dual-licensed under the [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) licence, at your option.
+MIT or Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)).
