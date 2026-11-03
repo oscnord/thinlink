@@ -22,6 +22,7 @@ pub mod card;
 pub mod feedback;
 pub mod ingest;
 pub mod ingress;
+pub mod inset;
 pub mod metrics;
 pub mod output;
 pub mod receiver;
@@ -52,6 +53,8 @@ pub enum MediaError {
     Missing(&'static str),
     #[error(transparent)]
     Stamp(#[from] StampError),
+    #[error("the crop cannot be shown: {0}")]
+    Crop(String),
     #[error("invalid config: {0}")]
     Config(String),
     #[error("cannot serve metrics on {addr}: {reason}")]

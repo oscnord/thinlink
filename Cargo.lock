@@ -1718,6 +1718,7 @@ dependencies = [
  "gstreamer",
  "gstreamer-app",
  "gstreamer-video",
+ "image",
  "sat-teleop-policy",
  "serde",
  "serde_json",

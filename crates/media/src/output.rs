@@ -19,15 +19,18 @@ use gstreamer_video as gst_video;
 use serde::{Deserialize, Serialize};
 
 use sat_teleop_policy::freshness::{self, LabelDeadline, Link, Observed, State, Thresholds};
+use sat_teleop_policy::inset;
 use sat_teleop_policy::mark as draw_mark;
 use sat_teleop_policy::predict::{self, Inputs, Mark};
 use sat_teleop_policy::stamp::{self, CaptureMs, FrameId, StateStamp};
 
+use crate::inset::{DetailCell, Image};
 use crate::receiver::{self, Observation, Source};
 use crate::sender::Rung;
 use crate::stages::{Stage, StageSnapshot};
 use crate::{
-    DATA_PROBE, Health, HealthSnapshot, MediaError, Running, Traffic, luma_geometry, supervise,
+    DATA_PROBE, Health, HealthSnapshot, MediaError, Running, Traffic, luma_geometry,
+    plane_geometry, supervise,
 };
 
 /// Encoder threads: slices of one frame in parallel, without holding frames back.
@@ -49,6 +52,9 @@ const READABLE_WINDOW_FRAMES: usize = 240;
 const CADENCE_FRAMES: usize = 64;
 /// A frame's end offset when its state holds however late it leaves (`GST_BUFFER_OFFSET_NONE`).
 const NO_DEADLINE: u64 = u64::MAX;
+/// A frame's offset when it carries no inset; otherwise the inset's capture age in ms, for the
+/// label drawn next to it (`GST_BUFFER_OFFSET_NONE`).
+const NO_INSET: u64 = u64::MAX;
 /// The source is never stopped; the process ends instead.
 static NEVER: AtomicBool = AtomicBool::new(false);
 /// Output periods without a new frame before the last one is sent again. Above one, so a source
@@ -189,6 +195,7 @@ pub struct OutputStats {
     pushed: AtomicU64,
     repeated: AtomicU64,
     late: AtomicU64,
+    inset_frames: AtomicU64,
     states: StateCounts,
     state: Mutex<Option<State>>,
     rtp: Traffic,
@@ -223,6 +230,8 @@ pub struct OutputSnapshot {
     pub repeated: u64,
     /// Frames dropped on their way out because the state they show had stopped being true.
     pub late: u64,
+    /// Frames sent with the detail inset drawn in them.
+    pub inset_frames: u64,
     /// The state of the frame sent last; `null` before the first.
     pub state: Option<&'static str>,
     /// Frames sent, by state.
@@ -260,6 +269,7 @@ impl OutputStats {
             pushed: load(&self.pushed),
             repeated: load(&self.repeated),
             late: load(&self.late),
+            inset_frames: load(&self.inset_frames),
             state: self.state.lock().ok().and_then(|s| *s).map(State::name),
             states: StateCountsSnapshot {
                 live: load(&s.live),
@@ -298,7 +308,8 @@ impl OutputStats {
 
 /// Decodes the source and sends the output until the process ends, each pipeline restarted after
 /// a failure. `destinations` are `config.destinations`, resolved; `clock_bound` is read for every
-/// state it computes. With `predictive` the aim mark and the horizon are drawn into current frames.
+/// state it computes. With `predictive` the aim mark and the horizon are drawn into current frames;
+/// the newest crop in `detail` is drawn as an inset into current frames while it is young.
 pub fn run(
     config: &OutputConfig,
     destinations: &[SocketAddr],
@@ -306,6 +317,7 @@ pub fn run(
     stats: &Arc<OutputStats>,
     clock_bound: &dyn Fn() -> Option<u64>,
     predictive: Option<&Predictive>,
+    detail: &DetailCell,
 ) {
     let latest = Arc::new(Latest::default());
     let rung = config.encoding;
@@ -329,6 +341,7 @@ pub fn run(
         stats,
         clock_bound,
         predictive,
+        detail,
     };
     supervise(&stats.output, || output.run());
 }
@@ -382,6 +395,7 @@ struct Output<'a> {
     /// trusted and nothing is shown as live.
     clock_bound: &'a dyn Fn() -> Option<u64>,
     predictive: Option<&'a Predictive<'a>>,
+    detail: &'a DetailCell,
 }
 
 /// The output pipeline and the end the loop pushes into.
@@ -425,13 +439,19 @@ impl Output<'_> {
                 shown = shown_after(seen, state.state, &sample, shown);
             }
             repeat_after = change_ms.map_or(longest, |ms| longest.min(Duration::from_millis(ms)));
-            pipeline.push(
+            let drew_inset = pipeline.push(
                 shown.as_ref().unwrap_or(&slate),
                 state,
-                self.mark(state),
+                Decorations {
+                    mark: self.mark(state),
+                    inset: self.detail.current(last_push),
+                },
                 last_push,
                 change_ms,
             )?;
+            self.stats
+                .inset_frames
+                .fetch_add(u64::from(drew_inset), Ordering::Relaxed);
             self.stats.sent(state.state, repeat);
         }
     }
@@ -509,6 +529,15 @@ impl Output<'_> {
             .property("font-desc", "Sans Bold 20")
             .property("shaded-background", true)
             .build()?;
+        let inset_label = gst::ElementFactory::make("textoverlay")
+            .property_from_str("halignment", "right")
+            .property_from_str("valignment", "top")
+            .property("font-desc", "Sans Bold 20")
+            .property("shaded-background", true)
+            .property("xpad", pixels(inset::MARGIN_PX)?)
+            .property("ypad", pixels(inset::label_y(usize::from(rung.width)))?)
+            .property("silent", true)
+            .build()?;
         let clients: Vec<String> = self.destinations.iter().map(ToString::to_string).collect();
         let sink = gst::ElementFactory::make("multiudpsink")
             .property("clients", clients.join(","))
@@ -517,6 +546,7 @@ impl Output<'_> {
         let chain = [
             appsrc.clone().upcast(),
             overlay.clone(),
+            inset_label.clone(),
             gst::ElementFactory::make("x264enc")
                 .property_from_str("tune", "zerolatency")
                 .property_from_str("speed-preset", "ultrafast")
@@ -537,7 +567,7 @@ impl Output<'_> {
         gst::Element::link_many(&chain)?;
         let in_flight = Arc::new(Mutex::new(LabelDeadline::default()));
         let entered = Arc::new(Mutex::new(None));
-        label_each_frame(&overlay, video.clone(), &in_flight, &entered)?;
+        label_each_frame(&overlay, &inset_label, video.clone(), &in_flight, &entered)?;
         drop_late_frames(&sink, &in_flight, &entered, self.stats)?;
         Ok(Pipeline {
             running: Running(pipeline),
@@ -547,19 +577,28 @@ impl Output<'_> {
     }
 }
 
+/// What is drawn into a frame besides its stamps.
+struct Decorations {
+    mark: Option<Mark>,
+    /// The detail crop and its capture age in ms.
+    inset: Option<(Arc<Image>, u64)>,
+}
+
 impl Pipeline {
     /// Sends `frame` with `state` drawn below its stamp (the overlay reads it from there) and
-    /// `mark` drawn under the stamps, both before the overlay writes the label. The
-    /// state was decided at `decided_at` and holds for `holds_ms` more; the frame carries the
-    /// moment that ends, on the pipeline's clock, in its end offset.
+    /// the decorations: `mark` under the stamps, then the inset (if the picture is current and
+    /// the crop young: `inset::place`) with its age in the buffer's offset for the inset's label,
+    /// all before the overlays write their labels. The state was decided at `decided_at` and holds
+    /// for `holds_ms` more; the frame carries the moment that ends, on the pipeline's clock, in its
+    /// end offset. Returns whether the inset was drawn.
     fn push(
         &self,
         frame: &gst::Buffer,
         state: StateStamp,
-        mark: Option<Mark>,
+        decorations: Decorations,
         decided_at: Instant,
         holds_ms: Option<u64>,
-    ) -> Result<(), MediaError> {
+    ) -> Result<bool, MediaError> {
         let deadline = holds_ms
             .filter(|_| current(state.state))
             .zip(self.appsrc.current_running_time())
@@ -567,10 +606,16 @@ impl Pipeline {
                 (now + gst::ClockTime::from_mseconds(ms))
                     .saturating_sub(gst::ClockTime::from_nseconds(nanos(decided_at.elapsed())))
             });
+        let placed = decorations.inset.and_then(|(image, age_ms)| {
+            let picture = (self.video.width() as usize, self.video.height() as usize);
+            let placement = inset::place(state.state, age_ms, image.size(), picture)?;
+            Some((image, age_ms, placement))
+        });
         let mut buffer = frame.copy_deep()?;
         {
             let buffer = buffer.make_mut();
             buffer.set_offset_end(deadline.map_or(NO_DEADLINE, gst::ClockTime::nseconds));
+            buffer.set_offset(placed.as_ref().map_or(NO_INSET, |(_, age_ms, _)| *age_ms));
             buffer.set_pts(gst::ClockTime::NONE);
             buffer.set_dts(gst::ClockTime::NONE);
             buffer.set_duration(gst::ClockTime::NONE);
@@ -579,14 +624,25 @@ impl Pipeline {
             let geometry = luma_geometry(&frame)?;
             let plane = frame.plane_data_mut(0)?;
             stamp::draw_state(plane, geometry, state)?;
-            if let Some(Mark { aim, horizon }) = mark {
+            if let Some(Mark { aim, horizon }) = decorations.mark {
                 draw_mark::draw(plane, geometry, aim, horizon)?;
+            }
+            if let Some((image, _, placement)) = &placed {
+                for (index, component) in (0..3_u32).enumerate() {
+                    let geometry = plane_geometry(&frame, component)?;
+                    image.draw(
+                        index,
+                        frame.plane_data_mut(component)?,
+                        geometry,
+                        *placement,
+                    );
+                }
             }
         }
         self.appsrc
             .push_buffer(buffer)
             .map_err(|e| MediaError::Config(format!("the output refused a frame: {e:?}")))?;
-        Ok(())
+        Ok(placed.is_some())
     }
 }
 
@@ -642,14 +698,17 @@ fn drop_late_frames(
 /// Sets the overlay's text and colour from each frame's own state stamp, in the streaming thread
 /// just before the overlay draws that frame, so a label can never land on another frame. It also
 /// hands the frame's deadline to `drop_late_frames`: the encoder and the sender run in this same
-/// thread, one frame at a time with nothing held back (`zerolatency`).
+/// thread, one frame at a time with nothing held back (`zerolatency`). The inset's label is set
+/// the same way from the age in the frame's offset, and silent for a frame without an inset.
 fn label_each_frame(
     overlay: &gst::Element,
+    inset_label: &gst::Element,
     video: gst_video::VideoInfo,
     in_flight: &Arc<Mutex<LabelDeadline>>,
     entered: &Arc<Mutex<Option<Instant>>>,
 ) -> Result<(), MediaError> {
     let (in_flight, entered) = (Arc::clone(in_flight), Arc::clone(entered));
+    let inset_label = inset_label.clone();
     let pad = overlay
         .static_pad("video_sink")
         .ok_or(MediaError::Missing("overlay video sink pad"))?;
@@ -675,6 +734,12 @@ fn label_each_frame(
             let (text, colour) = label(state);
             overlay.set_property("text", text);
             overlay.set_property("color", colour);
+            let inset_age = Some(buffer.offset()).filter(|age| *age != NO_INSET);
+            inset_label.set_property("silent", inset_age.is_none());
+            if let Some(age_ms) = inset_age {
+                inset_label.set_property("text", inset::label(age_ms));
+                inset_label.set_property("color", colour);
+            }
         }
         gst::PadProbeReturn::Ok
     });
@@ -837,6 +902,11 @@ impl Tracker {
 fn newer(capture: CaptureMs, than: CaptureMs) -> bool {
     let ahead = capture.0.wrapping_sub(than.0);
     ahead != 0 && ahead < 1 << 31
+}
+
+/// A pixel count as the overlay's integer property.
+fn pixels(count: usize) -> Result<i32, MediaError> {
+    i32::try_from(count).map_err(|_| MediaError::Config(format!("{count} px is too large")))
 }
 
 fn nanos(duration: Duration) -> u64 {

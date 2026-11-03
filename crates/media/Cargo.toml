@@ -12,6 +12,7 @@ workspace = true
 gstreamer.workspace = true
 gstreamer-app.workspace = true
 gstreamer-video.workspace = true
+image.workspace = true
 sat-teleop-policy = { path = "../policy" }
 serde.workspace = true
 serde_json.workspace = true

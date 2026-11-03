@@ -11,11 +11,16 @@
 //! 2. tracking is stopped: the plain picture at the same rung;
 //! 3. the plain picture one rung down (the vehicle's test hook `POST /video/rung/1`).
 //!
+//! A fourth window, with the box tracked again, scores the detail inset the ground draws from the
+//! crops it fetches for the box (`detail`): the inset's SSIM against the card's region at full
+//! resolution, and the live picture's SSIM in the same region.
+//!
 //! The metrics are the box's SSIM with and without regional video and the gain, the SSIM outside
 //! the box against the rung below, and the share of local contrast kept outside the box relative
 //! to the rung below. `docs/measurement.md` defines them.
 
 mod card;
+mod detail;
 mod ssim;
 
 use std::fs;
@@ -35,7 +40,9 @@ use sat_teleop_media::receiver::Source;
 use sat_teleop_media::{Health, supervise};
 use sat_teleop_policy::stamp::plausible_age;
 
+use self::detail::Detail;
 use self::ssim::{Region, Scores};
+use crate::adaptation;
 use crate::budget::{self, Budget, Budgets};
 use crate::check::{self, Results, Verdict, percentile};
 use crate::client::AgentClient;
@@ -60,6 +67,13 @@ const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(60);
 /// A GEO round trip, the adapter's status interval and the vehicle's refresh, with margin.
 const TRACKING_DEADLINE: Duration = Duration::from_secs(20);
 const RUNG_DEADLINE: Duration = Duration::from_secs(20);
+/// From the box to the first frame with the inset: the ground asks every 4 s, and a crop crosses
+/// a GEO round trip several times (request, the vehicle's pickup, the chunks, the poll).
+const DETAIL_DEADLINE: Duration = Duration::from_secs(90);
+/// The inset must be in this share of the detail window's frames, or the window did not measure it.
+const MIN_INSET_SHARE: f64 = 0.9;
+/// The inset's SSIM must be this far above the live picture's in the same region.
+const MIN_DETAIL_GAIN: f64 = 0.05;
 const MIN_FRAMES: usize = 10;
 /// The ground's output adds its own hops to the vehicle's frame age (`qgc_status`).
 const OUTPUT_ALLOWANCE_MS: f64 = 100.0;
@@ -96,6 +110,7 @@ impl Settings {
             "duration_s": self.duration.as_secs_f64(),
             "score_every_nth_frame": SCORE_EVERY,
             "rung": self.rung,
+            "detail_deadline_s": DETAIL_DEADLINE.as_secs_f64(),
         })
     }
 }
@@ -106,6 +121,9 @@ struct Frame {
     at: Instant,
     age_ms: Option<f64>,
     scores: Scores,
+    /// SSIM of the detail inset's place in the frame and of the live picture's region, against the
+    /// card's region at full resolution.
+    detail: Option<(f64, f64)>,
 }
 
 /// The ground's output decoded and scored on its own threads.
@@ -116,7 +134,7 @@ struct Scorer {
 }
 
 impl Scorer {
-    fn start(source: Source, reference: Luma, region: Region) -> Self {
+    fn start(source: Source, reference: Luma, region: Region, detail: Detail) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let frames = Arc::new(Mutex::new(Vec::new()));
         let thread = {
@@ -152,6 +170,7 @@ impl Scorer {
                                     age_ms: plausible_age(observation.received_ms, stamp)
                                         .map(f64::from),
                                     scores,
+                                    detail: detail.scores(&luma),
                                 });
                             }
                             true
@@ -190,6 +209,9 @@ struct Window {
     outside_ssim: f64,
     outside_contrast: f64,
     age_p95_ms: Option<f64>,
+    /// Means of the inset's and the live picture's SSIM in the inset's region.
+    inset_ssim: Option<f64>,
+    live_ssim: Option<f64>,
 }
 
 #[expect(
@@ -204,6 +226,10 @@ fn summarise(frames: &[Frame]) -> Option<Window> {
     let mean = |f: fn(&Scores) -> f64| frames.iter().map(|x| f(&x.scores)).sum::<f64>() / n;
     let received: f64 = frames.iter().map(|x| x.scores.outside_std_received).sum();
     let reference: f64 = frames.iter().map(|x| x.scores.outside_std_reference).sum();
+    let details: Vec<(f64, f64)> = frames.iter().filter_map(|x| x.detail).collect();
+    let detail_mean = |pick: fn(&(f64, f64)) -> f64| {
+        (!details.is_empty()).then(|| details.iter().map(pick).sum::<f64>() / details.len() as f64)
+    };
     let mut ages: Vec<f64> = frames.iter().filter_map(|x| x.age_ms).collect();
     ages.sort_by(f64::total_cmp);
     Some(Window {
@@ -212,6 +238,8 @@ fn summarise(frames: &[Frame]) -> Option<Window> {
         outside_ssim: mean(|s| s.outside_ssim),
         outside_contrast: received / reference.max(f64::EPSILON),
         age_p95_ms: percentile(&ages, 95),
+        inset_ssim: detail_mean(|d| d.0),
+        live_ssim: detail_mean(|d| d.1),
     })
 }
 
@@ -225,6 +253,8 @@ pub fn run(
     let mut results = Results {
         thresholds: json!({
             "region_ssim_gain_above": 0.0,
+            "detail_ssim_gain_at_least": MIN_DETAIL_GAIN,
+            "inset_share_at_least": MIN_INSET_SHARE,
             "outside_ssim_vs_lower_rung_at_least": 0.0,
             "test_object_contrast_ratio_at_least": 1.0,
             "min_frames_per_window": MIN_FRAMES,
@@ -237,6 +267,8 @@ pub fn run(
     }
     let vehicle = AgentClient::new(&settings.vehicle_metrics);
     let ground = AgentClient::new(&settings.ground_metrics);
+    let settled = adaptation::settle_at_top(&vehicle);
+    adaptation::record_settled(&mut results, &settled);
     let Some(windows) = measure(&mut results, settings, &vehicle, &ground) else {
         return results;
     };
@@ -250,6 +282,10 @@ struct Measured {
     with: Window,
     without: Window,
     lower: Window,
+    /// The window with the box tracked and the inset drawn, and the share of its frames that had
+    /// the inset.
+    detail: Window,
+    inset_share: f64,
     /// The detector ran: its amber outlines are drawn inside the box and count against the card.
     detector_on: bool,
 }
@@ -275,8 +311,25 @@ fn measure(
             return None;
         }
     };
-    let region = region(&reference);
-    let scorer = Scorer::start(Source::Rtp(settings.output_listen), reference, region);
+    let card_luma = card::render();
+    let source_luma = card_luma
+        .get(..usize::from(SOURCE_SIZE.0) * usize::from(SOURCE_SIZE.1))
+        .unwrap_or_default();
+    let output = (usize::from(OUTPUT_SIZE.0), usize::from(OUTPUT_SIZE.1));
+    let source = (usize::from(SOURCE_SIZE.0), usize::from(SOURCE_SIZE.1));
+    let Some(detail) = Detail::new(source_luma, BOX, source, output) else {
+        let detail = "the inset has no room in the output, or the box has no crop";
+        results.record("inset_placed", Verdict::Incomplete, detail);
+        return None;
+    };
+    let mut region = region(&reference);
+    region.excluded = Some(detail.covered(output.0));
+    let scorer = Scorer::start(
+        Source::Rtp(settings.output_listen),
+        reference,
+        region,
+        detail,
+    );
     let measured = phases(results, settings, vehicle, ground, &scorer);
     scorer.finish();
     measured
@@ -312,6 +365,7 @@ fn region(reference: &Luma) -> Region {
             pixels(SCORED_ROWS.1, reference.height),
         ),
         margin: EDGE_MARGIN,
+        excluded: None,
     }
 }
 
@@ -355,6 +409,7 @@ fn phases(
     let mut run = Run {
         settings,
         vehicle,
+        ground,
         gcs,
         scorer,
         results,
@@ -369,12 +424,15 @@ fn phases(
     }
     let with = run.with_box()?;
     let without = run.without_box()?;
+    let (detail, inset_share) = run.with_detail()?;
     let lower = run.lower_rung()?;
     run.rung(TOP_RUNG);
     Some(Measured {
         with,
         without,
         lower,
+        detail,
+        inset_share,
         detector_on: run.detector_on,
     })
 }
@@ -382,6 +440,7 @@ fn phases(
 struct Run<'a> {
     settings: &'a Settings,
     vehicle: &'a AgentClient,
+    ground: &'a AgentClient,
     gcs: Gcs,
     scorer: &'a Scorer,
     results: &'a mut Results,
@@ -491,6 +550,50 @@ impl Run<'_> {
         Some(window)
     }
 
+    /// The box tracked again until the ground has drawn crops of it as an inset, then a window of
+    /// frames with the inset, and the share of the window's frames that had it. Tracking is
+    /// stopped after.
+    fn with_detail(&mut self) -> Option<(Window, f64)> {
+        let [x0, y0, x1, y1] = BOX;
+        self.camera_command(MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE, [x0, y0, x1, y1]);
+        let first = self.inset_frames();
+        let ground = self.ground;
+        let shown = self.gcs.pump_until(Instant::now() + DETAIL_DEADLINE, |_| {
+            ground_counter(ground, "/video/inset_frames").is_some_and(|now| Some(now) > first)
+        });
+        let detail = if shown {
+            "the ground fetched a crop of the box and drew it as an inset"
+        } else {
+            "no inset was drawn: no crop of the box reached the ground (is the job token mounted?)"
+        };
+        self.results.record("detail_shown", verdict(shown), detail);
+        if !shown {
+            return None;
+        }
+        let (inset_before, pushed_before) = (self.inset_frames(), self.pushed_frames());
+        let window = self.window("detail")?;
+        let drawn = increase(inset_before, self.inset_frames());
+        let sent = increase(pushed_before, self.pushed_frames());
+        self.camera_command(MavCmd::MAV_CMD_CAMERA_STOP_TRACKING, [0.0; 4]);
+        let idle = self.wait_status(false);
+        let share = drawn / sent.max(1.0);
+        let detail = if idle {
+            "the status went idle after STOP_TRACKING"
+        } else {
+            "the status stayed active after STOP_TRACKING"
+        };
+        self.results.record("detail_stopped", verdict(idle), detail);
+        idle.then_some((window, share))
+    }
+
+    fn inset_frames(&self) -> Option<u64> {
+        ground_counter(self.ground, "/video/inset_frames")
+    }
+
+    fn pushed_frames(&self) -> Option<u64> {
+        ground_counter(self.ground, "/video/pushed")
+    }
+
     fn without_box(&mut self) -> Option<Window> {
         self.camera_command(MavCmd::MAV_CMD_CAMERA_STOP_TRACKING, [0.0; 4]);
         let idle = self.wait_status(false);
@@ -576,6 +679,20 @@ impl Run<'_> {
     }
 }
 
+fn ground_counter(ground: &AgentClient, pointer: &str) -> Option<u64> {
+    check::counter(&check::get_json(ground, "/metrics"), pointer)
+}
+
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "frame counts stay far below 2^53"
+)]
+fn increase(before: Option<u64>, after: Option<u64>) -> f64 {
+    after
+        .zip(before)
+        .map_or(0.0, |(a, b)| a.saturating_sub(b) as f64)
+}
+
 /// The status names the box that was asked for.
 fn near_box(rect: [f32; 4]) -> bool {
     rect.iter().zip(BOX).all(|(a, b)| (a - b).abs() < 0.01)
@@ -629,15 +746,74 @@ fn grade(results: &mut Results, m: &Measured, skeleton: Option<&Budget>) {
         }
         results.record(name, verdict(holds), detail);
     }
-    age(results, m, skeleton);
+    age(
+        results,
+        "frame_age_within_skeleton_budget",
+        "frame_age_p95_ms",
+        m.with.age_p95_ms,
+        skeleton,
+    );
+    grade_detail(results, m, skeleton);
 }
 
-fn age(results: &mut Results, m: &Measured, skeleton: Option<&Budget>) {
-    let name = "frame_age_within_skeleton_budget";
+/// The inset must be drawn through the window, and be clearly closer to the card at full resolution
+/// than the live picture is in the same region, without the live frames getting older.
+fn grade_detail(results: &mut Results, m: &Measured, skeleton: Option<&Budget>) {
+    let (Some(inset), Some(live)) = (m.detail.inset_ssim, m.detail.live_ssim) else {
+        let detail = "no frame of the detail window had a score for the inset";
+        results.record("detail_ssim_gain", Verdict::Incomplete, detail);
+        return;
+    };
+    let gain = inset - live;
+    for (name, value) in [
+        ("detail_ssim_inset", inset),
+        ("detail_ssim_live", live),
+        ("detail_ssim_gain", gain),
+        ("inset_share", m.inset_share),
+    ] {
+        results.metrics.insert(name, value);
+    }
+    let rules = [
+        (
+            "inset_drawn_throughout",
+            m.inset_share >= MIN_INSET_SHARE,
+            format!(
+                "{:.0} % of the detail window's frames had the inset, at least {:.0} %",
+                m.inset_share * 100.0,
+                MIN_INSET_SHARE * 100.0
+            ),
+        ),
+        (
+            "detail_ssim_gain",
+            gain >= MIN_DETAIL_GAIN,
+            format!(
+                "{gain:+.4}: the inset {inset:.4} against the live picture {live:.4} in the box's region, at least {MIN_DETAIL_GAIN:+.2}"
+            ),
+        ),
+    ];
+    for (name, holds, detail) in rules {
+        results.record(name, verdict(holds), detail);
+    }
+    age(
+        results,
+        "detail_frame_age_within_skeleton_budget",
+        "detail_frame_age_p95_ms",
+        m.detail.age_p95_ms,
+        skeleton,
+    );
+}
+
+fn age(
+    results: &mut Results,
+    name: &'static str,
+    metric: &'static str,
+    p95: Option<f64>,
+    skeleton: Option<&Budget>,
+) {
     let limit = skeleton
         .and_then(|b| b.max.get("frame_age_p95_ms"))
         .copied();
-    let (Some(limit), Some(with)) = (limit, m.with.age_p95_ms) else {
+    let (Some(limit), Some(with)) = (limit, p95) else {
         results.record(
             name,
             Verdict::Incomplete,
@@ -645,11 +821,11 @@ fn age(results: &mut Results, m: &Measured, skeleton: Option<&Budget>) {
         );
         return;
     };
-    results.metrics.insert("frame_age_p95_ms", with);
+    results.metrics.insert(metric, with);
     let allowed = limit + OUTPUT_ALLOWANCE_MS;
     results.record(
         name,
         verdict(with <= allowed),
-        format!("p95 {with:.0} ms with the box, at most {allowed:.0} ms (skeleton {limit:.0} ms plus the output's hops)"),
+        format!("p95 {with:.0} ms, at most {allowed:.0} ms (skeleton {limit:.0} ms plus the output's hops)"),
     );
 }

@@ -25,6 +25,10 @@ The ground's freshness output draws what it shows into each frame, so the lab ca
 
 `predict::aim` and `predict::horizon` turn the autopilot's newest attitude into pixels with the camera's horizontal field of view, and `predict::mark` decides whether to draw at all: only for `Live` or `LowRate` with a known age. They return `None` for an attitude older than `MAX_ATTITUDE_AGE_MS` (1 s), a field of view outside 0 to 180 degrees and non-finite input, and clamp the aim to the picture. `mark::draw` puts a dashed hollow ring and a dashed line into the luma plane, below the stamp rows, which it never touches. Never fill the ring or draw solid lines, and never draw for a picture that is not current: the mark must not pass for part of the scene or make old video look live. Time arrives as arguments (`now_ms`, `lead_ms`).
 
+## Detail inset (`inset`)
+
+`inset::place(state, age_ms, inset_size, picture)` decides where the pilot's detail inset goes and whether it shows: only for `Live` or `LowRate` and a crop under `MAX_AGE_MS` (30 s) old, at the top right below the stamp rows (`stamp::state_rows_px`) with a label row above and a 2 px frame, every coordinate even for the chroma planes, `None` when it does not fit. `fit` scales a crop to at most a third of the picture's width and half its height in its aspect, `widen` grows the box 10 % each side for the request, `label` writes `DETAIL 3.4 s`. A table test pins the show and hide rules and the placement; never draw an inset for a state that is not current.
+
 ## Freshness (`freshness`)
 
 `classify(Thresholds, Observed) -> State` decides what the ground's video output shows: `Live`, `LowRate`, `Stale`, `Frozen`, `Disconnected` or `AgeUnknown`. The ground passes in elapsed milliseconds and counts, never a clock.

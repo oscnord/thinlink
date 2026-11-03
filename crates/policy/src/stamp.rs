@@ -76,6 +76,11 @@ fn block_side(width: usize) -> usize {
     (width / COLUMNS).max(MIN_BLOCK_SIDE)
 }
 
+/// Height in pixels of the stamp and the state stamp together, which nothing else is drawn over.
+pub fn state_rows_px(width: usize) -> usize {
+    block_side(width) * STATE_ROWS
+}
+
 /// Checks the geometry, with `rows` rows of blocks, against the buffer and returns the block side.
 pub(crate) fn validate(
     geometry: PlaneGeometry,

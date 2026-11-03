@@ -3,6 +3,7 @@ pub mod budget;
 pub mod clock;
 pub mod control;
 pub mod freshness;
+pub mod inset;
 pub mod kind;
 pub mod mark;
 pub mod pace;

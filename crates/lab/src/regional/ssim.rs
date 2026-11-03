@@ -2,6 +2,8 @@
 //! pixels, and how much of the reference's local contrast survived. The windows are scored once;
 //! `Region` then averages the ones inside and the ones outside a box.
 
+use sat_teleop_policy::region::PixelRect;
+
 const WINDOW: usize = 8;
 const STEP: usize = 4;
 /// SSIM's stabilising constants for 8-bit pixels: (0.01 * 255)^2 and (0.03 * 255)^2.
@@ -107,6 +109,9 @@ pub struct Region {
     /// Windows this close to the box are in neither group: the encoder and the softening blur
     /// across its edge.
     pub margin: usize,
+    /// Windows touching this pixel rectangle are in neither group: the ground draws its detail
+    /// inset there.
+    pub excluded: Option<PixelRect>,
 }
 
 /// What a frame scored inside and outside the box.
@@ -131,6 +136,12 @@ impl Region {
         for w in windows {
             let (x1, y1) = (w.x + WINDOW, w.y + WINDOW);
             if w.y < self.rows.0 || y1 > self.rows.1 {
+                continue;
+            }
+            if self
+                .excluded
+                .is_some_and(|e| w.x < e.x1 && x1 > e.x0 && w.y < e.y1 && y1 > e.y0)
+            {
                 continue;
             }
             if w.x >= self.x0 && x1 <= self.x1 && w.y >= self.y0 && y1 <= self.y1 {
@@ -212,6 +223,7 @@ mod tests {
             y1: 40,
             rows: (0, SIDE),
             margin: 4,
+            excluded: None,
         };
         let reference = rings();
         let softened = softened_outside(&reference, &region);
@@ -225,5 +237,20 @@ mod tests {
         assert!((blurred.inside_ssim - 1.0).abs() < 1e-9);
         assert!(blurred.outside_ssim < 0.9, "{}", blurred.outside_ssim);
         assert!(blurred.outside_std_received < blurred.outside_std_reference);
+
+        let covered = Region {
+            excluded: Some(PixelRect {
+                x0: 40,
+                y0: 0,
+                x1: SIDE,
+                y1: SIDE,
+            }),
+            ..region
+        };
+        let windows = windows(&softened, &reference, SIDE, SIDE);
+        let with = region.score(&windows).unwrap();
+        let without = covered.score(&windows).unwrap();
+        assert!(without.outside_std_reference < with.outside_std_reference);
+        assert!((without.inside_ssim - with.inside_ssim).abs() < 1e-9);
     }
 }

@@ -1,5 +1,5 @@
 # The vehicle for `lab check regional` (docs/testbed.md): vehicle.toml with a one-frame clip of the
-# check's test card as the source and no snapshot branch. Unknown keys are rejected.
+# check's test card as the source and a small snapshot store for the pilot's box crops. Unknown keys are rejected.
 
 # RTP/H.264 to the relay, inside WireGuard.
 destination = "10.77.0.1:5004"
@@ -17,11 +17,24 @@ detail = "http://10.77.0.1:8080"
 
 [source]
 # The card's one-frame clip, which `lab check regional` writes to this volume (crates/lab/src/regional/card.rs);
-# the sender starts over once a second until it can open it. No snapshots: the volume is small.
+# the sender starts over once a second until it can open it.
 kind = "file"
 path = "/snapshots/card.y4m"
 # One frame, shown for good: no loop to restart.
 still = true
+
+# Retained snapshots, which the ground's crops of the pilot's box come from. The card sits in the same
+# volume (12 MiB), so the store keeps only the last half minute within 3 MiB.
+[snapshot]
+fps = 1
+quality = 90
+
+[store]
+dir = "/snapshots"
+max_bytes = 3145728
+max_age_s = 30
+min_free_bytes = 1048576
+gap_after_ms = 1500
 
 # Regional video: the picture outside the pilot's box and the people found is softened in blocks of
 # this many pixels on a side (2 to 4); without it (1) nothing is softened and the pilot's box is not

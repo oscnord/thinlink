@@ -16,8 +16,8 @@ use sat_teleop_policy::sighting::utc_time;
 use sat_teleop_policy::token::Token;
 
 /// The relay's job API for the ground, on `ground_net`.
-const RELAY: &str = "http://192.168.232.20:8080";
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const RELAY: &str = "http://192.168.232.20:8080";
+pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Subcommand)]
 pub enum Detail {
@@ -322,7 +322,7 @@ fn parse_crop(text: &str) -> Result<Crop, String> {
     Ok(Crop { x, y, w, h })
 }
 
-fn now_ms() -> Result<u64> {
+pub fn now_ms() -> Result<u64> {
     let since = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .context("this machine's clock is before 1970")?;

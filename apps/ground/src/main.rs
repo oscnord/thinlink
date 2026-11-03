@@ -16,6 +16,8 @@ use sat_teleop_control::ground::{
     self, Camera, CameraCounts, CameraStream, ClockView, ControlSnapshot, Controller, GroundConfig,
     GroundSnapshot, GroundStats, TakeError,
 };
+use sat_teleop_detail::client::Client;
+use sat_teleop_media::inset::DetailCell;
 use sat_teleop_media::metrics;
 use sat_teleop_media::output::{
     self, CameraConfig, FreshnessLimits, OutputConfig, OutputSnapshot, OutputStats, Predictive,
@@ -26,6 +28,7 @@ use sat_teleop_policy::token::Token;
 
 use crate::detail::Detail;
 
+mod box_detail;
 mod detail;
 
 /// The adapter's `ctl_net` address in the testbed.
@@ -65,6 +68,10 @@ enum Command {
         /// Address for GET /metrics and the lease endpoints, for example 192.168.233.30:9100.
         #[arg(long)]
         metrics_addr: String,
+        /// The relay's job API, from which the pilot's box fetches crops (with
+        /// `--job-token-file`; without one the box gets none).
+        #[arg(long, default_value = detail::RELAY)]
+        relay: String,
     },
     /// Ask the running adapter to take the vehicle's control lease (POST /lease).
     TakeControl {
@@ -129,7 +136,18 @@ fn main() -> Result<ExitCode> {
             config,
             limits,
             metrics_addr,
-        } => run(&config, &limits, &metrics_addr, token.as_ref()).map(|()| ExitCode::SUCCESS),
+            relay,
+        } => run(
+            &config,
+            &limits,
+            &metrics_addr,
+            &Tokens {
+                ground: token.as_ref(),
+                job: job_token.as_ref(),
+                relay: &relay,
+            },
+        )
+        .map(|()| ExitCode::SUCCESS),
         Command::TakeControl { adapter } => request(&adapter, Method::Post, token.as_ref()),
         Command::ReleaseControl { adapter } => request(&adapter, Method::Delete, token.as_ref()),
         Command::Status { adapter } => request(&adapter, Method::Get, token.as_ref()),
@@ -139,7 +157,14 @@ fn main() -> Result<ExitCode> {
     }
 }
 
-fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) -> Result<()> {
+/// What `run` presents to whom: the ground's own token to its endpoints, the job token to the relay.
+struct Tokens<'a> {
+    ground: Option<&'a Token>,
+    job: Option<&'a Token>,
+    relay: &'a str,
+}
+
+fn run(config: &Path, limits: &Path, metrics_addr: &str, tokens: &Tokens) -> Result<()> {
     let Config {
         ground,
         video,
@@ -151,6 +176,11 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
     sat_teleop_media::init().context("GStreamer")?;
     let camera = camera_stream(&video).map(|stream| Arc::new(Camera::new(stream, tracking)));
     let output_stats = Arc::new(OutputStats::default());
+    let detail = Arc::new(DetailCell::default());
+    let picture = (
+        usize::from(video.encoding.width),
+        usize::from(video.encoding.height),
+    );
     let stats = Arc::new(GroundStats::new(ground.clock.clone()));
     let signer = Signer::load(&ground.control_key, &ground.vehicle_id).context("control key")?;
     let controller = Arc::new(Controller::new(
@@ -160,10 +190,11 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
         signer,
     ));
     {
-        let (output_stats, stats, controller) = (
+        let (output_stats, stats, controller, detail) = (
             Arc::clone(&output_stats),
             Arc::clone(&stats),
             Arc::clone(&controller),
+            Arc::clone(&detail),
         );
         thread::spawn(move || {
             let bound = || stats.clock_bound();
@@ -185,6 +216,7 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
                 &output_stats,
                 &bound,
                 predictive.as_ref(),
+                &detail,
             );
         });
     }
@@ -197,6 +229,10 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
                 stats.listen.down(&e);
             }
         });
+    }
+    if let (Some(camera), Some(job_token)) = (camera.clone(), tokens.job) {
+        let client = Client::new(tokens.relay, detail::CLIENT_TIMEOUT).with_token(Some(job_token));
+        thread::spawn(move || box_detail::keep(&camera, &detail, &client, picture));
     }
     let snapshot = || Metrics {
         mavlink: stats.snapshot(),
@@ -211,7 +247,8 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, token: Option<&Token>) 
         ("GET", "/status") => Some((200, json!(controller.status()))),
         _ => None,
     };
-    metrics::serve_with(metrics_addr, token, snapshot, route).context("metrics endpoint stopped")
+    metrics::serve_with(metrics_addr, tokens.ground, snapshot, route)
+        .context("metrics endpoint stopped")
 }
 
 fn take(controller: &Controller) -> (u16, Value) {

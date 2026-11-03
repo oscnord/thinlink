@@ -41,6 +41,8 @@ const TRACKING_STATUS_ID: f32 = 275.0;
 /// How often the tracking status goes out when a station asks for the default rate (interval 0).
 const DEFAULT_STATUS_EVERY: Duration = Duration::from_millis(500);
 const MIN_STATUS_EVERY: Duration = Duration::from_millis(50);
+/// A crop for the box counts as the box being served for this long after it arrived.
+const DETAIL_TTL: Duration = Duration::from_secs(30);
 
 /// The stream the camera announces: the freshness output's encoding and its URI.
 #[derive(Debug, Clone)]
@@ -85,6 +87,8 @@ struct State {
     tracking: Option<NormRect>,
     /// The box the vehicle last said it applies, and when it said so.
     applied: Option<(NormRect, Instant)>,
+    /// The box a retained crop was last fetched for, and when it arrived.
+    detail: Option<(NormRect, Instant)>,
     /// How often a station asked for the tracking status, and when it last went out.
     status_every: Option<Duration>,
     status_sent: Option<Instant>,
@@ -137,6 +141,15 @@ impl Camera {
     /// What the vehicle reports it applies, as of `now`.
     pub fn applied(&self, region: Option<NormRect>, now: Instant) {
         self.lock().applied = region.map(|rect| (rect, now));
+    }
+
+    /// Notes that a crop of `rect` arrived at `now`. Ignored unless `rect` is the box being
+    /// tracked: a crop fetched for a box the pilot has since replaced or cleared says nothing.
+    pub fn detail_received(&self, rect: NormRect, now: Instant) {
+        let mut state = self.lock();
+        if state.tracking == Some(rect) {
+            state.detail = Some((rect, now));
+        }
     }
 
     pub fn counts(&self) -> CameraCounts {
@@ -199,6 +212,7 @@ impl Camera {
             }
             MavCmd::MAV_CMD_CAMERA_STOP_TRACKING => {
                 state.tracking = None;
+                state.detail = None;
                 return Some(MavResult::MAV_RESULT_ACCEPTED);
             }
             MavCmd::MAV_CMD_SET_MESSAGE_INTERVAL if is_tracking_status(params[0]) => {
@@ -211,6 +225,9 @@ impl Camera {
             state.counts.tracking_denied += 1;
             return Some(MavResult::MAV_RESULT_DENIED);
         };
+        if state.tracking != Some(rect) {
+            state.detail = None;
+        }
         state.tracking = Some(rect);
         Some(MavResult::MAV_RESULT_ACCEPTED)
     }
@@ -234,7 +251,8 @@ impl Camera {
             return None;
         }
         state.status_sent = Some(now);
-        let status = tracking_status(state.applied, self.pilot_ttl, now);
+        let served = served_box(state.applied, self.pilot_ttl, state.detail, now);
+        let status = tracking_status(served);
         state.bytes(system, &status)
     }
 
@@ -331,15 +349,27 @@ fn status_interval(micros: f32) -> Option<Duration> {
     }
 }
 
-/// `CAMERA_TRACKING_IMAGE_STATUS`: active with the box while the vehicle said it applies it within
-/// `ttl` of `now`, idle otherwise, so a lost link takes the pilot's red box away.
-fn tracking_status(
+/// The box the tracking status reports: the one the vehicle said it applies within `ttl` of
+/// `now`, or else the one a crop arrived for within `DETAIL_TTL`. `None` is idle, so a lost link
+/// or a stalled retrieval takes the pilot's red box away.
+fn served_box(
     applied: Option<(NormRect, Instant)>,
     ttl: Duration,
+    detail: Option<(NormRect, Instant)>,
     now: Instant,
-) -> MavMessage {
-    let live = applied.filter(|(_, at)| now.saturating_duration_since(*at) <= ttl);
-    let Some((rect, _)) = live else {
+) -> Option<NormRect> {
+    let within = |ttl: Duration| {
+        move |(_, at): &(NormRect, Instant)| now.saturating_duration_since(*at) <= ttl
+    };
+    applied
+        .filter(within(ttl))
+        .or_else(|| detail.filter(within(DETAIL_TTL)))
+        .map(|(rect, _)| rect)
+}
+
+/// `CAMERA_TRACKING_IMAGE_STATUS`: active with `served` box, idle without one.
+fn tracking_status(served: Option<NormRect>) -> MavMessage {
+    let Some(rect) = served else {
         return MavMessage::CAMERA_TRACKING_IMAGE_STATUS(CAMERA_TRACKING_IMAGE_STATUS_DATA {
             tracking_status: CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_IDLE,
             tracking_mode: CameraTrackingMode::CAMERA_TRACKING_MODE_NONE,
@@ -578,20 +608,58 @@ mod tests {
     }
 
     #[test]
-    fn status_goes_idle_without_confirmation() {
+    fn status_is_served_by_the_vehicle_or_by_a_crop() {
         let now = Instant::now();
-        let applied = Some((rect(0.2, 0.1, 0.6, 0.7), now));
-        let flags = |at| match tracking_status(applied, TTL, at) {
-            MavMessage::CAMERA_TRACKING_IMAGE_STATUS(status) => status.tracking_status,
-            other => panic!("{other:?}"),
+        let box_ = rect(0.2, 0.1, 0.6, 0.7);
+        let at = |ms: u64| now.checked_sub(Duration::from_millis(ms)).unwrap();
+        let served = |applied: Option<u64>, detail: Option<u64>| {
+            served_box(
+                applied.map(|ms| (box_, at(ms))),
+                TTL,
+                detail.map(|ms| (box_, at(ms))),
+                now,
+            )
+            .is_some()
         };
-        assert_eq!(
-            flags(now + TTL),
-            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_ACTIVE
-        );
-        assert_eq!(
-            flags(now + TTL + Duration::from_millis(1)),
-            CameraTrackingStatusFlags::CAMERA_TRACKING_STATUS_FLAGS_IDLE
-        );
+        let cases = [
+            ("nothing", None, None, false),
+            ("confirmed", Some(3000), None, true),
+            ("confirmation expired", Some(3001), None, false),
+            ("crop alone", None, Some(29_000), true),
+            ("crop expired", None, Some(30_001), false),
+            ("old crop, fresh confirmation", Some(0), Some(60_000), true),
+            (
+                "expired confirmation, fresh crop",
+                Some(5000),
+                Some(1000),
+                true,
+            ),
+        ];
+        for (name, applied, detail, expected) in cases {
+            assert_eq!(served(applied, detail), expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_crop_counts_only_for_the_box_being_tracked() {
+        let camera = camera();
+        let (_, now) = camera.lock().heard.expect("the vehicle was heard");
+        let rectangle = MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE;
+        let served = |at: Instant| {
+            let state = camera.lock();
+            served_box(state.applied, TTL, state.detail, at)
+        };
+        result(&camera, rectangle, [0.2, 0.1, 0.6, 0.7]);
+        camera.detail_received(rect(0.5, 0.5, 0.9, 0.9), now);
+        assert_eq!(served(now), None, "a crop of another box");
+        camera.detail_received(rect(0.2, 0.1, 0.6, 0.7), now);
+        assert_eq!(served(now), Some(rect(0.2, 0.1, 0.6, 0.7)));
+
+        result(&camera, rectangle, [0.3, 0.1, 0.6, 0.7]);
+        assert_eq!(served(now), None, "a new box starts without a crop");
+
+        camera.detail_received(rect(0.3, 0.1, 0.6, 0.7), now);
+        result(&camera, MavCmd::MAV_CMD_CAMERA_STOP_TRACKING, [0.0; 4]);
+        assert_eq!(served(now), None, "stopped");
     }
 }
