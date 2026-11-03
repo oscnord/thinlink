@@ -1,35 +1,56 @@
 # sat-teleop
 
-Low-latency video from a drone over satellite and cellular links, shown in QGroundControl with the age of each frame.
+Low-latency H.264 video from a drone over satellite and cellular links, with the age of every frame carried to the screen. QGroundControl is the ground station. Written in Rust on GStreamer.
 
-It is a prototype. Everything runs on one machine: a container testbed emulates the link (delay, jitter, loss, narrow bandwidth, outages) and ArduPilot SITL stands in for the drone. The drone side targets a Raspberry Pi.
+It is a prototype. A container testbed emulates the link (delay, jitter, loss, rate limits and outages, with `tc` netem and HTB) and ArduPilot SITL stands in for the drone, so everything runs on one machine. The drone side targets a Raspberry Pi.
 
-## Video
+## Video path
 
-- The drone stamps each frame. The ground labels it `LIVE`, `LOW RATE`, `STALE`, `FROZEN`, `NO VIDEO` or `AGE UNKNOWN`, with its age. The camera's own delay is not included.
-- When delay builds or the link narrows, the drone lowers the resolution or frame rate, and raises them again when the link recovers. Control and telemetry keep a share of the link.
-- The drone keeps a full-size snapshot every second. You can fetch one from the last few seconds, whole or cropped, when the link has room. Snapshots taken while the link was down are kept until fetched (`just detail-outage` lists them).
-- QGroundControl finds the video as the drone's camera. Any RTSP player works too.
+```text
+drone:  camera -> stamp -> x264 -> RTP -> pacer --UDP in WireGuard--> relay: jitter buffer -> MediaMTX (RTSP)
+ground: RTSP -> decode -> read stamp -> label -> H.264 -> RTP/UDP -> QGroundControl
+drone:  probe every 250 ms --> relay: what it received --> drone: pick a rung
+```
 
-The video code is in `crates/video-core` and `crates/video`, with nothing drone-specific in it.
+- **Stamp.** Each frame gets its id and capture time (two 32-bit values and a CRC-8) drawn as blocks into the luma plane, so the stamp survives encoding, transcoding and any player.
+- **Freshness.** The ground compares the capture time with its own clock (both synced by chrony) and labels each frame `LIVE`, `LOW RATE`, `STALE`, `FROZEN`, `NO VIDEO` or `AGE UNKNOWN` with its age. The camera's own delay is not included.
+- **Adaptation.** The drone times probes to the relay. A queue delay over 150 ms that keeps rising is a cut: the drone drops to the best rung that fits 75 % of the rate the relay measured. Over 300 ms it also pauses the video until the queue drains. Loss is read in GCC's bands. It climbs one rung after 10 s of healthy answers. Six rungs, from 1280x720 at 15 fps and 1.2 Mbit/s down to 320x180 at 1 fps and 25 kbit/s (`testbed/ladder.toml`).
+- **Pacer.** Packets leave through a token bucket at the rung's rate. A frame that would wait more than 150 ms is dropped whole, together with the frames that depend on it, and a keyframe is asked for. Control and telemetry use their own sockets and a reserved share of the uplink.
+- **Retained detail.** The drone keeps a full-size JPEG every second. You can fetch a whole one or a crop from the last few seconds through the relay's job API; it is sent only when live video and control leave room. Snapshots taken while the link was down are kept until fetched (`just detail-outage` lists them).
+- **Sources and encoders.** Test patterns, y4m clips, V4L2 and libcamera cameras, or an RTP camera; x264 (`zerolatency`) or the Pi's `v4l2h264enc`.
 
-## Drone
+`crates/video-core` (pure logic: stamp, freshness, pacing, budget, adaptation) and `crates/video` (the GStreamer pipelines) contain no drone-specific code.
 
-- A dashed ring shows where the camera will point by the time a command sent now takes effect.
-- Telemetry reaches QGroundControl within a fixed share of the link.
-- One controller at a time holds a lease. Commands must be fresh and run at most once; when they stop, the drone stops.
-- Waypoint missions can continue on the autopilot's failsafe when the link is lost (off by default, see `docs/real-vehicle.md`).
-- Draw a box in QGroundControl to get a full-resolution crop of it as an inset. The drone can follow what you boxed. An on-board detector marks people and vehicles and reports what it saw while out of reach (`just sightings` lists them).
-- Precision landing on a printed AprilTag (off by default).
+## Drone features
+
+- An aim ring, predicted from the autopilot's newest attitude, showing where the camera will point by the time a command sent now takes effect.
+- MAVLink telemetry to QGroundControl through mavlink-router, within a byte budget.
+- Control as Ed25519-signed JSON envelopes under a lease: one controller at a time, each command fresh and applied at most once. When commands stop, the drone stops.
+- Waypoint missions that continue on the autopilot's failsafe when the link is lost (off by default, `docs/real-vehicle.md`).
+- A box drawn in QGroundControl is fetched as a full-resolution crop and shown as an inset. The drone can follow it with a correlation tracker. An on-board detector (NanoDet, ONNX through tract) marks people and vehicles and reports what it saw while out of reach (`just sightings` lists them).
+- Precision landing on a printed AprilTag through ArduPilot's `LANDING_TARGET` (off by default).
 
 ## Numbers
 
-| | `lan` | `geo` |
+| | `lan` | `geo` (300 ms each way, 512 kbit/s up) |
 |---|---|---|
 | Video age at the ground | 7 ms | 320 ms |
 | Command acknowledged | 18 ms | 620 ms |
 
-Paused video shows `STALE` within 0.65 s. When the uplink drops from 512 to 128 kbit/s, the oldest frame is 1.1 s old (0.32 s of that is the link's own delay) and the age is back to normal within 7.4 s. Method and all numbers: `docs/measurement.md`.
+Paused video shows `STALE` within 0.65 s. When the uplink drops from 512 to 128 kbit/s, the oldest frame is 1.1 s old (0.32 s of that is the link's own delay) and the age is back to normal within 7.4 s. Method and all numbers: `docs/measurement.md` and `docs/latency.md`.
+
+## Crates
+
+| Crate | What |
+|---|---|
+| `video-core` | Stamp, freshness, pacing, uplink budget, adaptation controller. Pure. |
+| `video` | GStreamer sender, relay ingress, receiver, ground output, feedback, metrics. |
+| `policy` | Control lease, regions, follow, sightings, landing, prediction. Pure. |
+| `media` | What the drone adds to the video: overlays, detector, tracker and tag taps. |
+| `control` | MAVLink bridge, signed envelopes, telemetry budget, camera component. |
+| `detect`, `detail` | The on-board detector; the snapshot store and the job API that carries snapshots to the ground. |
+| `lab` | Link profiles, `tc` translation, the graded checks. |
+| `apps/*` | The `vehicle`, `relay`, `ground` and `lab` binaries. |
 
 ## Quickstart
 
