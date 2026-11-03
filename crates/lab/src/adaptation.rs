@@ -3,7 +3,7 @@
 //! the profile's timeline (`bandwidth-steps` steps the uplink rate down and up). After each
 //! downward step the vehicle must offer less than the new cap within a deadline and the frame age
 //! must come back down: no backlog. A second viewer must not change what the vehicle sends.
-//! `docs/measurement.md` defines every metric.
+//! `docs/testbed.md#adaptation-check` defines every metric.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::thread;

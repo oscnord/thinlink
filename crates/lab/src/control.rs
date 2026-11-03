@@ -3,7 +3,7 @@
 //! the vehicle must refuse (`intruder`), a ground station of the adapter at 192.168.232.40:14552
 //! that commands and drives the way `QGroundControl` does, and an observer of SITL's telemetry
 //! straight from mavlink-router, which keeps watching while the adapter is down (`stop`).
-//! `docs/measurement.md` defines every metric.
+//! `docs/testbed.md#control-freshness-check` defines every metric.
 
 mod intruder;
 mod real_mode;

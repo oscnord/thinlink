@@ -10,7 +10,7 @@ No milestone in this repository authorizes commands to real actuators. Real mode
 
 Required development tools:
 
-- Rust 1.99.0 through rustup. `rust-toolchain.toml` pins it with rustfmt and Clippy. If `cargo` on your PATH is not a rustup proxy, see `docs/development.md`.
+- Rust 1.99.0 through rustup. `rust-toolchain.toml` pins it with rustfmt and Clippy. If `cargo` on your PATH is not a rustup proxy, see `docs/testbed.md#toolchain`.
 - Podman and a compose provider (`podman compose`), for the container testbed and the build container. `CONTAINER_ENGINE=docker` runs the lab under Docker instead (the Podman machine workarounds are skipped).
 - `just`, `jq`, `gh`, Git and `rg`.
 - GStreamer is only needed inside the containers. Do not install it on the host to build the workspace.
@@ -30,12 +30,12 @@ Use Chrome Canary with an isolated profile for optional browser testing and debu
 |---|---|
 | `README.md` | Plain-language overview for people: what it does, quickstart, limitations (no implementation detail) |
 | Issue [#2](https://github.com/oscnord/sat-teleop/issues/2) | The plan and current status (spec of record) |
-| `docs/architecture.md` | Ownership, dependency layers, data/control paths, current state |
-| `docs/development.md` | Toolchain, build, gates, xtask, fixtures, adding a package |
+| `docs/video.md` | Video ownership, data paths, adaptation and age measurement |
+| `docs/testbed.md` | Toolchain, builds, gates, code layout, fixtures and lab checks |
 | Relevant per-package `AGENTS.md` | Local invariants, dependencies and checks |
 | `log/devlog.md` | Gitignored local resume notes (may not exist) |
 
-`docs/pi.md` and `docs/deploy.md` cover the Raspberry Pi vehicle, the relay server, the ground machine and the bench checklist; `deploy/` holds their scripts, units and config templates. `docs/qgc.md` covers connecting QGroundControl, its video and camera discovery. `docs/testbed.md` covers the compose topology, WireGuard overlay, recipes, the live video path, the boot and skeleton checks, profiles and the router agent. `docs/simulation.md` covers the opt-in simulated flight (ArduCopter in Gazebo, `just sim-up`): failsafes, camera path, resources and licences. `docs/measurement.md` defines the video metrics, result files and budget grading; `perf/budgets.toml` holds the budgets.
+`docs/video.md` covers the video core and age measurement. `docs/drone.md` covers control, QGroundControl, regional video, retained detail, simulation and the Mac camera demo. `docs/hardware.md` covers the Pi, relay, ground machine and bench bring-up; `deploy/` holds the installation files. `docs/testbed.md` covers builds, the lab and its checks; `perf/budgets.toml` holds the budgets.
 
 Read the root and relevant local instructions before editing. The GitHub issue identifies the active work.
 
@@ -259,7 +259,7 @@ QGC rendering, adapter-failure visibility and optional browser presentation need
 - Recheck error paths, bounded queues, expiry and reconnect behavior.
 - Confirm no input-derived panic path or command bypass was introduced.
 - Confirm new code uses existing helpers and avoids unnecessary nesting.
-- Update affected docs, CLI examples and package instructions, including the current-state list in `docs/architecture.md`. Docs describe the final state only: no task numbers, plans or roadmaps. README stays plain language for people and AGENTS.md files stay short rules for agents.
+- Update affected docs, CLI examples and package instructions, including the code layout in `docs/testbed.md#development-setup`. Docs describe the final state only: no task numbers, plans or roadmaps. README stays plain language for people and AGENTS.md files stay short rules for agents.
 - Record budget evidence without silently weakening thresholds.
 - State which checks passed, failed, were skipped or require hardware.
 - Append a terse local `log/devlog.md` entry (ignored by git): change, commands/results, remaining work.
@@ -321,7 +321,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 
 - `deploy/` holds what a real deployment installs: provisioning scripts, the systemd unit, compose files, firewall and config templates for the vehicle (a Pi, native binary), the relay (a VPS) and the ground machine. `just deploy-keys`, `vehicle-release`, `relay-release` and `ground-release` package them into the gitignored `dist/`; `deploy/secrets/` holds keys and is never committed.
 - Provisioning scripts download nothing but distribution packages: binaries and images arrive by copy and are verified against `SHA256SUMS` before they are installed. Never pipe downloaded content into a shell, and never write the reverse-shell idioms in "Endpoint security" into a script.
-- Everything under `deploy/` and `docs/pi.md` is unverified on hardware. Keep that said wherever a statement depends on a board, a camera, a flight controller or a real link; never claim a hardware result without a measurement.
+- Everything under `deploy/` and `docs/hardware.md` is unverified on hardware. Keep that said wherever a statement depends on a board, a camera, a flight controller or a real link; never claim a hardware result without a measurement.
 - A Pi config keeps the logging sink by default. Control reaches a real autopilot only with `mode = "real"` and every interlock in `docs/real-vehicle.md`; never add another path to it.
 - amd64 images are cross-built (`rustc` segfaults emulated on Apple Silicon); under the build cap, one architecture at a time.
 
@@ -329,7 +329,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 
 - The simulation (`just sim-up`, `testbed/compose.sim.yml`) is opt-in. The default testbed and every default check stay as they are; `just sim-check <profile>` is its gate and is not in `gate-full`.
 - Gazebo peaks near 1 GB and settles near 650 MB in a 2 GiB machine. Never build, run `just check` or start another heavy container while it is up: `just lab-down` first. Keep its `mem_limit`; do not raise it.
-- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/simulation.md`. Mission upload and Auto are admitted only behind `allow_missions` (`crates/control/AGENTS.md`). Failsafe values live in `testbed/sat-teleop-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
+- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/drone.md#command-gate`. Mission upload and Auto are admitted only behind `allow_missions` (`crates/control/AGENTS.md`). Failsafe values live in `testbed/sat-teleop-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
 - The camera enters through the existing ingest, never a new source kind.
 
 ## 14. Per-package instruction index

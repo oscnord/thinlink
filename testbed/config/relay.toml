@@ -5,14 +5,14 @@ listen = "10.77.0.1:5004"
 # MediaMTX in the same network namespace accepts publishing from localhost only.
 publish = "rtsp://127.0.0.1:8554/live"
 
-# Media feedback (docs/architecture.md, "Adaptation"): the vehicle probes this overlay address and
+# Media feedback (docs/video.md#adaptation): the vehicle probes this overlay address and
 # port, and the relay answers each probe with what the ingress received since its previous answer.
 [feedback]
 listen = "10.77.0.1:5006"
 # Only the vehicle's probes are answered.
 vehicle = "10.77.0.2"
 
-# The job API for retained snapshots and crops (docs/architecture.md, "Retained detail"). It has no
+# The job API for retained snapshots and crops (docs/drone.md#retained-detail). It has no
 # authentication on the bench: the vehicle's listener is on the overlay and the ground's on
 # ground_net, each only where it is needed, never on every address. Each answers only its own routes.
 [detail]

@@ -1,7 +1,7 @@
 # The ground adapter: a container that holds the WireGuard tunnel to the relay, and the adapter in its
 # network namespace. Run from the unpacked release directory (`just ground-release`) with
 # `podman compose up -d` or `docker compose up -d`; QGroundControl runs natively on this machine and
-# needs no setup (docs/qgc.md). SAT_TELEOP_IMAGE is the release runtime image for this machine's architecture
+# needs no setup (docs/drone.md#qgroundcontrol). SAT_TELEOP_IMAGE is the release runtime image for this machine's architecture
 # (`.env` names it); `localhost/sat-teleop-runtime:dev` is the testbed's, with test hooks.
 name: sat-teleop-ground
 

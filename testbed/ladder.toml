@@ -1,4 +1,4 @@
-# The vehicle's adaptation ladder (docs/architecture.md, "Adaptation"), best first. The vehicle
+# The vehicle's adaptation ladder (docs/video.md#adaptation), best first. The vehicle
 # starts at `start` and the controller in sat-teleop-policy walks the ladder from the relay's feedback with
 # the thresholds in [adapt] of testbed/limits.toml. Each rung's bitrate is the most video the encoder
 # may send in any one second, keyframes included (x264's VBV, crates/media/AGENTS.md); headers come

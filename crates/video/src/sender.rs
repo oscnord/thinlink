@@ -353,7 +353,7 @@ impl Change {
 }
 
 /// Sets the encoder's rate for `rung`. The V4L2 encoder takes it as a control; whether it applies
-/// one while playing is for the first run on a board to show (`docs/pi.md`).
+/// one while playing is for the first run on a board to show (`docs/hardware.md#encoder`).
 fn set_bitrate(pipeline: &gst::Pipeline, kind: Encoder, rung: Rung) {
     let Some(encoder) = pipeline.by_name(ENCODER) else {
         return;

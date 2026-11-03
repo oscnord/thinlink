@@ -22,7 +22,7 @@ essential_bytes_per_s = 200
 
 [control]
 # Control lease and freshness, in milliseconds, judged on the vehicle's monotonic clock only
-# (docs/architecture.md, "Control protocol", derives them). The vehicle issues the lease holder a
+# (docs/drone.md#control-protocol, derives them). The vehicle issues the lease holder a
 # challenge every 500 ms; an envelope counts only with one of the four most recent challenges, at
 # most challenge_lifetime_ms old: the 500 ms interval, plus the geo round trip (about 600 ms), plus
 # 400 ms for jitter and stalls.
@@ -48,7 +48,7 @@ lease_lifetime_ms = 3000
 throttle_release_deadline_ms = 1825
 
 [freshness]
-# What the ground's video output shows (docs/measurement.md, "Freshness output", derives them).
+# What the ground's video output shows (docs/video.md#freshness-output, derives them).
 # Stale when the newest frame is older than this, clock bound included: geo frames arrive 320-350 ms
 # old and the next one follows within 100 ms, so live video stays under 450 ms; well before an
 # operator acts on old video.
@@ -71,7 +71,7 @@ low_rate_interval_ms = 150
 low_rate_stale_after_ms = 1800
 
 [adapt]
-# The vehicle's adaptation (docs/architecture.md, "Adaptation", derives every value). Milliseconds
+# The vehicle's adaptation (docs/video.md#adaptation, derives every value). Milliseconds
 # unless named.
 # A probe to the relay this often: detection then takes about a round trip plus the queue the probe
 # waits behind, and four probes a second cost about 5 kbit/s on the wire.
@@ -124,7 +124,7 @@ capacity_hold_max_ms = 300000
 
 [retrieval]
 # What retrieval of retained snapshots may send from the vehicle, in bytes per second on the wire
-# (docs/measurement.md, "Retained detail", derives it). Video and control come first: retrieval only
+# (docs/drone.md#retained-detail, derives it). Video and control come first: retrieval only
 # sends at a normal rung, outside a drain and while the relay's feedback is fresh and shows no queue
 # (crates/policy/AGENTS.md), and what it asks for is taken out of the uplink before the video is
 # fitted to it. 0 switches retrieval off. A chunk is half a second of it, so 4000 B/s sends chunks

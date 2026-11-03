@@ -1,5 +1,5 @@
 //! `sat-teleop-ground detail`: asks the relay for a retained snapshot or a crop of the frame
-//! captured some time ago, and fetches it (docs/architecture.md, "Retained detail").
+//! captured some time ago, and fetches it (docs/drone.md#retained-detail).
 
 use std::fs;
 use std::path::PathBuf;
@@ -44,7 +44,7 @@ pub struct RequestArgs {
     #[arg(long, conflicts_with = "ago_s", required_unless_present = "ago_s")]
     at_ms: Option<u64>,
     /// Seconds before now, by this machine's clock. The vehicle's capture clock must agree with
-    /// it (docs/measurement.md); `--at-ms` is exact.
+    /// it (docs/video.md#frame-age-and-clocks); `--at-ms` is exact.
     #[arg(long)]
     ago_s: Option<u64>,
     /// A rectangle as fractions of the picture, `x,y,w,h` (for example `0.25,0.25,0.5,0.5`).

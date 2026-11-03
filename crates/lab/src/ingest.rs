@@ -1,7 +1,7 @@
 //! `lab check ingest`: the vehicle takes its video from the camera ingest while the feeder container
 //! sends a test pattern from the address the vehicle expects and a trickle from one it does not.
 //! The ingest must decode the first and drop the second, at a decode cost that is recorded. How
-//! the frames fare through the link is `skeleton`'s to grade. `docs/demo.md` explains the setup.
+//! the frames fare through the link is `skeleton`'s to grade. `docs/drone.md#mac-camera-demo` explains the setup.
 
 use std::thread;
 use std::time::Duration;

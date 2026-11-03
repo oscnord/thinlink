@@ -67,7 +67,7 @@ pub struct VehicleConfig {
     pub vehicle_id: VehicleId,
     /// The only overlay addresses that may ask for the lease or send envelopes, each with the
     /// public key its messages must be signed with. The relay attests the addresses, not
-    /// `WireGuard` end to end; the keys are what a compromised relay lacks (`docs/architecture.md`,
+    /// `WireGuard` end to end; the keys are what a compromised relay lacks (`docs/drone.md#control-protocol`,
     /// "Control protocol").
     pub controllers: Vec<ControllerConfig>,
     /// `sitl` (the default) sends control only to an autopilot that reports itself SITL; `real`

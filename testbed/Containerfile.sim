@@ -1,4 +1,4 @@
-# The simulated flight's physics and camera (docs/simulation.md): Gazebo Harmonic (gz-sim 8.15.0) with
+# The simulated flight's physics and camera (docs/drone.md#simulated-flight): Gazebo Harmonic (gz-sim 8.15.0) with
 # ardupilot_gazebo at a pinned commit, headless, rendering with Mesa's software rasteriser (no GPU in
 # the Podman machine). Built natively (arm64 on Apple Silicon) by `just sim-image`; Ubuntu 22.04 is the
 # release Harmonic and ardupilot_gazebo support. Everything is baked in: nothing is fetched at run time.

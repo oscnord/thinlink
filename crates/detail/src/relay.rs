@@ -3,7 +3,7 @@
 //! own routes. Every request needs the bearer token (`sat_teleop_video_core::token`; without a token only
 //! loopback is served) and is then checked as hostile once read: bounded
 //! URL and body sizes, strict parsing, opaque ids, bounded jobs and bytes, expiry. `tiny_http` does
-//! not bound the request line, the headers or a stalled client; `docs/architecture.md` says what that
+//! not bound the request line, the headers or a stalled client; `docs/drone.md#retained-detail` says what that
 //! costs.
 
 use std::io::Read;

@@ -1,4 +1,4 @@
-//! `lab check sim-mission`: a mission flown out of reach (`docs/simulation.md`, "Missions").
+//! `lab check sim-mission`: a mission flown out of reach (`docs/drone.md#missions`).
 //! `checks` is a ground station that behaves as `QGroundControl` 5.1.5's Plan view does: it
 //! uploads a takeoff, three waypoints and a landing, starts the mission and, once the copter has
 //! reached the first waypoint, has the ground adapter killed. With `allow_missions` on, the copter

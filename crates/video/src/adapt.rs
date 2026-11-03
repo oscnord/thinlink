@@ -40,7 +40,7 @@ const RECENT_CHANGES: usize = 16;
 /// Durations in `[adapt]` stay below ten minutes.
 const MAX_MS: u64 = 600_000;
 
-/// `[adapt]` of `testbed/limits.toml`; `docs/measurement.md` derives the values.
+/// `[adapt]` of `testbed/limits.toml`; `docs/video.md#adaptation` explains the values.
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdaptLimits {

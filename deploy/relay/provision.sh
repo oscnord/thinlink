@@ -60,4 +60,4 @@ install -m 0600 "$here/job.token" /opt/sat-teleop/job.token
 (cd /opt/sat-teleop && docker compose up -d)
 
 echo "provision: done. Check: docker compose -f /opt/sat-teleop/compose.yml ps; wg show"
-echo "provision: then docs/deploy.md"
+echo "provision: then docs/hardware.md"

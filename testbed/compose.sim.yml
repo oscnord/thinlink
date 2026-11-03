@@ -1,4 +1,4 @@
-# The simulated flight (`just sim-up`, docs/simulation.md): added to compose.yml, it swaps the rover for
+# The simulated flight (`just sim-up`, docs/drone.md#simulated-flight): added to compose.yml, it swaps the rover for
 # an ArduCopter flown in Gazebo, which renders the camera that replaces the test pattern.
 # The topology, the link and every other service are the default testbed's.
 

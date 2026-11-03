@@ -1,12 +1,12 @@
 # /etc/sat-teleop/vehicle.toml: the vehicle on a Raspberry Pi, a native binary under systemd.
 # Written for a USB UVC webcam and a Pixhawk-class ArduPilot flight controller. Nothing here has run
-# on hardware (docs/pi.md). Unknown keys are rejected.
+# on hardware (docs/hardware.md#boards). Unknown keys are rejected.
 
 # RTP/H.264 to the relay, inside WireGuard.
 destination = "10.77.0.1:5004"
 # The relay answers the adaptation probes here.
 feedback = "10.77.0.1:5006"
-# The relay's job API for retained snapshots (docs/architecture.md, "Retained detail").
+# The relay's job API for retained snapshots (docs/drone.md#retained-detail).
 detail = "http://10.77.0.1:8080"
 
 # The board's H.264 encoder (v4l2h264enc) when it has one: a Pi Zero 2 W, 3 or 4. A Pi 5 has none and

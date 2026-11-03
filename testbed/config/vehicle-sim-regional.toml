@@ -1,6 +1,6 @@
 # The same companion with its video from the simulated flight's camera (just sim-up): Gazebo streams
 # RTP/H.264 from the vehicle's own namespace, so its datagrams come from the ingest address itself
-# (docs/simulation.md). Everything else is as in vehicle-ingest.toml.
+# (docs/drone.md#simulated-flight). Everything else is as in vehicle-ingest.toml.
 destination = "10.77.0.1:5004"
 feedback = "10.77.0.1:5006"
 debug_hooks = true
@@ -43,6 +43,5 @@ controllers = [
     { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
     { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
 ]
-# The testbed's containers read one kernel clock, so its bound is 0 (docs/measurement.md, "Clock
-# assumption"). A vehicle on its own clock says "chrony".
+# The testbed's containers read one kernel clock, so its bound is 0 (docs/video.md#frame-age-and-clocks). A vehicle on its own clock says "chrony".
 clock = "shared"

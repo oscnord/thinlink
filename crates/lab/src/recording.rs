@@ -2,7 +2,7 @@
 //! volume, so it sees the files the store writes. The store must hold its quota (the oldest
 //! snapshots go first), a restarted vehicle must rescan the directory, delete what a crash left and
 //! carry on with the gap reported, and storage too slow for the snapshot rate must drop snapshots
-//! and never delay live frames. `docs/measurement.md` defines every metric.
+//! and never delay live frames. `docs/testbed.md#recording-check` defines every metric.
 
 use std::fs;
 use std::path::{Path, PathBuf};

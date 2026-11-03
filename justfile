@@ -12,7 +12,7 @@ runtime_image := "localhost/sat-teleop-runtime:dev"
 # Docker does not know the name Podman gives the host; testbed/compose.docker.yml maps it.
 engine_compose := if engine == "podman" { "" } else { " -f testbed/compose.docker.yml" }
 # SIM=1 adds the simulated flight's services (`just sim-up`). PI=pi4 or PI=pi-zero-2w caps the
-# vehicle's companion to that board (testbed/compose.pi4.yml and compose.pi-zero-2w.yml, docs/latency.md), for example
+# vehicle's companion to that board (testbed/compose.pi4.yml and compose.pi-zero-2w.yml, docs/testbed.md#small-board-limits), for example
 # `PI=pi4 just lab-up`; set it for `lab-check` too.
 sim_file := if env_var_or_default("SIM", "") != "" { " -f testbed/compose.sim.yml" } else { "" }
 pi_file := if env_var_or_default("PI", "") != "" { " -f testbed/compose." + env_var("PI") + ".yml" } else { "" }
@@ -78,7 +78,7 @@ image target: vm-memory
 
 # The runtime image for one platform, `arm64` (the Pi, Apple Silicon) or `amd64` (a typical VPS),
 # tagged with the architecture. amd64 is cross-built from the host's own architecture (rustc cannot
-# run emulated); only its runtime stage runs emulated. docs/deploy.md, "Images and binaries".
+# run emulated); only its runtime stage runs emulated. docs/hardware.md#images-and-binaries.
 image-for arch: vm-memory
     {{engine}} build {{build_memory}} --platform linux/{{arch}} --target {{ if arch == "amd64" { "runtime-amd64" } else { "runtime" } }} -t localhost/sat-teleop-runtime:{{arch}} -f testbed/Containerfile .
 
@@ -114,7 +114,7 @@ sitl-image: vm-memory
     {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/sat-teleop-sitl:dev -f testbed/Containerfile.sitl .
 
 # The simulated flight's images: ArduCopter SITL (x86_64, emulated on other hosts) and Gazebo with its
-# camera (native). docs/simulation.md.
+# camera (native). docs/drone.md#simulated-flight.
 sim-image: vm-memory
     {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/sat-teleop-sitl-copter:dev -f testbed/Containerfile.sitl-copter .
     {{engine}} build {{build_memory}} -t localhost/sat-teleop-sim:dev -f testbed/Containerfile.sim .
@@ -145,7 +145,7 @@ lab-keys: (image "runtime")
         {{runtime_image}} /scripts/keys.sh
 
 # WireGuard keys and configs for a deployment in deploy/secrets/ (gitignored), for the relay's public
-# endpoint, for example `just deploy-keys 203.0.113.7:51820`. Existing keys are kept. docs/deploy.md.
+# endpoint, for example `just deploy-keys 203.0.113.7:51820`. Existing keys are kept. docs/hardware.md.
 deploy-keys endpoint: (image "runtime")
     mkdir -p deploy/secrets
     {{engine}} run --rm {{user_flags}} \
@@ -165,12 +165,12 @@ vehicle-release: lab-down (image-for "arm64")
     id=$({{engine}} create localhost/sat-teleop-runtime:arm64)
     {{engine}} cp "$id:/usr/local/bin/sat-teleop-vehicle" "$out/sat-teleop-vehicle"
     {{engine}} rm "$id" > /dev/null
-    file "$out/sat-teleop-vehicle" | grep -q aarch64 || { echo "vehicle-release: the packed binary is not aarch64 ($(file -b "$out/sat-teleop-vehicle")); build on an arm64 host (docs/deploy.md)" >&2; exit 1; }
+    file "$out/sat-teleop-vehicle" | grep -q aarch64 || { echo "vehicle-release: the packed binary is not aarch64 ($(file -b "$out/sat-teleop-vehicle")); build on an arm64 host (docs/hardware.md)" >&2; exit 1; }
     cp deploy/vehicle/* testbed/limits.toml testbed/ladder.toml "$out/"
     cp deploy/secrets/vehicle.conf "$out/wireguard/vehicle.conf"
     cp deploy/secrets/ctl-ground.pub deploy/secrets/vehicle.token deploy/secrets/job.token "$out/"
     (cd "$out" && shasum -a 256 sat-teleop-vehicle > SHA256SUMS)
-    echo "vehicle-release: $out is ready; copy it to the Pi and run sudo ./provision.sh (docs/deploy.md)"
+    echo "vehicle-release: $out is ready; copy it to the Pi and run sudo ./provision.sh (docs/hardware.md)"
 
 # dist/relay: what to copy to the relay server: the amd64 runtime image as a tar (built under
 # emulation: slow), its checksum, the configs and the provisioning script.
@@ -186,7 +186,7 @@ relay-release: lab-down (image-for "amd64")
     cp deploy/relay/* "$out/"
     cp deploy/secrets/relay.conf "$out/wireguard/relay.conf"
     (cd "$out" && shasum -a 256 runtime.tar > SHA256SUMS)
-    echo "relay-release: $out is ready; copy it to the server and run sudo ./provision.sh (docs/deploy.md)"
+    echo "relay-release: $out is ready; copy it to the server and run sudo ./provision.sh (docs/hardware.md)"
 
 # dist/ground: the ground adapter's compose file and configs for this machine, run with the release
 # runtime image built here for its architecture (no test hooks in it); `.env` names the image.
@@ -201,7 +201,7 @@ ground-release: lab-down (image-for native_arch)
     cp deploy/secrets/ground.conf "$out/wireguard/ground.conf"
     cp deploy/secrets/ctl-ground.key deploy/secrets/ground.token deploy/secrets/job.token "$out/"
     echo "SAT_TELEOP_IMAGE=localhost/sat-teleop-runtime:{{native_arch}}" > "$out/.env"
-    echo "ground-release: $out is ready; cd into it and run {{engine}} compose up -d (docs/deploy.md)"
+    echo "ground-release: $out is ready; cd into it and run {{engine}} compose up -d (docs/hardware.md)"
 
 # Build images, make keys and (re)start compose project sat-teleop. Services share sidecar network
 # namespaces, which Podman cannot recreate under them, so a running project is taken down first, and
@@ -260,7 +260,7 @@ stages run:
       ][] | "\(.[0])\t\(.[1].p50_ms)\t\(.[1].p95_ms)\t\(.[1].max_ms)"' results/{{run}}/summary.json | column -t -s "$(printf '\t')"
 
 # Fast gate for one fix: rebuild what changed, bring the testbed up only if the images or the build
-# inputs changed (a build needs it down), then run one check. docs/development.md, "Gates".
+# inputs changed (a build needs it down), then run one check. docs/testbed.md#builds-and-gates.
 gate-fast scenario profile *args:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -299,7 +299,7 @@ gate-full: lab-up
 # The camera ingest path graded without a camera: the testbed comes up with the vehicle taking its
 # video from the ingest (vehicle-ingest.toml), the feeder container sends a test pattern in place of
 # the webcam, `ingest` grades the ingest and `skeleton` the video through the link, and
-# `ingest-isolation` proves the ingest network reaches nothing else. docs/demo.md.
+# `ingest-isolation` proves the ingest network reaches nothing else. docs/testbed.md#ingest-check.
 ingest-check profile="lan" *args:
     #!/usr/bin/env bash
     set -uo pipefail
@@ -371,7 +371,7 @@ camera_log := ".cache/demo-camera.log"
 camera_progress := ".cache/demo-camera.progress"
 
 # `camera` is an avfoundation index (`just demo-cameras`), also settable as CAMERA=. The first run asks
-# macOS for camera access for the terminal app. `just demo-stop` ends it. docs/demo.md.
+# macOS for camera access for the terminal app. `just demo-stop` ends it. docs/drone.md#mac-camera-demo.
 # The demo: the Mac's camera as the vehicle's video, through the emulated link of <profile>.
 demo profile="lan" camera=env_var_or_default("CAMERA", "0"):
     #!/usr/bin/env bash
@@ -449,7 +449,7 @@ demo-cameras:
 impair profile:
     {{compose}} exec -T checks lab impair --agent http://192.168.233.254:9000 --profile testbed/profiles/{{profile}}.toml > /dev/null
 
-# Ask the ground adapter to take the vehicle's control lease (docs/qgc.md, "Taking control").
+# Ask the ground adapter to take the vehicle's control lease (docs/drone.md#taking-control).
 take-control:
     {{compose}} exec -T ground sat-teleop-ground --token-file /secrets/ground.token take-control
 
@@ -463,7 +463,7 @@ control-status:
 
 # Ask the relay for the retained camera frame from <ago_s> seconds ago, whole or a crop given as
 # fractions x,y,w,h (for example 0.25,0.25,0.5,0.5). Prints the request's id for `detail-fetch`.
-# docs/architecture.md, "Retained detail".
+# docs/drone.md#retained-detail.
 detail-request ago_s="10" crop="":
     {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail request --ago-s {{ago_s}} {{ if crop != "" { "--crop " + crop } else { "" } }}
 
@@ -488,13 +488,13 @@ detail-fetch id file="detail.jpg":
     {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail fetch {{id}} -o /tmp/detail.jpg
     {{engine}} cp sat-teleop-ground-1:/tmp/detail.jpg {{file}}
 
-# The vehicle's test-only video hooks (docs/qgc.md, "Checking it in QGC"): pause, freeze or resume.
+# The vehicle's test-only video hooks (docs/drone.md#checking-the-display): pause, freeze or resume.
 video-hook action:
     {{compose}} exec -T checks sh -c 'curl -fsS -X POST -H "Authorization: Bearer $(cat /secrets/vehicle.token)" http://192.168.233.10:9100/video/{{action}}'
 
 # The simulated flight: the testbed with an ArduCopter flown in Gazebo, its rendered camera as the
 # vehicle's video. Builds first, so the testbed goes down first. `just lab-up` brings the default
-# rover testbed back. docs/simulation.md.
+# rover testbed back. docs/drone.md#simulated-flight.
 sim-up config=("vehicle-sim" + regional_suffix + ".toml"):
     just lab-down
     just sim-image

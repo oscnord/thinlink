@@ -55,4 +55,4 @@ systemctl daemon-reload
 systemctl enable --now sat-teleop-vehicle
 
 echo "provision: done. Check: systemctl status sat-teleop-vehicle; curl -s -H \"Authorization: Bearer \$(sudo cat /etc/sat-teleop/vehicle.token)\" http://127.0.0.1:9100/metrics"
-echo "provision: then docs/pi.md, the bench checklist in docs/deploy.md"
+echo "provision: then docs/hardware.md#boards, the bench checklist in docs/hardware.md#bring-up-checklist"

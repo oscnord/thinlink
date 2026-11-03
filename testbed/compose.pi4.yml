@@ -1,4 +1,4 @@
-# Companion on the budget of a Raspberry Pi 4 (4 GB): `PI=pi4 just lab-up` (docs/latency.md).
+# Companion on the budget of a Raspberry Pi 4 (4 GB): `PI=pi4 just lab-up` (docs/testbed.md#small-board-limits).
 # Approximate: a quota of CPU time, not a slower core. A Cortex-A72 core at 1.5 GHz does roughly an
 # eighth of what one Apple M-series core does, and the Pi has four, so a load spread over all of
 # them gets about half a host core.

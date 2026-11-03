@@ -12,7 +12,7 @@ NanoDet-Plus-m 320, Apache-2.0, run with `tract-onnx` (pure Rust, nothing native
 
 ## Tag
 
-`TagDetector` finds one tag36h11 tag (the wanted id) in a luma frame with `AprilRobotics`' reference detector (BSD-2-Clause) through the `apriltag` crate, which builds the C library with `cmake` (in the build image, `testbed/Containerfile`). The detector holds a raw pointer and is not `Send`: make it on the thread that uses it. It takes no bit errors and no decimation, and finds nothing when the wanted id is in the frame twice. Its choice over the pure-Rust `kornia-apriltag` is in `docs/measurement.md`, "Landing tag".
+`TagDetector` finds one tag36h11 tag (the wanted id) in a luma frame with `AprilRobotics`' reference detector (BSD-2-Clause) through the `apriltag` crate, which builds the C library with `cmake` (in the build image, `testbed/Containerfile`). The detector holds a raw pointer and is not `Send`: make it on the thread that uses it. It takes no bit errors and no decimation, and finds nothing when the wanted id is in the frame twice.
 
 ## Checks
 

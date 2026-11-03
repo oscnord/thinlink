@@ -22,7 +22,7 @@ use super::{RTP_MTU, SenderStats};
 use crate::MediaError;
 
 /// The longest a packet may wait in the backlog, below the 200 ms of queue at which the control
-/// envelopes were refused (`docs/architecture.md`, "Control protocol").
+/// envelopes were refused (`docs/drone.md#control-protocol`).
 const MAX_AGE_MS: u64 = 150;
 /// The bucket holds this much of the pace, and at least two packets.
 const BURST_MS: u32 = 20;

@@ -3,7 +3,7 @@
 //! it knows which frame each job must come back with. It grades the object (the frame and the
 //! rectangle it names), the transfer (time, bytes against the allowance, cancel), the requests the
 //! job API must refuse, and the live video's frame age in two passes under the same profile, one
-//! without retrieval and one with jobs running back to back. `docs/measurement.md` defines every
+//! without retrieval and one with jobs running back to back. `docs/testbed.md#retrieval-check` defines every
 //! metric.
 
 use std::fs;

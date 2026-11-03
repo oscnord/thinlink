@@ -1,6 +1,6 @@
 # ArduCopter 4.7.2 SITL, the official statically linked x86_64 build (git fb773567896014da007bca58358704d4a0d8516f,
 # the commit of the ArduRover pin). Built by `just sim-image` for linux/amd64; on Apple Silicon it runs under the
-# VM's qemu binfmt. Its physics come from Gazebo through the JSON interface (testbed/Containerfile.sim). docs/simulation.md.
+# VM's qemu binfmt. Its physics come from Gazebo through the JSON interface (testbed/Containerfile.sim). docs/drone.md#simulated-flight.
 # Base: as testbed/Containerfile.sitl.
 FROM docker.io/library/debian@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
 ADD --checksum=sha256:caed35e4cb796ec06cac40b09566a18251771486b1cbac5e2bf16b7a5ed5045d --chmod=755 \

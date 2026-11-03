@@ -9,14 +9,14 @@ relay = "10.77.0.1"
 # the lab runner in `checks`.
 gcs = ["host.containers.internal:14550", "192.168.232.40:14552"]
 
-# Control envelopes (docs/architecture.md, "Control protocol"): the adapter's control socket on its
+# Control envelopes (docs/drone.md#control-protocol): the adapter's control socket on its
 # overlay address, and the vehicle's control endpoint.
 control = "10.77.0.3:7701"
 vehicle = "10.77.0.2:7700"
 # The vehicle's name (`vehicle_id` of its config): every signed control message is made for it.
 vehicle_id = "testbed"
 # This machine's clock bound; the vehicle reports its own and the output judges the video's age by
-# the sum (docs/measurement.md, "Clock assumption"). The testbed's containers share the VM's clock,
+# the sum (docs/video.md#frame-age-and-clocks). The testbed's containers share the VM's clock,
 # so the bound is 0; without a fresh bound on both sides no age is trusted and nothing shows as live.
 clock = "shared"
 # The key the adapter signs its envelopes with; the vehicle holds the public half.
@@ -24,7 +24,7 @@ control_key = "/secrets/ctl-ground.key"
 
 [camera]
 # The camera's horizontal field of view across the picture's full width, in degrees. It turns the
-# autopilot's turn rates into pixels for the predictive display (docs/qgc.md); remove the table to
+# autopilot's turn rates into pixels for the predictive display (docs/drone.md#predictive-display); remove the table to
 # switch the display off. 114.6 is the simulated copter's gimbal camera (`horizontal_fov` 2.0 rad in
 # ardupilot_gazebo's gimbal_small_3d model, pinned in testbed/Containerfile.sim).
 hfov_deg = 114.6
@@ -33,14 +33,14 @@ hfov_deg = 114.6
 # fixed to the frame sets tilt_deg, how far below the nose it points, to get the horizon.
 
 [video]
-# The ground's freshness output (docs/qgc.md). MediaMTX's stream on the relay, over ground_net,
+# The ground's freshness output (docs/drone.md#qgroundcontrol). MediaMTX's stream on the relay, over ground_net,
 # pulled over TCP without a jitter buffer wait: nothing is lost or reordered on that hop.
 source = "rtsp://192.168.232.20:8554/live"
 # QGroundControl on the host (UDP h.264 video, its default 0.0.0.0:5600) and `lab check qgc-status`
 # in checks.
 destinations = ["host.containers.internal:5600", "192.168.232.40:5602"]
 # Announce the output as the vehicle's camera (MAVLink component 100) with this stream URI; QGC
-# 5.1.5 then plays it whatever its video source setting (docs/qgc.md). Remove the line to keep QGC
+# 5.1.5 then plays it whatever its video source setting (docs/drone.md#qgroundcontrol). Remove the line to keep QGC
 # on a source of its own, such as MediaMTX's RTSP stream.
 camera_uri = "udp://0.0.0.0:5600"
 

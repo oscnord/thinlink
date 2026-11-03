@@ -3,7 +3,7 @@
 //!
 //! Nothing here has run against hardware. The pure parts (`plan`, `choose_encoder`) are tested, the
 //! elements are built from `GStreamer`'s documented properties, and the first run on a Pi is the
-//! check (`docs/pi.md`, "What to measure first").
+//! check (`docs/hardware.md#what-to-measure-first`).
 
 use std::fmt::Write;
 use std::path::Path;

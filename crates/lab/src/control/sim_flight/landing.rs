@@ -1,4 +1,4 @@
-//! `lab check sim-landing`: landing on a marker (`docs/simulation.md`, "Landing on a marker"). The
+//! `lab check sim-landing`: landing on a marker (`docs/drone.md#landing-on-a-marker`). The
 //! world has a tag on the ground a few metres from the take-off point. `checks` is the ground station:
 //! it takes the copter off, flies it to about 2 m from above the tag on `MANUAL_CONTROL`, lets it
 //! hover and switches it to Land. What the run must show depends on what the vehicle reports of

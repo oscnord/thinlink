@@ -1,5 +1,5 @@
 //! `lab check follow`: the vehicle follows the person the pilot picked while the simulated copter
-//! yaws (`docs/simulation.md`, "Pick and follow"). Needs `just regional=1 sim-up`. `checks` is a
+//! yaws (`docs/drone.md#regional-video`). Needs `just regional=1 sim-up`. `checks` is a
 //! ground station: it takes the copter up to a low hover, picks the right-most person the
 //! detector reports the way `QGroundControl` does (`CAMERA_TRACK_RECTANGLE`), and yaws the copter in
 //! short turns, holding still between them so the detector's person and the followed box are the

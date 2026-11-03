@@ -1,6 +1,6 @@
 # AGENTS.md: crates/detail
 
-`sat-teleop-detail` (L2) owns retained detail: the vehicle's store of periodic full-resolution JPEG snapshots, and the bounded HTTP job API that carries a snapshot, or a crop of one, to the ground at lower priority than live video and control. It depends on `sat-teleop-policy` (retention, when retrieval may send, the token bucket) and on no other workspace crate; GStreamer stays in `sat-teleop-video`, which hands the vehicle JPEG bytes. It builds natively. See the root `AGENTS.md`, `docs/architecture.md` ("Retained detail") and `docs/measurement.md`.
+`sat-teleop-detail` (L2) owns retained detail: the vehicle's store of periodic full-resolution JPEG snapshots, and the bounded HTTP job API that carries a snapshot, or a crop of one, to the ground at lower priority than live video and control. It depends on `sat-teleop-policy` (retention, when retrieval may send, the token bucket) and on no other workspace crate; GStreamer stays in `sat-teleop-video`, which hands the vehicle JPEG bytes. It builds natively. See the root `AGENTS.md`, `docs/drone.md#retained-detail` ("Retained detail") and `docs/testbed.md#retrieval-check`.
 
 ## Modules
 

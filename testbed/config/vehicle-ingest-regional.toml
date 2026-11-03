@@ -1,5 +1,5 @@
 # The same companion with its video from an external camera (just demo, just ingest-check): the
-# Mac's webcam, or the feeder container, sending RTP/H.264 to the ingest port (docs/demo.md).
+# Mac's webcam, or the feeder container, sending RTP/H.264 to the ingest port (docs/drone.md#mac-camera-demo).
 # Everything else is as in vehicle.toml.
 destination = "10.77.0.1:5004"
 feedback = "10.77.0.1:5006"
@@ -44,6 +44,5 @@ controllers = [
     { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
     { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
 ]
-# The testbed's containers read one kernel clock, so its bound is 0 (docs/measurement.md, "Clock
-# assumption"). A vehicle on its own clock says "chrony".
+# The testbed's containers read one kernel clock, so its bound is 0 (docs/video.md#frame-age-and-clocks). A vehicle on its own clock says "chrony".
 clock = "shared"

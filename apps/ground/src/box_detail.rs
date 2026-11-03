@@ -1,5 +1,5 @@
 //! While `QGroundControl` tracks a box, asks the relay for a crop of it from the newest retained
-//! snapshot every few seconds and hands the newest to the freshness output (docs/architecture.md,
+//! snapshot every few seconds and hands the newest to the freshness output (docs/drone.md#retained-detail,
 //! "Retained detail"). One request is in flight at a time; retrieval's own budget and pacing on the
 //! vehicle apply as for any detail job.
 

@@ -4,7 +4,7 @@
 //! it stalls the source with the vehicle's test-only hooks, a pause and then a freeze, and, under a
 //! profile whose timeline blacks out the link, waits out the blackout: each time the output must
 //! keep coming and say what is wrong before it shows live video again. It also asks the adapter's
-//! camera component what QGC asks it (`camera`). `docs/measurement.md` defines every metric.
+//! camera component what QGC asks it (`camera`). `docs/testbed.md#qgc-status-check` defines every metric.
 
 mod camera;
 

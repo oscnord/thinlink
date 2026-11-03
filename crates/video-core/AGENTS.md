@@ -12,7 +12,7 @@ The stamp puts frame identity and capture time into the video itself, so the lab
 - `read` samples the centred half-size square of each block (mean above 128 is 1) and returns `None` on a CRC mismatch or bad geometry.
 - `check_size` tells whether a frame size can carry the stamp; `CaptureMs::from_unix_ms` reduces UNIX milliseconds to the stamp's 32-bit clock.
 - An 8-bit CRC still passes about 1 in 256 corrupt reads, for example of concealed frames after packet loss. Readers must bound the age they accept: `plausible_age` returns the age only within 0 to `MAX_PLAUSIBLE_AGE_MS` (60 s).
-- `age_ms(receiver_ms, stamp)` is `receiver_ms.wrapping_sub(capture_ms)`. It is only valid when both sides share a clock (all testbed containers do); across machines a clock mapping with uncertainty is required (`docs/measurement.md`).
+- `age_ms(receiver_ms, stamp)` is `receiver_ms.wrapping_sub(capture_ms)`. It is only valid when both sides share a clock (all testbed containers do); across machines a clock mapping with uncertainty is required (`docs/video.md#frame-age-and-clocks`).
 
 ## State stamp (`stamp`)
 
@@ -29,7 +29,7 @@ The ground's freshness output draws what it shows into each frame, so the lab ca
 - The frame interval is `cadence_ms` of the new frames' ids and capture times: the lower median of the capture time per frame id between consecutive frames (a pair whose id does not advance is skipped, so unreadable frames between two readable ones do not slow the source) whose later frame was captured within a second of the newest. One gap at full rate (a lost frame) leaves it at the full rate's interval, so a stream that then stops reads Stale at `stale_after_ms`, not at the low-rate threshold; after a slowdown it reads slow within two slow frames.
 - `next_change_ms(Thresholds, Observed)` says how soon `classify` may give another state if no frame arrives: the earliest of the newest frame's age plus the clock bound passing the stale threshold, the time since the newest new frame passing the frozen threshold and the time since the last frame passing `disconnected_after_ms` (`None` when none lies ahead). The output repeats its last frame no later than that.
 - `LabelDeadline` is the check at the other end: a current frame's state holds until the moment `next_change_ms` gave when it was decided, and a frame whose first packet is sent after that moment is late in all its packets (the output drops it). Times are on one clock, in any unit.
-- The thresholds come from `[freshness]` of `testbed/limits.toml`, validated by `sat-teleop-video` (`docs/measurement.md` derives them).
+- The thresholds come from `[freshness]` of `testbed/limits.toml`, validated by `sat-teleop-video` (`docs/video.md#freshness-thresholds` explains them).
 
 ## Byte-rate budget (`rate`)
 
@@ -43,7 +43,7 @@ The ground's freshness output draws what it shows into each frame, so the lab ca
 
 ## Adaptation (`adapt`)
 
-A `Ladder` of `Rung`s (size, frame rate, bitrate, `Group`: normal, constrained, awareness only), best first, each sending less than the one above. `Controller::observe(feedback, now_ms) -> Decision` walks it from the relay's answers; the caller also calls it without one at least every probe interval, so silence is noticed. Latency first: it keeps the uplink queue empty and only then raises picture quality. The thresholds are `[adapt]` of `testbed/limits.toml`, validated by `sat-teleop-video` (`docs/measurement.md` derives them).
+A `Ladder` of `Rung`s (size, frame rate, bitrate, `Group`: normal, constrained, awareness only), best first, each sending less than the one above. `Controller::observe(feedback, now_ms) -> Decision` walks it from the relay's answers; the caller also calls it without one at least every probe interval, so silence is noticed. Latency first: it keeps the uplink queue empty and only then raises picture quality. The thresholds are `[adapt]` of `testbed/limits.toml`, validated by `sat-teleop-video` (`docs/video.md#adaptation-thresholds` explains them).
 
 - Queue delay is the smaller round trip of the newest two answers minus the smallest of the `min_rtt_window_ms` window: one late answer is jitter, two in a row are a queue. Its trend, the least-squares slope over `trend_window_ms` of probes sent since the last change (leaving out the first, whose filter partner came before the change), rises, drains or stands (`trend_ms_per_s`), and a standing one may still fall.
 - Above `queue_delay_high_ms`, rising: the uplink carries less than is sent, so the uplink measured with that answer (`Feedback::uplink_bytes_per_s`) is what it carries. Cut to the best rung that fits `capacity_fit_percent` of it after the reserve (`budget`), at least one rung, so the rest drains the queue, and remember that capacity for `capacity_hold_ms` (with nothing measured yet, cut one rung). Standing and not falling at all: cut one rung. Not falling at all after a queue cut: the cut changed nothing, so the path's base delay grew (a route change); take the cut back (`BaseShift`) and count round trips only from then on, at most once per base window. Falling, however slowly, or draining: hold.

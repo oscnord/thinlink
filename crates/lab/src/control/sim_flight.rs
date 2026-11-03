@@ -1,4 +1,4 @@
-//! `lab check sim-flight`: the simulated flight (`docs/simulation.md`). `checks` is the ground
+//! `lab check sim-flight`: the simulated flight (`docs/drone.md#simulated-flight`). `checks` is the ground
 //! station: it takes the lease, arms the copter, takes it off, flies a leg on `MANUAL_CONTROL` and
 //! then loses the control twice. Without the setpoint stream (the lease and the ground adapter
 //! still there) the copter must brake and hold, and refuse to be put back into a mode that flies

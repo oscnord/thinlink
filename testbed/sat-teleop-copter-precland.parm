@@ -1,4 +1,4 @@
-# Precision landing for the landing target (`just sim-landing`, docs/simulation.md), loaded after
+# Precision landing for the landing target (`just sim-landing`, docs/drone.md#simulated-flight), loaded after
 # sat-teleop-copter.parm. Names, values and meanings are those of ArduPilot git
 # fb773567896014da007bca58358704d4a0d8516f, libraries/AC_PrecLand/AC_PrecLand.cpp and
 # AC_PrecLand_StateMachine.cpp: the same values real mode requires (docs/real-vehicle.md).
@@ -19,7 +19,7 @@ PLND_ALT_MAX 0
 # How old a sighting is when it reaches the autopilot. AC_PrecLand ignores the message's time stamp
 # for this and matches each sighting with the inertial data PLND_LAG seconds back (default 0.02,
 # range 0.02 to 0.25, reboot required: libraries/AC_PrecLand/AC_PrecLand.cpp, init and
-# construct_pos_meas_using_rangefinder). The picture's measured age at the autopilot is about 0.06 s
-# (docs/measurement.md, "Landing tag"), but a run at 0.06 landed 2.8 m from the tag and one at 0.15
+# construct_pos_meas_using_rangefinder). The picture's measured age at the autopilot is about 0.06 s,
+# but a run at 0.06 landed 2.8 m from the tag and one at 0.15
 # landed 0.01 m from it, so 0.15 stays until more runs say why.
 PLND_LAG 0.15

@@ -17,7 +17,7 @@
 //!
 //! The metrics are the box's SSIM with and without regional video and the gain, the SSIM outside
 //! the box against the rung below, and the share of local contrast kept outside the box relative
-//! to the rung below. `docs/measurement.md` defines them.
+//! to the rung below. `docs/testbed.md#regional-check` defines them.
 
 pub(crate) mod card;
 mod detail;

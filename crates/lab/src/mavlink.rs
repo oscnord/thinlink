@@ -4,7 +4,7 @@
 //! trip and the telemetry rate, then shows that the adapter refuses an `ARM_DISARM` without the
 //! control lease, that SITL's ports are closed to the overlay and that a forwarding cut silences
 //! telemetry.
-//! `docs/measurement.md` defines every metric.
+//! `docs/testbed.md#mavlink-check` defines every metric.
 
 pub(crate) mod gcs;
 

@@ -6,7 +6,7 @@
 //! clip) and scores its luma against that frame by SSIM, below the stamp's rows: at the full
 //! 1280x720 (the received frame scaled up) and at the received size (the clip frame scaled down the
 //! way the sender scales it). Frames that never arrived are the gaps in the stamp's frame ids.
-//! `docs/measurement.md`, "Picture quality check", defines the metrics.
+//! `docs/testbed.md#quality-check` defines the metrics.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};

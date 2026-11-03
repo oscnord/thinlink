@@ -3,7 +3,7 @@
 
 # RTP/H.264 to the relay, inside WireGuard.
 destination = "10.77.0.1:5004"
-# Feedback: the relay answers probes here (docs/architecture.md, "Adaptation"). The rungs are in
+# Feedback: the relay answers probes here (docs/video.md#adaptation). The rungs are in
 # testbed/ladder.toml.
 feedback = "10.77.0.1:5006"
 # Test only: POST /video/pause, /video/freeze and /video/resume on the metrics endpoint, which
@@ -11,7 +11,7 @@ feedback = "10.77.0.1:5006"
 # the testbed.
 debug_hooks = true
 
-# The relay's job API (docs/architecture.md, "Retained detail"): the vehicle polls it for requests for
+# The relay's job API (docs/drone.md#retained-detail): the vehicle polls it for requests for
 # retained snapshots and crops, and uploads the answers over the overlay.
 detail = "http://10.77.0.1:8080"
 
@@ -43,7 +43,7 @@ gap_after_ms = 1500
 soften_factor = 2
 detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
 
-# MAVLink bridge (docs/testbed.md): SITL's serial 0 in this network namespace (a TCP autopilot must
+# MAVLink bridge (docs/drone.md#mavlink-path): SITL's serial 0 in this network namespace (a TCP autopilot must
 # be on loopback, and control reaches it only once it reports the SITL marker parameter),
 # mavlink-router's UDP server endpoint on the relay, inside WireGuard (only datagrams from it are
 # read), and the control envelope endpoint on the vehicle's overlay address.
@@ -57,11 +57,10 @@ vehicle_id = "testbed"
 # The only overlay addresses that may take the control lease: the ground adapter and the lab runner
 # in checks, each with the public key its envelopes must be signed with (`just lab-keys` makes the
 # pairs). The relay attests source addresses, not WireGuard end to end; the keys are what it lacks
-# (docs/architecture.md).
+# (docs/drone.md#identity-and-authentication).
 controllers = [
     { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
     { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
 ]
-# The testbed's containers read one kernel clock, so its bound is 0 (docs/measurement.md, "Clock
-# assumption"). A vehicle on its own clock says "chrony".
+# The testbed's containers read one kernel clock, so its bound is 0 (docs/video.md#frame-age-and-clocks). A vehicle on its own clock says "chrony".
 clock = "shared"

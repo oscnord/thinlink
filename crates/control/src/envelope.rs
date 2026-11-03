@@ -295,7 +295,7 @@ pub fn frame(text: &str) -> Option<Frame> {
     (whole && frame.is_v2()).then_some(frame)
 }
 
-/// `[control]` of `testbed/limits.toml`, in milliseconds. `docs/architecture.md` derives them.
+/// `[control]` of `testbed/limits.toml`, in milliseconds. `docs/drone.md#control-protocol` derives them.
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ControlLimits {

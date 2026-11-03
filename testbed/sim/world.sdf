@@ -1,9 +1,9 @@
 <?xml version="1.0" ?>
-<!-- The simulated flight's world (docs/simulation.md): ardupilot_gazebo's iris_runway, with
+<!-- The simulated flight's world (docs/drone.md#simulated-flight): ardupilot_gazebo's iris_runway, with
      scenery added so that the camera sees edges and texture all around, not a runway only.
      The runway and grass textures come from ardupilot_gazebo; everything else here is primitives.
      No shadows, no GUI services and few models: the software renderer's memory is what limits the
-     simulation in the Podman machine (docs/simulation.md, "Resources"). -->
+     simulation in the Podman machine (docs/drone.md#simulation-resources). -->
 <sdf version="1.9">
   <world name="sat_teleop">
     <physics name="1ms" type="ignore">
@@ -49,7 +49,7 @@
       <pose degrees="true">0 0 0.195 0 0 90</pose>
     </include>
 
-    <!-- The regional video demo (docs/simulation.md): two people, a parked car and a landing pad in front of the
+    <!-- The regional video demo (docs/drone.md#simulated-flight): two people, a parked car and a landing pad in front of the
          camera at the take-off point (it looks north, +y). The people are Gazebo Fuel models,
          CC0 1.0 (testbed/Containerfile.sim); the pad is primitives. -->
     <include>

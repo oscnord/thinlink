@@ -1,5 +1,5 @@
 # Companion on the budget of a Raspberry Pi Zero 2 W (512 MB): `PI=pi-zero-2w just lab-up`
-# (docs/latency.md). Approximate: a quota of CPU time, not a slower core. Its four Cortex-A53 cores at
+# (docs/testbed.md#small-board-limits). Approximate: a quota of CPU time, not a slower core. Its four Cortex-A53 cores at
 # 1 GHz do about half of what the Pi 4's do (testbed/compose.pi4.yml), so about a quarter of a host core.
 services:
   companion:

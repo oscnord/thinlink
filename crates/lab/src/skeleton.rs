@@ -1,7 +1,7 @@
 //! `lab check skeleton`: the live video path end to end. A headless receiver in `checks` pulls the
 //! relay's RTSP stream and reads the stamp of every decoded frame; router counters give the uplink
 //! rate. Then a forwarding cut must silence the video and restoring it must bring fresh frames
-//! back. `docs/measurement.md` defines every metric.
+//! back. `docs/testbed.md#skeleton-check` defines every metric.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
