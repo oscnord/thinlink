@@ -1,5 +1,6 @@
-//! NanoDet-Plus-m's output tensor as people in picture fractions, and the overlap filter. Pure.
+//! NanoDet-Plus-m's output tensor as detections of the wanted kinds in picture fractions, and the overlap filter. Pure.
 
+use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::NormRect;
 
 use crate::Detection;
@@ -11,12 +12,11 @@ const CLASSES: usize = 80;
 const BINS: usize = 8;
 const SIDES: usize = 4;
 const ROW: usize = CLASSES + SIDES * BINS;
-/// COCO class 0.
-const PERSON: usize = 0;
 
-/// The people in `output` (the `[1, cells, 112]` tensor, flattened) of a model run on an `input`
-/// pixel square picture, scoring at least `min_score`. A tensor of the wrong length gives none.
-pub(crate) fn decode(output: &[f32], input: u32, min_score: f32) -> Vec<Detection> {
+/// The detections of `kinds` in `output` (the `[1, cells, 112]` tensor, flattened) of a model run
+/// on an `input` pixel square picture, scoring at least `min_score`. A cell is the kind of the best
+/// scoring class among `kinds`. A tensor of the wrong length gives none.
+pub(crate) fn decode(output: &[f32], input: u32, min_score: f32, kinds: &[Kind]) -> Vec<Detection> {
     let Ok(side) = u16::try_from(input) else {
         return Vec::new();
     };
@@ -36,7 +36,7 @@ pub(crate) fn decode(output: &[f32], input: u32, min_score: f32) -> Vec<Detectio
         .0
         .iter()
         .zip(grid)
-        .filter_map(|(row, cell)| person(row, cell, side, min_score))
+        .filter_map(|(row, cell)| detection(row, cell, side, min_score, kinds))
         .collect()
 }
 
@@ -48,11 +48,18 @@ struct Cell {
     gy: u16,
 }
 
-fn person(row: &[f32; ROW], cell: Cell, side: u16, min_score: f32) -> Option<Detection> {
-    let score = *row.get(PERSON)?;
-    if score.is_nan() || score < min_score {
-        return None;
-    }
+fn detection(
+    row: &[f32; ROW],
+    cell: Cell,
+    side: u16,
+    min_score: f32,
+    kinds: &[Kind],
+) -> Option<Detection> {
+    let (kind, score) = kinds
+        .iter()
+        .filter_map(|&kind| Some((kind, *row.get(kind.coco_class())?)))
+        .filter(|(_, score)| *score >= min_score)
+        .max_by(|a, b| a.1.total_cmp(&b.1))?;
     let sides = row.get(CLASSES..)?;
     let reach = |side_index: usize| -> Option<f32> {
         let bins = sides.get(side_index * BINS..(side_index + 1) * BINS)?;
@@ -68,7 +75,7 @@ fn person(row: &[f32; ROW], cell: Cell, side: u16, min_score: f32) -> Option<Det
         (cx + right) / size,
         (cy + bottom) / size,
     )?;
-    Some(Detection { rect, score })
+    Some(Detection { rect, score, kind })
 }
 
 /// The softmax-weighted mean bin index of one side's logits.
@@ -83,7 +90,7 @@ fn expected_bin(logits: &[f32]) -> f32 {
 }
 
 /// The detections with every one that overlaps a higher scoring one by more than `iou` removed,
-/// best first.
+/// best first, whatever their kinds: one object is one kind.
 pub fn non_max_suppression(mut found: Vec<Detection>, iou: f32) -> Vec<Detection> {
     found.sort_by(|a, b| b.score.total_cmp(&a.score));
     let mut kept: Vec<Detection> = Vec::new();
@@ -115,7 +122,11 @@ mod tests {
     const CELLS: usize = 85;
 
     fn detection(rect: NormRect, score: f32) -> Detection {
-        Detection { rect, score }
+        Detection {
+            rect,
+            score,
+            kind: Kind::Person,
+        }
     }
 
     fn tensor(rows: &[(usize, usize, f32)]) -> Vec<f32> {
@@ -131,10 +142,10 @@ mod tests {
     }
 
     #[test]
-    fn only_a_person_scoring_enough_is_decoded_in_picture_fractions() {
+    fn only_the_wanted_kinds_scoring_enough_are_decoded_in_picture_fractions() {
         // Row 19 is cell (3, 2) of the stride 8 map: centre (24, 16), reaching 2 x 8 = 16 each way.
         let output = tensor(&[(19, 0, 0.9), (20, 1, 0.95), (21, 0, 0.2)]);
-        let found = decode(&output, SIDE, 0.4);
+        let found = decode(&output, SIDE, 0.4, &[Kind::Person]);
         let wanted = NormRect {
             x0: 0.125,
             y0: 0.0,
@@ -150,8 +161,17 @@ mod tests {
     }
 
     #[test]
+    fn a_cell_is_the_best_scoring_wanted_kind() {
+        let mut output = tensor(&[(19, 0, 0.6), (20, 2, 0.8)]);
+        output[19 * ROW + 7] = 0.9; // a truck in the same cell as the person
+        let found = decode(&output, SIDE, 0.4, &[Kind::Person, Kind::Car]);
+        let kinds: Vec<Kind> = found.iter().map(|d| d.kind).collect();
+        assert_eq!(kinds, [Kind::Person, Kind::Car]);
+    }
+
+    #[test]
     fn a_tensor_of_the_wrong_size_finds_nobody() {
-        assert_eq!(decode(&[0.9; ROW], SIDE, 0.4), Vec::new());
+        assert_eq!(decode(&[0.9; ROW], SIDE, 0.4, &[Kind::Person]), Vec::new());
     }
 
     #[test]

@@ -49,7 +49,7 @@
       <pose degrees="true">0 0 0.195 0 0 90</pose>
     </include>
 
-    <!-- The regional video demo (docs/simulation.md): two people and a landing pad in front of the
+    <!-- The regional video demo (docs/simulation.md): two people, a parked car and a landing pad in front of the
          camera at the take-off point (it looks north, +y). The people are Gazebo Fuel models,
          CC0 1.0 (testbed/Containerfile.sim); the pad is primitives. -->
     <include>
@@ -59,6 +59,11 @@
     <include>
       <uri>model://casual_female</uri>
       <pose degrees="true">1.4 6.5 0 0 0 0</pose>
+    </include>
+    <!-- A parked car near the runway, for the detector's vehicle kinds (Gazebo Fuel, CC0 1.0). -->
+    <include>
+      <uri>model://hatchback</uri>
+      <pose degrees="true">-5.0 9.0 0 0 0 20</pose>
     </include>
     <model name="landing_pad"><static>true</static><pose degrees="true">0 10.0 0.01 0 0 0</pose><link name="l">
       <visual name="disc"><geometry><cylinder><radius>1.6</radius><length>0.02</length></cylinder></geometry><material><ambient>0.95 0.95 0.95 1</ambient><diffuse>0.95 0.95 0.95 1</diffuse></material></visual>

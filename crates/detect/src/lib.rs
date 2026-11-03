@@ -1,4 +1,4 @@
-//! A small person detector: NanoDet-Plus-m 320 run through `tract-onnx`. The caller hands it a
+//! A small detector of people and vehicles: NanoDet-Plus-m 320 run through `tract-onnx`. The caller hands it a
 //! frame already scaled to the model's input size; it never sees the video pipeline.
 
 mod decode;
@@ -11,11 +11,12 @@ use tract_onnx::prelude::{
     DatumExt, Framework, InferenceModelExt, IntoRunnable, Tensor, TypedRunnableModel, tvec,
 };
 
+use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::NormRect;
 
 pub use self::decode::non_max_suppression;
 
-/// Boxes overlapping a better one by more than this are the same person.
+/// Boxes overlapping a better one by more than this are the same object.
 const NMS_IOU: f32 = 0.5;
 /// What the model was trained to see: BGR, per channel `(value - mean) / std`.
 const NORMALISE: [(f32, f32); 3] = [(103.53, 57.375), (116.28, 57.12), (123.675, 58.395)];
@@ -24,6 +25,7 @@ const NORMALISE: [(f32, f32); 3] = [(103.53, 57.375), (116.28, 57.12), (123.675,
 pub struct Detection {
     pub rect: NormRect,
     pub score: f32,
+    pub kind: Kind,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -35,11 +37,13 @@ pub enum DetectError {
 pub struct Detector {
     model: Arc<TypedRunnableModel>,
     input: u32,
+    kinds: Vec<Kind>,
 }
 
 impl Detector {
-    /// Loads and optimises the model for a square RGB input of `input` pixels a side.
-    pub fn load(model: &Path, input: u32) -> Result<Self, DetectError> {
+    /// Loads and optimises the model for a square RGB input of `input` pixels a side, to find
+    /// `kinds`.
+    pub fn load(model: &Path, input: u32, kinds: Vec<Kind>) -> Result<Self, DetectError> {
         let fail = |cause: &dyn std::fmt::Display| DetectError::Load {
             path: model.to_path_buf(),
             cause: cause.to_string(),
@@ -51,13 +55,17 @@ impl Detector {
             .and_then(InferenceModelExt::into_optimized)
             .and_then(IntoRunnable::into_runnable)
             .map_err(|e| fail(&e))?;
-        Ok(Self { model, input })
+        Ok(Self {
+            model,
+            input,
+            kinds,
+        })
     }
 
-    /// The people in `rgb`, a `width` x `height` frame of 3 bytes a pixel that is already the
-    /// model's input size, scoring at least `min_score`. A frame of another size or a failed run
-    /// finds nobody.
-    pub fn people(
+    /// The configured kinds in `rgb`, a `width` x `height` frame of 3 bytes a pixel that is already
+    /// the model's input size, scoring at least `min_score`. A frame of another size or a failed
+    /// run finds nothing.
+    pub fn detect(
         &mut self,
         rgb: &[u8],
         width: u32,
@@ -77,7 +85,12 @@ impl Detector {
             .first()
             .and_then(|out| {
                 let view = out.to_plain_array_view::<f32>().ok()?;
-                Some(decode::decode(view.as_slice()?, self.input, min_score))
+                Some(decode::decode(
+                    view.as_slice()?,
+                    self.input,
+                    min_score,
+                    &self.kinds,
+                ))
             })
             .unwrap_or_default();
         non_max_suppression(found, NMS_IOU)

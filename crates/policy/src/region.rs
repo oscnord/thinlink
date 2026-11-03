@@ -3,6 +3,8 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::kind::Kind;
+
 /// Narrowest side a rectangle may have, as a fraction of the picture.
 const MIN_SIDE: f32 = 0.01;
 
@@ -98,7 +100,7 @@ fn scale(fraction: f32, side: usize, round: fn(f32) -> f32) -> usize {
 #[derive(Debug, Clone)]
 pub struct RegionCell {
     pilot: Arc<Mutex<Option<Timed>>>,
-    detections: Arc<Mutex<Vec<Timed>>>,
+    detections: Arc<Mutex<Vec<(Kind, Timed)>>>,
     limits: Arc<Mutex<RegionLimits>>,
     origin: Instant,
 }
@@ -140,10 +142,14 @@ impl RegionCell {
     }
 
     /// Replaces the detections with `found`, all seen at `at_ms`.
-    pub fn publish_detections(&self, found: impl IntoIterator<Item = NormRect>, at_ms: u64) {
+    pub fn publish_detections(
+        &self,
+        found: impl IntoIterator<Item = (Kind, NormRect)>,
+        at_ms: u64,
+    ) {
         *locked(&self.detections) = found
             .into_iter()
-            .map(|rect| Timed { rect, at_ms })
+            .map(|(kind, rect)| (kind, Timed { rect, at_ms }))
             .collect();
     }
 
@@ -152,9 +158,17 @@ impl RegionCell {
         self.active_with(self.latest())
     }
 
-    /// The detections that are active on their own: the ones the sender outlines.
-    pub fn detected(&self) -> Vec<NormRect> {
-        self.active_with(None)
+    /// The detections that are active on their own, with their kind: the ones the sender outlines.
+    /// Overlapping boxes were merged by the detector, so a rectangle names one kind.
+    pub fn detected(&self) -> Vec<(Kind, NormRect)> {
+        let kept = self.active_with(None);
+        let found = locked(&self.detections);
+        kept.into_iter()
+            .filter_map(|rect| {
+                let (kind, _) = found.iter().find(|(_, t)| t.rect == rect)?;
+                Some((*kind, rect))
+            })
+            .collect()
     }
 
     /// The pilot's box if the sender keeps it sharp now: fresh, and not dropped for the area or the
@@ -165,7 +179,7 @@ impl RegionCell {
     }
 
     fn active_with(&self, pilot: Option<Timed>) -> Vec<NormRect> {
-        let detections = locked(&self.detections).clone();
+        let detections: Vec<Timed> = locked(&self.detections).iter().map(|(_, t)| *t).collect();
         let limits = *locked(&self.limits);
         active(pilot, &detections, self.now_ms(), &limits)
     }
@@ -348,8 +362,23 @@ mod tests {
             if let Some(rect) = received {
                 cell.set(at(rect, cell.now_ms()));
             }
-            cell.publish_detections(detections, cell.now_ms());
+            cell.publish_detections(
+                detections.into_iter().map(|r| (Kind::Person, r)),
+                cell.now_ms(),
+            );
             assert_eq!(cell.pilot_in_use(), expected, "{name}");
         }
+    }
+
+    #[test]
+    fn detections_keep_their_kind_and_only_the_active_ones_are_outlined() {
+        let (big, small) = (rect(0.2, 0.15), rect(0.1, 0.1));
+        let cell = RegionCell::default();
+        cell.configure(RegionLimits {
+            max_regions: 1,
+            ..LIMITS
+        });
+        cell.publish_detections([(Kind::Person, small), (Kind::Car, big)], cell.now_ms());
+        assert_eq!(cell.detected(), vec![(Kind::Car, big)]);
     }
 }

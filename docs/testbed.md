@@ -344,7 +344,7 @@ Results go to `results/<unix-ms>-adaptation-<profile>/`.
 |---|---|
 | `tracking_status_requested`, `tracking_active`, `tracking_stopped` | The status arrives idle after the request, goes active with the box once the vehicle confirmed it keeps it sharp, and idle again after the stop. |
 | `frames_with`, `frames_without`, `frames_lower` | At least 10 frames were scored in the window. |
-| `region_ssim_gain` | The box's SSIM with regional video is above its SSIM without. Graded only on a pilot-only vehicle (`vehicle-regional.toml`): with the detector on its amber outlines are drawn inside the box and count against the card, so the assertion is `incomplete` and the detector-on run is for CPU and memory. |
+| `region_ssim_gain` | The box's SSIM with regional video is above its SSIM without. Graded only on a pilot-only vehicle (`vehicle-regional.toml`): with the detector on its outlines are drawn inside the box and count against the card, so the assertion is `incomplete` and the detector-on run is for CPU and memory. |
 | `outside_ssim_vs_lower_rung` | The SSIM outside the box is at least that of the plain picture one rung down. |
 | `test_object_contrast_ratio` | The sum of the local standard deviations outside the box, relative to the reference's, is at least that of the rung below (fine detail kept). |
 | `frame_age_within_skeleton_budget` | Frame age p95 with the box is within `skeleton.<profile>`'s limit plus 100 ms for the output's hops. |

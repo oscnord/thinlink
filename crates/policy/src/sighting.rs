@@ -5,6 +5,7 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
+use crate::kind::Kind;
 use crate::position::Position;
 use crate::region::NormRect;
 
@@ -19,11 +20,12 @@ pub const MERGE_DISTANCE: f32 = 0.15;
 /// `STATUSTEXT` carries 50 characters.
 pub const MAX_TEXT: usize = 50;
 
-/// A person (or the same person, seen again and again) and where the drone was when it first saw
-/// them.
+/// A person or vehicle (or the same one, seen again and again) and where the drone was when it
+/// first saw it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sighting {
+    pub kind: Kind,
     /// Capture time of the first and the last detection merged into this, UNIX milliseconds.
     pub first_ms: u64,
     pub last_ms: u64,
@@ -40,6 +42,7 @@ pub struct Sighting {
 /// One detection to record.
 #[derive(Debug, Clone, Copy)]
 pub struct Seen {
+    pub kind: Kind,
     pub capture_ms: u64,
     pub position: Position,
     pub rect: NormRect,
@@ -68,6 +71,7 @@ impl Sightings {
             self.0.pop_front();
         }
         self.0.push_back(Sighting {
+            kind: seen.kind,
             first_ms: seen.capture_ms,
             last_ms: seen.capture_ms,
             position: seen.position,
@@ -97,11 +101,13 @@ impl Sightings {
     }
 }
 
-/// Whether `seen` is the person `known` already is: seen shortly after it was last seen, close by
-/// in the picture, and not in the very frame that made it (two people stand in one frame).
+/// Whether `seen` is the one `known` already is: of the same kind, seen shortly after it was last
+/// seen, close by in the picture, and not in the very frame that made it (two people stand in one
+/// frame).
 fn repeats(known: &Sighting, seen: &Seen) -> bool {
     let after = seen.capture_ms.saturating_sub(known.last_ms);
-    seen.capture_ms > known.last_ms
+    known.kind == seen.kind
+        && seen.capture_ms > known.last_ms
         && after <= MERGE_WITHIN_MS
         && centre_distance(&known.rect, &seen.rect) <= MERGE_DISTANCE
 }
@@ -112,13 +118,14 @@ fn centre_distance(a: &NormRect, b: &NormRect) -> f32 {
     (ax - bx).hypot(ay - by)
 }
 
-/// The sighting as one `STATUSTEXT` line: `person 59.32931 18.06862 12m 14:02:31`, the position
+/// The sighting as one `STATUSTEXT` line: `car 59.32931 18.06862 12m 14:02:31`, the kind, the position
 /// to a metre or so, the altitude in whole metres above home and the UTC time of day it was first
 /// seen.
 pub fn status_text(s: &Sighting) -> String {
     let p = &s.position;
     format!(
-        "person {} {} {}m {}",
+        "{} {} {} {}m {}",
+        s.kind.name(),
         degrees(p.lat_e7),
         degrees(p.lon_e7),
         (i64::from(p.rel_alt_mm) + if p.rel_alt_mm < 0 { -500 } else { 500 }) / 1000,
@@ -167,6 +174,7 @@ mod tests {
 
     fn seen(capture_ms: u64, x: f32, y: f32) -> Seen {
         Seen {
+            kind: Kind::Person,
             capture_ms,
             position: POSITION,
             rect: rect(x, y),
@@ -182,6 +190,14 @@ mod tests {
             ("too late", seen(3001, 0.5, 0.5), 2),
             ("too far", seen(1500, 0.7, 0.5), 2),
             ("the same frame is another person", seen(1000, 0.5, 0.5), 2),
+            (
+                "another kind in the same place",
+                Seen {
+                    kind: Kind::Car,
+                    ..seen(1500, 0.5, 0.5)
+                },
+                2,
+            ),
         ];
         for (name, second, expected) in cases {
             let mut sightings = Sightings::default();
@@ -233,6 +249,7 @@ mod tests {
     #[test]
     fn the_text_rounds_the_position_and_fits_a_status_text() {
         let at = |lat_e7, lon_e7, rel_alt_mm, first_ms| Sighting {
+            kind: Kind::Person,
             first_ms,
             last_ms: first_ms,
             position: Position {
@@ -261,6 +278,13 @@ mod tests {
             (
                 at(-900_000_000, -1_800_000_000, i32::MIN, 1000),
                 "person -90.00000 -180.00000 -2147484m 00:00:01",
+            ),
+            (
+                Sighting {
+                    kind: Kind::Motorcycle,
+                    ..at(-900_000_000, -1_800_000_000, i32::MIN, 1000)
+                },
+                "motorcycle -90.00000 -180.00000 -2147484m 00:00:01",
             ),
         ];
         for (sighting, expected) in cases {

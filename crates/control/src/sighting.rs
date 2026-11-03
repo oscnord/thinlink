@@ -76,6 +76,7 @@ fn frame(header: MavHeader, text: &str) -> Option<Frame> {
 
 #[cfg(test)]
 mod tests {
+    use sat_teleop_policy::kind::Kind;
     use sat_teleop_policy::position::Position;
     use sat_teleop_policy::region::NormRect;
     use sat_teleop_policy::sighting::Seen;
@@ -88,6 +89,7 @@ mod tests {
         for (i, &capture_ms) in (0_u8..).zip(times) {
             let x = 0.1 + 0.3 * f32::from(i);
             sightings.record(Seen {
+                kind: Kind::Person,
                 capture_ms,
                 position: Position {
                     lat_e7: 593_293_149,

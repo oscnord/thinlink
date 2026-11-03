@@ -1,5 +1,5 @@
 //! Regional video on the vehicle: the `[region]` limits, what the sender needs to soften the
-//! picture outside the regions and outline the people found, and the detector's counters. The
+//! picture outside the regions and outline the people and vehicles found, and the detector's counters. The
 //! detector itself (`sat-teleop-detect`) is in a sibling crate, so the application runs it: the
 //! sender offers it the newest scaled frame (`DetectorFrame`) and it publishes what it finds to the cell.
 
@@ -12,8 +12,9 @@ use gstreamer_video as gst_video;
 use gstreamer_video::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::{NormRect, RegionCell, RegionLimits};
-use sat_teleop_policy::soften::{outline, soften_i420_plane};
+use sat_teleop_policy::soften::{outline, soften_i420_plane, tag};
 
 use crate::stages::{Stage, StageSnapshot};
 use crate::{MediaError, plane_geometry};
@@ -22,8 +23,8 @@ const MAX_SOFTEN_FACTOR: u8 = 4;
 const MAX_REGIONS: usize = 16;
 const MAX_DETECTOR_FPS: u16 = 10;
 const MAX_TTL_MS: u64 = 60_000;
-/// Amber in Y, U and V.
-const AMBER: [u8; 3] = [210, 16, 146];
+/// The letter of a tag in Y, U and V: black.
+const TAG_INK: [u8; 3] = [16, 128, 128];
 /// An outline is this many pixels at a luma width of `OUTLINE_REFERENCE_WIDTH`, and scales with it.
 const OUTLINE_PX: usize = 2;
 const OUTLINE_REFERENCE_WIDTH: usize = 640;
@@ -129,7 +130,7 @@ pub struct Regional {
 struct Detector {
     state: Mutex<String>,
     runs: AtomicU64,
-    people: AtomicU64,
+    found: AtomicU64,
     run: Stage,
 }
 
@@ -154,7 +155,7 @@ pub struct DetectorSnapshot {
     /// `off`, `running` or `failed: <cause>`.
     pub state: String,
     pub runs: u64,
-    pub people: u64,
+    pub found: u64,
     pub ms: StageSnapshot,
 }
 
@@ -183,7 +184,7 @@ impl Regional {
             detector: Detector {
                 state: Mutex::new("off".to_owned()),
                 runs: AtomicU64::new(0),
-                people: AtomicU64::new(0),
+                found: AtomicU64::new(0),
                 run: Stage::new(),
             },
         };
@@ -244,12 +245,12 @@ impl Regional {
             .unwrap_or_else(PoisonError::into_inner) = state;
     }
 
-    /// Publishes the people found in the frame taken at `at_ms`, and how long the run took.
-    pub fn detected(&self, found: &[NormRect], at_ms: u64, took: Duration) {
+    /// Publishes what was found in the frame taken at `at_ms`, and how long the run took.
+    pub fn detected(&self, found: &[(Kind, NormRect)], at_ms: u64, took: Duration) {
         self.cell.publish_detections(found.iter().copied(), at_ms);
         self.detector.runs.fetch_add(1, Ordering::Relaxed);
         self.detector
-            .people
+            .found
             .fetch_add(found.len() as u64, Ordering::Relaxed);
         self.detector.run.record(took);
     }
@@ -270,13 +271,13 @@ impl Regional {
                     .unwrap_or_else(PoisonError::into_inner)
                     .clone(),
                 runs: self.detector.runs.load(Ordering::Relaxed),
-                people: self.detector.people.load(Ordering::Relaxed),
+                found: self.detector.found.load(Ordering::Relaxed),
                 ms: self.detector.run.snapshot(),
             },
         }
     }
 
-    /// Softens the picture outside the regions and outlines the people found. Runs before the
+    /// Softens the picture outside the regions and outlines what was found. Runs before the
     /// stamp is drawn, so the stamp stays exact.
     pub(crate) fn shape(
         &self,
@@ -299,15 +300,17 @@ impl Regional {
             1
         };
         let width = usize::try_from(frame.width()).unwrap_or(0);
-        for (plane, amber) in (0..3u32).zip(AMBER) {
+        for (plane, ink) in (0..3u32).zip(TAG_INK) {
             let geometry = plane_geometry(frame, plane)?;
             let index = plane as usize;
             let data = frame.plane_data_mut(plane)?;
             soften_i420_plane(index, data, geometry, &regions, factor);
             let thickness = outline_thickness(index, width);
-            for rect in &boxes {
+            for (kind, rect) in &boxes {
                 let pixels = rect.pixels(geometry.width, geometry.height);
-                outline(data, geometry, pixels, thickness, amber);
+                let colour = kind.yuv().get(index).copied().unwrap_or(ink);
+                outline(data, geometry, pixels, thickness, colour);
+                tag(data, geometry, pixels, kind.glyph(), thickness, colour, ink);
             }
         }
         if softening {
@@ -318,8 +321,8 @@ impl Regional {
     }
 }
 
-/// The outline's thickness in plane `index` of a frame `luma_width` wide: 2 px at 640 wide, scaled
-/// with the width, half of it (at least 1) on the half-size chroma planes.
+/// The outline's thickness, which is also the tag's pixel size, in plane `index` of a frame
+/// `luma_width` wide: 2 px at 640 wide, scaled with the width, half of it (at least 1) on the half-size chroma planes.
 fn outline_thickness(index: usize, luma_width: usize) -> usize {
     let luma = (OUTLINE_PX * luma_width / OUTLINE_REFERENCE_WIDTH).max(1);
     if index == 0 { luma } else { (luma / 2).max(1) }
@@ -353,7 +356,7 @@ mod tests {
         let cell = RegionCell::default();
         let _regional = Regional::new(SETTINGS, cell.clone(), Some(320), 1);
         let pilot = NormRect::new(0.1, 0.1, 0.3, 0.3).unwrap();
-        let person = NormRect::new(0.5, 0.5, 0.6, 0.8).unwrap();
+        let person = (Kind::Person, NormRect::new(0.5, 0.5, 0.6, 0.8).unwrap());
         cell.set(sat_teleop_policy::region::Timed {
             rect: pilot,
             at_ms: cell.now_ms(),

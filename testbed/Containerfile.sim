@@ -57,8 +57,12 @@ ADD --checksum=sha256:385c4c518662f75b6c719849a4f47100bac7617058407c7d6db41bf802
     "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Standing%20person/3/Standing%20person.zip" /tmp/person_standing.zip
 ADD --checksum=sha256:e03944df8f010c7d6cf85fe61b2a9bf2899eed971e73fb76461f4705edeffe5d \
     "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Casual%20female/4/Casual%20female.zip" /tmp/casual_female.zip
-RUN for m in person_standing casual_female; do unzip -q /tmp/$m.zip -d /opt/sim/models/$m; done \
-    && rm /tmp/person_standing.zip /tmp/casual_female.zip
+# A parked car for the vehicle kinds: OpenRobotics' "Hatchback" 3 (CC0 1.0), pinned the same way. Not
+# "Hatchback blue": its model.config depends on model://hatchback, which stalls the world's start.
+ADD --checksum=sha256:dcd34e68cf43863991768c3ddbdeb322d6ee8bddaa01aa7da8267bbacfdb60ed \
+    "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Hatchback/3/Hatchback.zip" /tmp/hatchback.zip
+RUN for m in person_standing casual_female hatchback; do unzip -q /tmp/$m.zip -d /opt/sim/models/$m; done \
+    && rm /tmp/person_standing.zip /tmp/casual_female.zip /tmp/hatchback.zip
 # The camera: the copter's gimbal camera streams RTP/H.264 to the companion's ingest port. It is the
 # stock gimbal model with its stream pointed at the vehicle's ingest address, 640x360 at 15 frames
 # per second. Each substitution is checked, so a model that changed under a new pin fails the build.

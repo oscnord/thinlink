@@ -89,6 +89,41 @@ pub fn outline(
     }
 }
 
+/// Draws the kind's letter in a solid tab of `colour` at the top-left corner of `rect`: the glyph's
+/// 5 x 7 pixels each `cell` pixels square, in `ink`, on a margin of one cell. Drawn only when the
+/// tab fits inside the rectangle, so a letter never swamps a small box.
+pub fn tag(
+    plane: &mut [u8],
+    geometry: PlaneGeometry,
+    rect: PixelRect,
+    glyph: [u8; 7],
+    cell: usize,
+    colour: u8,
+    ink: u8,
+) {
+    let (width, height) = (7 * cell, 9 * cell);
+    if geometry.stride == 0 || rect.x1 < rect.x0 + width || rect.y1 < rect.y0 + height {
+        return;
+    }
+    let right = (rect.x0 + width).min(geometry.width);
+    let rows = plane
+        .chunks_mut(geometry.stride)
+        .enumerate()
+        .take((rect.y0 + height).min(geometry.height))
+        .skip(rect.y0);
+    for (y, row) in rows {
+        fill(row, rect.x0, right, colour);
+        let glyph_row = (y - rect.y0) / cell;
+        let Some(bits) = glyph_row.checked_sub(1).and_then(|r| glyph.get(r)) else {
+            continue;
+        };
+        for column in (0..5).filter(|c| bits >> (4 - c) & 1 == 1) {
+            let from = rect.x0 + (column + 1) * cell;
+            fill(row, from, (from + cell).min(right), ink);
+        }
+    }
+}
+
 fn fill(row: &mut [u8], from: usize, to: usize, value: u8) {
     if let Some(span) = row.get_mut(from..to) {
         span.fill(value);

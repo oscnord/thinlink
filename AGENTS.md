@@ -48,7 +48,7 @@ Packages that exist today:
 | L0 | `sat-teleop-policy` | `crates/policy` | Pure decisions; today the in-picture stamp and the state stamp, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the control lease, video freshness, snapshot retention and when retrieval may send |
 | L1 | `sat-teleop-media` | `crates/media` | Sender with live rung changes and its snapshot branch, relay ingress and its feedback, the vehicle's adaptation loop, headless receiver and the ground's freshness output, `GET /metrics` endpoint |
 | L1 | `sat-teleop-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
-| L1 | `sat-teleop-detect` | `crates/detect` | The person detector: loads an ONNX model with `tract-onnx` and returns the people in a frame as regions in picture fractions |
+| L1 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions |
 | L1 | `sat-teleop-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
 | L2 | `sat-teleop-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
 | L3 | `sat-teleop-vehicle`, `sat-teleop-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |
@@ -336,7 +336,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 - [sat-teleop-policy](crates/policy/AGENTS.md): pure decisions, the in-picture stamp and the state stamp, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the control lease and command freshness, video freshness.
 - [sat-teleop-media](crates/media/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the vehicle's adaptation loop, metrics endpoint.
 - [sat-teleop-control](crates/control/AGENTS.md): MAVLink frames, the autopilot link (SITL TCP or serial) and SITL identification, the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge, controller and camera component, the control envelope.
-- [sat-teleop-detect](crates/detect/AGENTS.md): the person detector, its model and output layout, and how it is fetched.
+- [sat-teleop-detect](crates/detect/AGENTS.md): the detector, its model and output layout, and how it is fetched.
 - [sat-teleop-detail](crates/detail/AGENTS.md): the snapshot store, the job API (relay and vehicle sides) and its client, crop mapping and chunk assembly.
 - [sat-teleop-lab](crates/lab/AGENTS.md): impairment profiles, tc translation, router agent, budgets, checks.
 - [sat-teleop-vehicle](apps/vehicle/AGENTS.md): the vehicle executable (sender, adaptation, MAVLink bridge, `probe-camera`).

@@ -29,6 +29,7 @@ use sat_teleop_media::region::{
 use sat_teleop_media::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
 use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
 use sat_teleop_policy::budget::{Budget, wire_bytes};
+use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::NormRect;
 use sat_teleop_policy::retrieval::ground_heard;
 use sat_teleop_policy::sighting::Seen;
@@ -121,6 +122,13 @@ struct DetectorConfig {
     model: PathBuf,
     /// The model's square input size in pixels, `DETECTOR_INPUT`.
     input: u32,
+    /// What counts: person, bicycle, car, motorcycle, bus, truck or boat. People alone by default.
+    #[serde(default = "default_kinds")]
+    kinds: Vec<Kind>,
+}
+
+fn default_kinds() -> Vec<Kind> {
+    vec![Kind::Person]
 }
 
 /// What a model's input may be: the capsfilter and each frame's buffer are built from it.
@@ -135,6 +143,9 @@ impl DetectorConfig {
                 DETECTOR_INPUT.end(),
                 self.input
             );
+        }
+        if self.kinds.is_empty() {
+            anyhow::bail!("the detector's kinds must name at least one kind");
         }
         Ok(())
     }
@@ -363,15 +374,15 @@ fn run(
             let regional = Arc::clone(&regional);
             let (bridge, adaptation) = (Arc::clone(&bridge), Arc::clone(&adaptation));
             thread::spawn(move || {
-                find_people(&regional, detector, |people, capture_ms| {
+                find_things(&regional, detector, |found, capture_ms| {
                     if !heard(&adaptation, &adapt_limits, allowance) {
-                        note_sightings(&bridge, people, capture_ms);
+                        note_sightings(&bridge, found, capture_ms);
                     }
                 });
             });
         }
         Some((_, Err(cause))) => {
-            eprintln!("running without the person detector: {cause}");
+            eprintln!("running without the detector: {cause}");
             regional.detector_failed(&cause);
         }
         None => {}
@@ -492,32 +503,32 @@ fn heard(adaptation: &(AdaptStats, Health), limits: &AdaptLimits, allowance: u32
 
 /// Loads the detector's model; the error is the cause the metrics show.
 fn load_detector(config: &DetectorConfig) -> Result<Detector, String> {
-    Detector::load(&config.model, config.input).map_err(|e| e.to_string())
+    Detector::load(&config.model, config.input, config.kinds.clone()).map_err(|e| e.to_string())
 }
 
-/// Runs the detector on the newest frame the sender offers, over and over, and publishes the people
-/// it finds; `seen` is also told of them, with the UNIX time the frame was captured.
-fn find_people(regional: &Regional, mut detector: Detector, seen: impl Fn(&[Detection], u64)) {
+/// Runs the detector on the newest frame the sender offers, over and over, and publishes what it
+/// finds; `seen` is also told of it, with the UNIX time the frame was captured.
+fn find_things(regional: &Regional, mut detector: Detector, seen: impl Fn(&[Detection], u64)) {
     regional.detector_running();
     loop {
         let frame = regional.next_frame();
         let started = Instant::now();
-        let people = detector.people(
+        let found = detector.detect(
             &frame.rgb,
             frame.width,
             frame.height,
             regional.detector_min_score(),
         );
         let age_ms = regional.cell.now_ms().saturating_sub(frame.at_ms);
-        seen(&people, unix_ms().saturating_sub(age_ms));
-        let found: Vec<NormRect> = people.iter().map(|person| person.rect).collect();
-        regional.detected(&found, frame.at_ms, started.elapsed());
+        seen(&found, unix_ms().saturating_sub(age_ms));
+        let boxes: Vec<(Kind, NormRect)> = found.iter().map(|d| (d.kind, d.rect)).collect();
+        regional.detected(&boxes, frame.at_ms, started.elapsed());
     }
 }
 
-/// Records `people` seen in the frame captured at `capture_ms` as sightings, where the drone is now.
+/// Records `found` in the frame captured at `capture_ms` as sightings, where the drone is now.
 /// Without a fresh position there is nowhere to say they were.
-fn note_sightings(bridge: &VehicleStats, people: &[Detection], capture_ms: u64) {
+fn note_sightings(bridge: &VehicleStats, found: &[Detection], capture_ms: u64) {
     let Some(position) = bridge.position.fresh(Instant::now()) else {
         return;
     };
@@ -525,12 +536,13 @@ fn note_sightings(bridge: &VehicleStats, people: &[Detection], capture_ms: u64) 
         .sightings
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
-    for person in people {
+    for detection in found {
         sightings.record(Seen {
+            kind: detection.kind,
             capture_ms,
             position,
-            rect: person.rect,
-            score: person.score,
+            rect: detection.rect,
+            score: detection.score,
         });
     }
 }
@@ -799,6 +811,24 @@ mod tests {
     }
 
     #[test]
+    fn detector_kinds_default_to_people_and_an_unknown_one_is_refused() {
+        let base = config("deploy/vehicle/vehicle.toml");
+        let with = |kinds: &str| {
+            load_text(&format!(
+                "{base}\n[region]\ndetector = {{ model = \"/m.onnx\", input = 320{kinds} }}\n"
+            ))
+        };
+        let kinds = |text: &str| with(text).unwrap().detector.unwrap().kinds;
+        assert_eq!(kinds(""), [Kind::Person]);
+        assert_eq!(
+            kinds(", kinds = [\"person\", \"car\"]"),
+            [Kind::Person, Kind::Car]
+        );
+        assert!(with(", kinds = [\"tank\"]").is_err());
+        assert!(with(", kinds = []").is_err());
+    }
+
+    #[test]
     fn soften_factor_is_off_by_default_and_refused_above_4() {
         let base = config("deploy/vehicle/vehicle.toml");
         for (table, accepted) in [
@@ -818,6 +848,7 @@ mod tests {
         let config = DetectorConfig {
             model: PathBuf::from("/nonexistent/person.onnx"),
             input: 320,
+            kinds: default_kinds(),
         };
         let cause = load_detector(&config).err().unwrap();
         assert!(cause.contains("/nonexistent/person.onnx"), "{cause}");

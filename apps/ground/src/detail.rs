@@ -273,8 +273,9 @@ fn sighting_line(listed: &ListedSighting, now: u64) -> String {
         |p| format!("snapshot {} ms UNIX (frame {})", p.capture_ms, p.frame_id),
     );
     format!(
-        "{} UTC ({} ms UNIX, {age_s} s ago), seen {seen_for_s} s, score {:.2}, box {:.2},{:.2} to \
+        "{} {} UTC ({} ms UNIX, {age_s} s ago), seen {seen_for_s} s, score {:.2}, box {:.2},{:.2} to \
          {:.2},{:.2}, {}, {}, {snapshot}",
+        s.kind.name(),
         utc_time(s.first_ms),
         s.first_ms,
         s.score,

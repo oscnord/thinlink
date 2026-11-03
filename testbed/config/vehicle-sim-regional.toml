@@ -28,7 +28,7 @@ gap_after_ms = 1500
 # kept. The limits (how long a region lasts, the detector's rate and score) are [region] of limits.toml.
 [region]
 soften_factor = 2
-detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320, kinds = ["person", "car"] }
 
 [mavlink]
 autopilot = "tcpout:127.0.0.1:5760"

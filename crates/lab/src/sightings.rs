@@ -19,6 +19,7 @@ use crate::client::AgentClient;
 use crate::control::blackout;
 use crate::mavlink::gcs::{Gcs, Kind, Seen};
 use crate::profile::Profile;
+use sat_teleop_policy::kind::Kind as Thing;
 
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(60);
 /// The detector has run on the people before the link is cut.
@@ -53,21 +54,25 @@ impl Settings {
     }
 }
 
-/// A `STATUSTEXT` of the form `person 59.32931 18.06862 12m 14:02:31`.
+/// A `STATUSTEXT` of the form `car 59.32931 18.06862 12m 14:02:31`.
 #[derive(Debug, PartialEq)]
 struct Told {
+    kind: &'static str,
     lat_e7: i64,
     lon_e7: i64,
     seconds_of_day: u64,
 }
 
 fn parse(text: &str) -> Option<Told> {
-    let mut words = text.strip_prefix("person ")?.split(' ');
+    let (kind, rest) = text.split_once(' ')?;
+    let kind = Thing::ALL.iter().find(|k| k.name() == kind)?.name();
+    let mut words = rest.split(' ');
     let (lat, lon, altitude, time) = (words.next()?, words.next()?, words.next()?, words.next()?);
     altitude.strip_suffix('m')?.parse::<i64>().ok()?;
     let mut clock = time.split(':').map(|part| part.parse::<u64>().ok());
     let (h, m, s) = (clock.next()??, clock.next()??, clock.next()??);
     words.next().is_none().then_some(Told {
+        kind,
         lat_e7: degrees_e7(lat)?,
         lon_e7: degrees_e7(lon)?,
         seconds_of_day: h * 3600 + m * 60 + s,
@@ -165,7 +170,7 @@ fn ground_station(
     let until = Instant::now() + DETECTOR_DEADLINE;
     while Instant::now() < until {
         let reading = check::get_json(vehicle, "/metrics");
-        let found = check::counter(&reading, "/detector/people").unwrap_or(0);
+        let found = check::counter(&reading, "/detector/found").unwrap_or(0);
         if found > 0 {
             return Some(gcs);
         }
@@ -205,7 +210,12 @@ fn told(seen: &[Seen], within: impl Fn(&Seen) -> bool) -> Vec<Told> {
 }
 
 fn grade_told(results: &mut Results, after: &[Told], cut: (u64, u64)) {
-    let detail = format!("{} sightings arrived after the restore", after.len());
+    let kinds: Vec<&str> = after.iter().map(|t| t.kind).collect();
+    let detail = format!(
+        "{} sightings arrived after the restore ({})",
+        after.len(),
+        kinds.join(", ")
+    );
     let verdict = if after.is_empty() {
         Verdict::Fail
     } else {
@@ -318,10 +328,11 @@ mod tests {
 
     #[test]
     fn a_status_text_reads_back_as_a_position_and_a_time_and_nothing_else_does() {
-        let told = parse("person -59.32931 18.06862 -2m 14:02:31").unwrap();
+        let told = parse("car -59.32931 18.06862 -2m 14:02:31").unwrap();
         assert_eq!(
             told,
             Told {
+                kind: "car",
                 lat_e7: -593_293_100,
                 lon_e7: 180_686_200,
                 seconds_of_day: 50_551
@@ -330,6 +341,7 @@ mod tests {
         for text in [
             "",
             "person 1 2 3m",
+            "tank 1.0 2.0 3m 14:02:31",
             "Arm: not ready",
             "person 1.0 2.0 3 14:02:31",
             "person 1.0 2.0 3m 14:02:31 x",
