@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <!-- The simulated flight's world (docs/drone.md#simulated-flight): ardupilot_gazebo's iris_runway, with
      scenery added so that the camera sees edges and texture all around, not a runway only.
-     The runway and grass textures come from ardupilot_gazebo; everything else here is primitives.
+     The runway texture comes from ardupilot_gazebo; the field is plain green and everything else is primitives.
      No shadows, no GUI services and few models: the software renderer's memory is what limits the
      simulation in the Podman machine (docs/drone.md#simulation-resources). -->
 <sdf version="1.9">

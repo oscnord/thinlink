@@ -450,7 +450,7 @@ The world has an AprilTag 6 m east and 3 m south of takeoff. `just sim-landing <
 
 ### Simulation resources
 
-Gazebo uses Mesa llvmpipe without a GPU. The world has no shadows or GUI services, 21 models and one grass texture. On the 2 GiB Podman machine its cgroup peaks near 1064 MB at startup and settles around 676 to 702 MB; `mem_limit` is 1100 MB. Do not raise it. The whole simulation uses roughly 1.5 GB, leaving little room for other work.
+Gazebo uses Mesa llvmpipe without a GPU. The world has no shadows or GUI services, 21 models and one runway texture. The field uses a plain green material. On the 2 GiB Podman machine its cgroup peaks near 1064 MB at startup and settles around 676 to 702 MB; `mem_limit` is 1100 MB. Do not raise it. The whole simulation uses roughly 1.5 GB, leaving little room for other work.
 
 Gazebo uses about 146 % of one core and the emulated ArduCopter about 27 %, with 18 to 22 MB for SITL. The x86_64 binary keeps up with Gazebo's lockstep under qemu. The world uses a 1 ms step and real-time cap 1.25. A loaded host can slow the simulation enough to fail timing budgets despite a clean link.
 
@@ -462,8 +462,8 @@ Everything is baked into the images; nothing is fetched at runtime.
 
 - ArduCopter 4.7.2, `copter.parm` and `gazebo-iris.parm` come from ArduPilot (GPL-3.0), commit `fb773567896014da007bca58358704d4a0d8516f`, with URL and SHA-256 pins.
 - Gazebo Harmonic, gz-sim 8.15.0 and its libraries (Apache-2.0), come from packages.osrfoundation.org for Ubuntu 22.04. Versions and the archive key's hash are pinned.
-- ardupilot_gazebo (LGPL-3.0) is commit `f116b03552d05c8d0b0bed5ed67033a1183121d1` from a checksummed tarball. It supplies the plugin, iris and gimbal models, `gazebo-iris-gimbal.parm` and runway. Those model files name authors but state no separate licence, except the unused `parachute_small` (Apache-2.0). The grass texture `Grass004_2K_Color.jpg` matches the name of an ambientCG CC0 set, but the repository gives no provenance. Verify its licence or replace it before sharing an image.
-- The world in `testbed/sim/world.sdf` derives from `iris_runway.sdf`. Project scenery uses boxes and cylinders. `testbed/sim/models/field` reuses the runway meshes and textures with one map.
+- ardupilot_gazebo (LGPL-3.0) is commit `f116b03552d05c8d0b0bed5ed67033a1183121d1` from a checksummed tarball. It supplies the plugin, iris and gimbal models, `gazebo-iris-gimbal.parm` and runway. Those model files name authors but state no separate licence, except the unused `parachute_small` (Apache-2.0).
+- The world in `testbed/sim/world.sdf` derives from `iris_runway.sdf`. Project scenery uses boxes and cylinders. `testbed/sim/models/field` reuses the airfield mesh with a plain green material. The runway is the only texture used from ardupilot_gazebo.
 - Standing person, Casual female and Hatchback version 3 are OpenRobotics Gazebo Fuel models under CC0 1.0, fetched by version and hash in `testbed/Containerfile.sim`.
 - The container build applies two checked patches: start camera streaming on the first frame, and set the gimbal camera's size, rate and destination.
 - Ubuntu packages installed with `apt` float with the base image; only Gazebo packages are version-pinned. This is a bench image.

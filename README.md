@@ -141,4 +141,4 @@ Control reaches a real flight controller only in real mode, which is off by defa
 
 ## Licence
 
-The code is MIT or Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). The exception is `crates/x264`, which links libx264 and is GPL-2.0-or-later. The vehicle, relay, ground and lab binaries all link it through `sat-teleop-video`, so they are distributed under the GPL.
+The code is MIT or Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). The exception is `crates/x264`, which links libx264 and is GPL-2.0-or-later ([LICENSE-GPL-2.0](crates/x264/LICENSE-GPL-2.0)). The vehicle, relay, ground and lab binaries all link it through `sat-teleop-video`, so they are distributed under the GPL.

@@ -26,14 +26,9 @@
         <cast_shadows>false</cast_shadows>
         <geometry><mesh><uri>model://runway/meshes/airfield.dae</uri></mesh></geometry>
         <material>
-          <ambient>0.8 0.8 0.8 1</ambient>
-          <diffuse>0.8 0.8 0.8 1</diffuse>
-          <specular>0.1 0.1 0.1 1</specular>
-          <pbr><metal>
-            <albedo_map>model://runway/materials/textures/Grass004_2K_Color.jpg</albedo_map>
-            <roughness>0.6</roughness>
-            <metalness>0</metalness>
-          </metal></pbr>
+          <ambient>0.25 0.4 0.18 1</ambient>
+          <diffuse>0.25 0.4 0.18 1</diffuse>
+          <specular>0.05 0.05 0.05 1</specular>
         </material>
       </visual>
     </link>
