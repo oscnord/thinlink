@@ -247,6 +247,66 @@ x264's adaptive quantization is not a cause: the sender's `speed-preset=ultrafas
 
 What they show: on this card the top rung is not starved (the plain picture scores 0.89 to 0.95 inside the box), so there is no spare quality for softening to move into the box. Tracking a box changed the SSIM inside it by between -0.016 and +0.003 pilot-only (no gain), and lowered the SSIM outside it by 0.005 to 0.007 against the same rung plain; at rung 0 the outside with regional video was 0.005 to 0.042 below the plain picture one rung down and the fine-detail contrast kept was 0.89 to 1.01 of the rung below's. So `region_ssim_gain` is not above 0 in any run, and `outside_ssim_vs_lower_rung` fails at rung 0. The cause was not found; no threshold or softening setting was changed. The vehicle's frame age with the box was 365 to 455 ms at p95, within the skeleton's `geo` budget plus the output's hops. Not measured: rung 2 against the rung below, the V4L2 hardware encoder (the testbed has no path to one), people in the picture (the card's figures are shapes, so the detector found nobody and its cost, not its accuracy, is measured), a moving picture and a real Pi.
 
+## Picture quality
+
+`lab check quality` (`docs/testbed.md`) grades how good the picture is next to how old it is. Every other check grades age. The regional check scores a still card only.
+
+### Method
+
+The scene is the regional check's card (`crates/lab/src/regional/card.rs`) over a terrain of smooth noise with fine grain, 1280x720. It scrolls down 16 rows a frame and wraps after 45 frames, a loop of 3 s at 15 fps. The terrain has the same period as the image height, so the loop has no seam. The lab writes the loop as a y4m clip of 62 MB to the vehicle's snapshot volume (96 MiB). The vehicle plays it with the `file` source of `testbed/config/vehicle-quality.toml`, which loops it in real time. A clip of that length already on the volume is not written again.
+
+The check applies the profile and lets the ladder settle at whatever rung the profile allows (no change for 15 s), then waits `--warmup-s` and measures for `--duration-s`. The receiver is the one the skeleton check uses: the relay's RTSP stream, decoded at the size of the settled rung (`testbed/ladder.toml`).
+
+For every decoded frame the check finds the clip frame it shows. The rung drops frames before they are stamped, so the stamp's frame id does not say which clip frame it is. The frame and each clip frame are reduced to a 64x36 grid of mean luma, below the stamp's rows, and the clip frame with the smallest mean absolute difference wins. The clip frames are scaled to the received size with `videoscale`, as the sender scales them.
+
+The matched clip frame is the reference for two SSIM scores, each the mean over the 8x8 windows of `crates/lab/src/regional/ssim.rs`, on luma, leaving out the rows the stamp is drawn in (`state_rows_px`). The relay's stream has no label. `ssim` is the received frame scaled up to 1280x720 by bilinear interpolation, against the clip frame at 1280x720. `ssim_native` is the received frame against the clip frame at the received size. At the top rung the two are the same score. Below it they differ in how much of the picture an 8x8 window covers, and neither is always the higher one (`geo-degraded`).
+
+Frames that never arrived are counted from the stamps' frame ids: the ids from the first to the last readable one, less the frames received between them. A frame whose stamp does not read still counts as received.
+
+| Metric | Definition |
+|---|---|
+| `ssim_p50`, `ssim_p5` | Median and 5th percentile of `ssim` over the window's frames. |
+| `ssim_below_floor_share` | The share of frames with `ssim` under 0.8. |
+| `ssim_native_p50`, `ssim_native_p5` | The same for `ssim_native`. |
+| `frames_scored`, `frames_missing`, `frames_missing_ratio` | Frames scored, frames that never arrived, and the missing over missing plus received. |
+| `frame_age_p50_ms`, `frame_age_p95_ms` | Frame age at the receiver, from the stamp. |
+| `match_backward_steps` | Steps back through the loop between two neighbouring frames that both score at least 0.8. |
+| `score_ms_p95` | The time to match and score one frame, p95. |
+
+`matching_forward` fails if more than 2 % of the frames take such a step. A frame shown later cannot be earlier in the loop, so a step back between two good frames means the match mistook one frame for another. A frame the link damaged scores under 0.8 and matches whichever clip frame it resembles most, often the same one, so its steps are left out. Scoring a damaged frame against the clip frame closest to it can only raise its SSIM, so the numbers err towards a better picture.
+
+Each decoded frame is scored in the receiver's callback, 20 ms at p95 at 1280x720 and 35 ms at 320x180 (`score_ms_p95`), under the 67 ms between frames at 15 fps.
+
+### Baseline
+
+`PI=pi4`, `--warmup-s 8 --duration-s 30`, one run per profile, the testbed on `vehicle-quality.toml`:
+
+```
+PI=pi4 VEHICLE_CONFIG=vehicle-quality.toml just lab-up
+PI=pi4 just lab-check quality lan --warmup-s 8 --duration-s 30
+```
+
+| Profile | Run | Rung | Frames | SSIM p50 | SSIM p5 | Under 0.8 | Missing | Native p50 | Age p50 / p95 |
+|---|---|---|---|---|---|---|---|---|---|
+| `lan` | 1793702517409 | 0 | 458 | 0.919 | 0.833 | 0 % | 0 % | 0.919 | 16 / 24 ms |
+| `geo` | 1793702571785 | 2, then 0 | 404 | 0.819 | 0.756 | 31 % | 0.25 % | 0.823 | 317 / 330 ms |
+| `lte-good` | 1793702633161 | 0 | 458 | 0.824 | 0.763 | 26 % | 0.22 % | 0.824 | 51 / 63 ms |
+| `lte-bad` | 1793702687305 | 0 | 432 | 0.747 | 0.671 | 91 % | 5.5 % | 0.747 | 95 / 427 ms |
+| `geo-degraded` | 1793702741322 | 5, then 4 | 40 | 0.763 | 0.739 | 88 % | 11 % | 0.737 | 338 / 2296 ms |
+
+Five earlier runs of the same method gave the same numbers within the spread (`lan` 1793701999289, `geo` 1793702177444, `lte-good` 1793702250214, `lte-bad` 1793702304028, `geo-degraded` 1793702357779). SSIM p50 differed by at most 0.031 (`lte-bad`: 0.778 and 0.747). The share under 0.8 differed by 0.15 (`lte-bad`: 76 % and 91 %). `geo-degraded` scores 35 to 40 frames in 30 s at 1 to 2 fps, and its age p95 was 4215 and 2296 ms.
+
+The ladder moved during two runs. `geo` settled at rung 2 (640x360, 8 fps) and was at rung 0 at the end, and `geo-degraded` went from rung 5 to rung 4. Frames are decoded at the settled rung's size, so the frames after the move are scaled to it.
+
+What the table shows:
+
+- At the same rung 0 and 1200 kbit/s, `lan` scores 0.919 and `lte-good` 0.824. The difference is loss: after a lost packet the decoder shows a broken picture until the next keyframe, every 2 s. The frame age of `lte-good` is 51 ms.
+- `geo` has the age of the satellite link (317 ms) and a picture as good as `lte-good`'s, at a lower rung.
+- `lte-bad` and `geo-degraded` score lowest and lose frames. In `geo-degraded` a frame arrives about every 750 ms.
+- The profiles fall in three groups by SSIM p50: `lan` (0.92), `geo` and `lte-good` (0.82), `lte-bad` and `geo-degraded` (0.75 to 0.76). The share under 0.8 groups them the same way (0 %, 26 to 31 %, 88 to 91 %).
+
+Budgets are `quality.<profile>` in `perf/budgets.toml`, derived from the two runs of each profile.
+
 ## Following
 
 The vehicle follows the pilot's box with a correlation tracker (`sat_teleop_policy::follow`, `docs/architecture.md`, "Regional video"). Two simple candidates were measured on the simulated people; the one kept is normalised cross-correlation (NCC) of a template in a window around the last place.

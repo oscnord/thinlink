@@ -31,7 +31,7 @@ volumes:
     driver_opts:
       type: tmpfs
       device: tmpfs
-      o: size=12m
+      o: size=96m
 
 x-sidecar: &sidecar
   image: localhost/sat-teleop-runtime:dev

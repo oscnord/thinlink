@@ -113,6 +113,11 @@ pub(crate) fn settle_at_top(vehicle: &AgentClient) -> Settled {
     settle(vehicle, Expect::Top, SETTLE_QUIET_AT_TOP)
 }
 
+/// `settle` for a check that grades the picture wherever the profile lets the ladder settle.
+pub(crate) fn settle_anywhere(vehicle: &AgentClient) -> Settled {
+    settle(vehicle, Expect::Any, SETTLE_QUIET)
+}
+
 /// Waits until the vehicle's ladder has not changed for `quiet_window` at the rung expected, at
 /// most `SETTLE_MAX`. A profile switch that changes the base delay, or a forwarding cut by the
 /// check before, sets it moving for a while, and a capacity measured before holds a climb.

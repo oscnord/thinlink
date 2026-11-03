@@ -109,6 +109,8 @@ Minimum hardware, from these runs:
 
 Runs 1793641433786 to 1793642472162. The runs vary a lot, but intra refresh was best in both rounds, and frame age was the same in all (p50 316 to 320 ms): mending decides how much of the video is usable, not how old it is. Intra refresh is still not used: after the first frame the encoder never sends a whole keyframe again, so a viewer that joins mid-stream cannot start decoding. The adaptation check's second viewer got no frame in 8 s (run 1793642676089), a ground adapter that restarts would stay without a picture, and recovery after the skeleton check's cut took 5.0 to 5.3 s (runs 1793649688711, 1793650771209). It becomes usable once the vehicle sends a keyframe whenever a viewer joins.
 
+The picture-quality baseline (`docs/measurement.md`, "Picture quality") shows the other side of age. At the same rung, `lan` scores SSIM 0.92 and `lte-good` 0.82 while `lte-good`'s frame age is 51 ms: a link can deliver young frames and still show a broken picture after each loss. `geo` is 317 ms old at rung 2 and scores the same 0.82.
+
 **Encoder settings.** Nothing to change; see "Recommended settings".
 
 ## Recommended settings

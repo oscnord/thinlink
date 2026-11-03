@@ -79,7 +79,7 @@ A camera outside the containers (the Mac's webcam, `docs/demo.md`) reaches the v
 
 Published ports always bind to `127.0.0.1`, through the `relay-net` sidecar because MediaMTX shares its namespace. The job API's port 8080 is not published.
 
-The vehicle's snapshot store is the volume `snapshots` (a 12 MiB tmpfs, `testbed/compose.yml`) mounted at `/snapshots` in `companion` and, to look at the files, in `checks`. `lab-down` leaves the volume; the files are gone once no container mounts it.
+The vehicle's snapshot store is the volume `snapshots` (a 96 MiB tmpfs, `testbed/compose.yml`) mounted at `/snapshots` in `companion` and, to look at the files, in `checks`. `lab-down` leaves the volume; the files are gone once no container mounts it.
 
 ## Privileges
 
@@ -355,6 +355,18 @@ Results go to `results/<unix-ms>-adaptation-<profile>/`.
 | `budget` | `regional.<profile>` in `perf/budgets.toml`; calibration today. |
 
 The metrics are `region_ssim_with`, `region_ssim_without`, `region_ssim_gain`, `outside_ssim_vs_lower_rung`, `test_object_contrast_ratio`, `frame_age_p95_ms`, and from the vehicle's metrics over the first window `vehicle_cpu_percent` (its process CPU time over the window, of one host core), `vehicle_rss_mb`, `soften_ms_p95` and `detector_ms_p95` (when the detector ran). Results go to `results/<unix-ms>-regional-<profile>/`.
+
+## Quality check
+
+`lab check quality --profile <name>` grades the picture's quality next to its age (`docs/measurement.md`, "Picture quality"). It needs the vehicle on `testbed/config/vehicle-quality.toml` (a looping clip of a scrolling test scene as the source): `VEHICLE_CONFIG=vehicle-quality.toml just lab-up`, then `just lab-check quality geo --warmup-s 8 --duration-s 30`, with `PI=pi4` or `PI=pi-zero-2w` for both to run on a small board's budget. The check writes the clip (62 MB) to the vehicle's snapshot volume, waits for the ladder to settle wherever the profile lets it, then scores every frame the relay's stream delivers against the clip frame it shows. It is not in `gate-full`.
+
+| Assertion | Pass when |
+|---|---|
+| `ladder_settled` | The vehicle's ladder did not change for 15 s. |
+| `matching_forward` | At most 2 % of the frames step back in the loop between two frames that score at least 0.8. |
+| `budget` | `quality.<profile>` in `perf/budgets.toml`. |
+
+Results go to `results/<unix-ms>-quality-<profile>/`.
 
 ## Recording check
 

@@ -16,6 +16,7 @@ pub mod nft;
 pub mod ping;
 pub mod profile;
 pub mod qgc_status;
+pub mod quality;
 pub mod recording;
 pub mod regional;
 pub mod retrieval;

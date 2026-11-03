@@ -19,9 +19,9 @@
 //! the box against the rung below, and the share of local contrast kept outside the box relative
 //! to the rung below. `docs/measurement.md` defines them.
 
-mod card;
+pub(crate) mod card;
 mod detail;
-mod ssim;
+pub(crate) mod ssim;
 
 use std::fs;
 use std::net::SocketAddr;

@@ -30,7 +30,7 @@ height = 720
 fps = 1
 quality = 90
 
-# Where they are kept: a volume of its own, 12 MiB in the testbed (testbed/compose.yml). A test
+# Where they are kept: a volume of its own, 96 MiB in the testbed (testbed/compose.yml). A test
 # pattern's 720p snapshot is about 15.6 kB, so the quota of 512 KiB holds about half a minute of
 # them and `lab check recording` reaches it within a minute; a deployment sizes it to the hours of
 # history it wants.

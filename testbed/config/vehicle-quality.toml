@@ -1,0 +1,74 @@
+# The vehicle for `lab check quality` (docs/testbed.md): vehicle.toml with a looping clip of a
+# scrolling test scene as the source. Unknown keys are rejected.
+
+# RTP/H.264 to the relay, inside WireGuard.
+destination = "10.77.0.1:5004"
+# Feedback: the relay answers probes here (docs/architecture.md, "Adaptation"). The rungs are in
+# testbed/ladder.toml.
+feedback = "10.77.0.1:5006"
+# Test only: POST /video/pause, /video/freeze and /video/resume on the metrics endpoint, which
+# `lab check qgc-status` uses to stall the source. Off (refused) unless set; never set it outside
+# the testbed.
+debug_hooks = true
+
+# The relay's job API (docs/architecture.md, "Retained detail"): the vehicle polls it for requests for
+# retained snapshots and crops, and uploads the answers over the overlay.
+detail = "http://10.77.0.1:8080"
+
+[source]
+# The scene's clip, which `lab check quality` writes to this volume (crates/lab/src/regional/card.rs,
+# `loop_y4m`): 45 frames of 1280x720 at 15 fps, 62 MB, so the volume is larger than the default.
+# The sender starts over once a second until it can open it.
+kind = "file"
+path = "/snapshots/quality.y4m"
+
+# Retained snapshots: a branch off the source's full-resolution frames (docs/architecture.md,
+# "Retained detail"). Remove this table to switch the branch off.
+[snapshot]
+fps = 1
+quality = 90
+
+# Where they are kept: a volume of its own, 96 MiB in the testbed (testbed/compose.yml). A test
+# pattern's 720p snapshot is about 15.6 kB, so the quota of 512 KiB holds about half a minute of
+# them and `lab check recording` reaches it within a minute; a deployment sizes it to the hours of
+# history it wants.
+[store]
+dir = "/snapshots"
+max_bytes = 524288
+max_age_s = 120
+min_free_bytes = 4194304
+# Snapshots come every second; one missing is a gap.
+gap_after_ms = 1500
+
+# Regional video, off unless set. `detector` boxes what a small model finds: `kinds` (person, bicycle, car, motorcycle, bus,
+# truck, boat; default just person) picks which (`just model`
+# fetches it, the runtime image carries it at this path). `soften_factor` 2 to 4 also keeps the pilot's
+# box from QGroundControl sharp and softens the rest in blocks of that many pixels; 1 (the default)
+# softens nothing and the pilot's box is not kept. The limits (how long a region lasts, the
+# detector's rate and score) are [region] of limits.toml.
+# [region]
+# soften_factor = 2
+# detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320, kinds = ["person"] }
+
+# MAVLink bridge (docs/testbed.md): SITL's serial 0 in this network namespace (a TCP autopilot must
+# be on loopback, and control reaches it only once it reports the SITL marker parameter),
+# mavlink-router's UDP server endpoint on the relay, inside WireGuard (only datagrams from it are
+# read), and the control envelope endpoint on the vehicle's overlay address.
+[mavlink]
+autopilot = "tcpout:127.0.0.1:5760"
+relay = "10.77.0.1:14550"
+control = "10.77.0.2:7700"
+# This vehicle's name. Every signed control message is made for it, so one signed for another vehicle
+# is refused; the ground adapter's config (testbed/config/ground.toml) names the same one.
+vehicle_id = "testbed"
+# The only overlay addresses that may take the control lease: the ground adapter and the lab runner
+# in checks, each with the public key its envelopes must be signed with (`just lab-keys` makes the
+# pairs). The relay attests source addresses, not WireGuard end to end; the keys are what it lacks
+# (docs/architecture.md).
+controllers = [
+    { address = "10.77.0.3", public_key = "/secrets/ctl-ground.pub" },
+    { address = "10.77.0.4", public_key = "/secrets/ctl-checks.pub" },
+]
+# The testbed's containers read one kernel clock, so its bound is 0 (docs/measurement.md, "Clock
+# assumption"). A vehicle on its own clock says "chrony".
+clock = "shared"

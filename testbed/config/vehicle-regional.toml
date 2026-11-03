@@ -24,7 +24,7 @@ path = "/snapshots/card.y4m"
 still = true
 
 # Retained snapshots, which the ground's crops of the pilot's box come from. The card sits in the same
-# volume (12 MiB), so the store keeps only the last half minute within 3 MiB.
+# volume (96 MiB), so the store keeps only the last half minute within 3 MiB.
 [snapshot]
 fps = 1
 quality = 90

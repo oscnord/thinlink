@@ -16,8 +16,8 @@ use sat_teleop_lab::client::{self, AgentClient};
 use sat_teleop_lab::interface::Interfaces;
 use sat_teleop_lab::profile::{self, Profile};
 use sat_teleop_lab::{
-    adaptation, boot, control, ingest, mavlink, qgc_status, recording, regional, retrieval,
-    sightings, skeleton,
+    adaptation, boot, control, ingest, mavlink, qgc_status, quality, recording, regional,
+    retrieval, sightings, skeleton,
 };
 use sat_teleop_video_core::token::Token;
 
@@ -88,17 +88,17 @@ struct CheckArgs {
     /// Revision recorded in summary.json, for example from `git describe --always --dirty`.
     #[arg(long)]
     git_rev: Option<String>,
-    /// skeleton, adaptation: RTSP URL the headless receiver plays.
+    /// skeleton, adaptation, quality: RTSP URL the headless receiver plays.
     #[arg(long, default_value = "rtsp://192.168.232.20:8554/live")]
     url: String,
-    /// skeleton, qgc-status, adaptation, ingest: seconds between the ladder settling and measuring.
+    /// skeleton, qgc-status, adaptation, ingest, quality: seconds between the ladder settling and measuring.
     #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u64).range(0..=600))]
     warmup_s: u64,
-    /// skeleton, mavlink, qgc-status, adaptation, ingest: seconds of measurement (qgc-status: the healthy
+    /// skeleton, mavlink, qgc-status, adaptation, ingest, quality: seconds of measurement (qgc-status: the healthy
     /// window; adaptation: the observation under a profile without a timeline).
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
     duration_s: u64,
-    /// skeleton, mavlink, qgc-status, adaptation, ingest, sightings: base URL of the vehicle's metrics endpoint.
+    /// skeleton, mavlink, qgc-status, adaptation, ingest, quality, sightings: base URL of the vehicle's metrics endpoint.
     #[arg(long, default_value = "http://192.168.233.10:9100")]
     vehicle_metrics: String,
     /// skeleton: base URL of the relay's metrics endpoint.
@@ -134,7 +134,7 @@ struct CheckArgs {
     /// is the rung below.
     #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u64).range(0..=3))]
     rung: u64,
-    /// recording, retrieval, regional: the vehicle's snapshot directory as this host mounts it.
+    /// recording, retrieval, regional, quality: the vehicle's snapshot directory as this host mounts it.
     #[arg(long, default_value = "/snapshots")]
     snapshot_dir: PathBuf,
     /// retrieval, sightings: the relay's job API for the ground, and for the vehicle on the overlay.
@@ -161,6 +161,7 @@ enum Scenario {
     Retrieval,
     Ingest,
     Regional,
+    Quality,
     Sightings,
 }
 
@@ -182,6 +183,7 @@ impl Scenario {
             Self::Retrieval => "retrieval",
             Self::Ingest => "ingest",
             Self::Regional => "regional",
+            Self::Quality => "quality",
             Self::Sightings => "sightings",
         }
     }
@@ -394,6 +396,22 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
                 ground_metrics: args.ground_metrics.clone(),
             };
             regional::run(&agent, &text, &settings, &budgets, profile_name)
+        }
+        Scenario::Quality => {
+            let budgets = load_budgets()?;
+            let settings = quality::Settings {
+                url: args.url.clone(),
+                snapshot_dir: args.snapshot_dir.clone(),
+                warmup: Duration::from_secs(args.warmup_s),
+                duration: Duration::from_secs(args.duration_s),
+                vehicle_metrics: args.vehicle_metrics.clone(),
+            };
+            quality::run(
+                &agent,
+                &text,
+                &settings,
+                budgets.get("quality", profile_name),
+            )
         }
         Scenario::Sightings => sightings::run(
             &agent,

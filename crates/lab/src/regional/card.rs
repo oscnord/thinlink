@@ -3,6 +3,9 @@
 //! person-sized figure. Outside it: another figure, thin vertical lines 1, 2 and 4 px wide at two
 //! contrasts, and 8 px blocks at two contrasts. The vehicle plays it as a one-frame y4m clip
 //! (`y4m`) and the check renders its reference from the same bytes (`render`).
+//!
+//! `lab check quality` plays the same card over a terrain, scrolling down `PAN` rows a frame in a
+//! loop of `LOOP_FRAMES` (`loop_y4m`, `loop_luma`), so the encoder has motion to pay for.
 
 pub const WIDTH: usize = 1280;
 pub const HEIGHT: usize = 720;
@@ -15,6 +18,13 @@ const LOW_LIGHT: u8 = 135;
 /// Line widths, repeated along each row of lines.
 pub const LINE_WIDTHS: [usize; 3] = [1, 2, 4];
 const BLOCK: usize = 8;
+/// Rows the scene scrolls per frame, and the frames after which it is back where it started: the
+/// loop is 3 s at 15 fps and the scene wraps exactly (`PAN * LOOP_FRAMES == HEIGHT`).
+pub const PAN: usize = 16;
+pub const LOOP_FRAMES: usize = 45;
+/// Terrain: value noise on lattices of these cell sides in pixels, all dividing `HEIGHT` so the
+/// terrain wraps vertically, with these amplitudes in luma levels.
+const OCTAVES: [(usize, i32); 4] = [(80, 28), (40, 14), (20, 8), (10, 5)];
 
 struct Canvas {
     luma: Vec<u8>,
@@ -24,6 +34,22 @@ impl Canvas {
     fn new() -> Self {
         let luma = (0..WIDTH * HEIGHT)
             .map(|i| BACKGROUND + texture(i % WIDTH / 4, i / WIDTH / 4))
+            .collect();
+        Self { luma }
+    }
+
+    /// A background of smooth terrain with fine grain, in place of the card's flat one.
+    fn terrain() -> Self {
+        let luma = (0..WIDTH * HEIGHT)
+            .map(|i| {
+                let (x, y) = (i % WIDTH, i / WIDTH);
+                let noise: i32 = OCTAVES
+                    .iter()
+                    .map(|&(cell, amplitude)| value_noise(x, y, cell, amplitude))
+                    .sum();
+                let grain = i32::from(texture(x / 2, y / 2)) - 6;
+                u8::try_from((i32::from(BACKGROUND) + noise + grain).clamp(0, 255)).unwrap_or(0)
+            })
             .collect();
         Self { luma }
     }
@@ -85,9 +111,62 @@ fn texture(cx: usize, cy: usize) -> u8 {
     u8::try_from(hash % 12).unwrap_or(0)
 }
 
+/// Lattice noise between -`amplitude`/2 and `amplitude`/2, interpolated bilinearly between the
+/// lattice points `cell` pixels apart; the lattice repeats every `HEIGHT` rows.
+fn value_noise(x: usize, y: usize, cell: usize, amplitude: i32) -> i32 {
+    let rows = HEIGHT / cell;
+    let lattice = |cx: usize, cy: usize| {
+        let hash = (cx + cell).wrapping_mul(73_856_093) ^ (cy % rows).wrapping_mul(19_349_663);
+        i64::try_from(hash % 1024).unwrap_or(0)
+    };
+    let (cx, cy) = (x / cell, y / cell);
+    let (fx, fy) = (
+        i64::try_from(x % cell).unwrap_or(0),
+        i64::try_from(y % cell).unwrap_or(0),
+    );
+    let side = i64::try_from(cell).unwrap_or(1);
+    let top = lattice(cx, cy) * (side - fx) + lattice(cx + 1, cy) * fx;
+    let bottom = lattice(cx, cy + 1) * (side - fx) + lattice(cx + 1, cy + 1) * fx;
+    let value = (top * (side - fy) + bottom * fy) / (side * side);
+    i32::try_from((value - 512) * i64::from(amplitude) / 1024).unwrap_or(0)
+}
+
 /// The card as one I420 frame: luma, then the two chroma planes, which are neutral.
 pub fn render() -> Vec<u8> {
-    let mut card = Canvas::new();
+    let mut frame = draw(Canvas::new()).luma;
+    frame.resize(WIDTH * HEIGHT * 3 / 2, 128);
+    frame
+}
+
+/// The luma of the card's objects on the terrain, before any scrolling.
+fn terrain_card() -> Vec<u8> {
+    draw(Canvas::terrain()).luma
+}
+
+/// The loop's frames, as luma planes: the terrain card scrolled down `PAN` rows a frame.
+pub fn loop_luma() -> Vec<Vec<u8>> {
+    let world = terrain_card();
+    (0..LOOP_FRAMES)
+        .map(|k| {
+            let mut frame = world.clone();
+            frame.rotate_right(k * PAN * WIDTH);
+            frame
+        })
+        .collect()
+}
+
+/// The loop as a y4m clip of `LOOP_FRAMES` frames, which the vehicle plays over and over.
+pub fn loop_y4m() -> Vec<u8> {
+    let mut clip = header();
+    for luma in loop_luma() {
+        clip.extend_from_slice(b"FRAME\n");
+        clip.extend_from_slice(&luma);
+        clip.resize(clip.len() + WIDTH * HEIGHT / 2, 128);
+    }
+    clip
+}
+
+fn draw(mut card: Canvas) -> Canvas {
     // Inside the box (35-65 % of the width, 30-70 % of the height): the landing pad and a figure.
     card.disc(700, 340, 90, LIGHT);
     card.disc(700, 340, 78, BACKGROUND);
@@ -101,14 +180,16 @@ pub fn render() -> Vec<u8> {
     card.lines(60, 240, LIGHT);
     card.blocks(900, 160, DARK, LIGHT);
     card.blocks(900, 240, LOW_DARK, LOW_LIGHT);
-    let mut frame = card.luma;
-    frame.resize(WIDTH * HEIGHT * 3 / 2, 128);
-    frame
+    card
+}
+
+fn header() -> Vec<u8> {
+    format!("YUV4MPEG2 W{WIDTH} H{HEIGHT} F{FPS}:1 Ip A1:1 C420jpeg\n").into_bytes()
 }
 
 /// The clip the vehicle plays: the card as one y4m frame, which its `still` source holds.
 pub fn y4m() -> Vec<u8> {
-    let mut clip = format!("YUV4MPEG2 W{WIDTH} H{HEIGHT} F{FPS}:1 Ip A1:1 C420jpeg\n").into_bytes();
+    let mut clip = header();
     let frame = render();
     clip.extend_from_slice(b"FRAME\n");
     clip.extend_from_slice(&frame);
