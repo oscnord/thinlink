@@ -138,6 +138,26 @@ impl Camera {
         self.refresh_every
     }
 
+    /// Where the vehicle reports the tracked box now, or the box the station drew while it has
+    /// not: the part of the picture a crop is asked for.
+    pub fn target(&self, now: Instant) -> Option<NormRect> {
+        let state = self.lock();
+        let drawn = state.tracking?;
+        let reported = state
+            .applied
+            .filter(|(_, at)| now.saturating_duration_since(*at) <= self.pilot_ttl);
+        Some(reported.map_or(drawn, |(rect, _)| rect))
+    }
+
+    /// The vehicle lost the box it followed: nothing is tracked any more, so the station's
+    /// tracking status goes idle and nothing is sent to the vehicle until a new box is drawn.
+    pub fn lost(&self) {
+        let mut state = self.lock();
+        state.tracking = None;
+        state.applied = None;
+        state.detail = None;
+    }
+
     /// What the vehicle reports it applies, as of `now`.
     pub fn applied(&self, region: Option<NormRect>, now: Instant) {
         self.lock().applied = region.map(|rect| (rect, now));
@@ -661,5 +681,30 @@ mod tests {
         camera.detail_received(rect(0.3, 0.1, 0.6, 0.7), now);
         result(&camera, MavCmd::MAV_CMD_CAMERA_STOP_TRACKING, [0.0; 4]);
         assert_eq!(served(now), None, "stopped");
+    }
+
+    #[test]
+    fn crops_follow_the_reported_box_and_a_lost_one_stops_the_tracking() {
+        let camera = camera();
+        let (_, now) = camera.lock().heard.expect("the vehicle was heard");
+        let (drawn, now_at) = (rect(0.2, 0.1, 0.6, 0.7), rect(0.4, 0.1, 0.8, 0.7));
+        result(
+            &camera,
+            MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE,
+            [0.2, 0.1, 0.6, 0.7],
+        );
+        assert_eq!(camera.target(now), Some(drawn), "nothing reported yet");
+        camera.applied(Some(now_at), now);
+        assert_eq!(camera.target(now), Some(now_at));
+        assert_eq!(
+            camera.target(now + TTL + Duration::from_millis(1)),
+            Some(drawn)
+        );
+
+        camera.detail_received(drawn, now);
+        camera.lost();
+        assert_eq!(camera.target(now), None);
+        let state = camera.lock();
+        assert_eq!(served_box(state.applied, TTL, state.detail, now), None);
     }
 }

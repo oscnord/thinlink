@@ -28,27 +28,29 @@ const WAIT: Duration = Duration::from_secs(45);
 const MAX_BYTES: u32 = 262_144;
 
 /// Requests crops of the camera's tracked box until the process ends, keeping `cell` to the newest
-/// crop for the box being tracked. `picture` is the output's size.
+/// crop for the box being tracked. The crop is of where the vehicle reports the box now, which is
+/// not where it was drawn once the vehicle follows it. `picture` is the output's size.
 pub fn keep(camera: &Camera, cell: &DetailCell, client: &Client, picture: (usize, usize)) {
     let mut last: Option<(NormRect, Instant)> = None;
     loop {
         thread::sleep(TICK);
-        let Some(rect) = camera.tracking() else {
+        let Some(drawn) = camera.tracking() else {
             cell.clear();
             last = None;
             continue;
         };
-        if last.is_some_and(|(asked, _)| asked != rect) {
+        if last.is_some_and(|(asked, _)| asked != drawn) {
             cell.clear();
         }
-        if last.is_some_and(|(asked, at)| asked == rect && at.elapsed() < EVERY) {
+        if last.is_some_and(|(asked, at)| asked == drawn && at.elapsed() < EVERY) {
             continue;
         }
-        last = Some((rect, Instant::now()));
-        match crop(client, rect, picture) {
-            Ok((image, age_ms)) if camera.tracking() == Some(rect) => {
+        last = Some((drawn, Instant::now()));
+        let now = camera.target(Instant::now()).unwrap_or(drawn);
+        match crop(client, now, picture) {
+            Ok((image, age_ms)) if camera.tracking() == Some(drawn) => {
                 cell.put(image, age_ms);
-                camera.detail_received(rect, Instant::now());
+                camera.detail_received(drawn, Instant::now());
             }
             Ok(_) => {}
             Err(e) => eprintln!("no crop of the pilot's box: {e:#}"),

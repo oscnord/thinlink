@@ -135,6 +135,9 @@ pub enum ToGround {
     Region {
         region: Option<NormRect>,
     },
+    /// The vehicle followed the pilot's box and lost it. The box is gone: the ground stops
+    /// tracking, so tracking status goes idle and the pilot draws another.
+    Lost,
     /// A refused liveness, continuous or region envelope, lease release or unreadable datagram; `seq` when
     /// it could be read.
     Rejected {

@@ -523,6 +523,11 @@ impl Controller {
                     camera.applied(region, Instant::now());
                 }
             }
+            ToGround::Lost => {
+                if let Some(camera) = self.camera.get() {
+                    camera.lost();
+                }
+            }
             ToGround::Rejected { reason, .. } => state.vehicle_rejected(reason),
         }
     }

@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+use crate::follow::{Lost, Order};
 use crate::kind::Kind;
 
 /// Narrowest side a rectangle may have, as a fraction of the picture.
@@ -71,6 +72,14 @@ impl NormRect {
         (self.x1 - self.x0) * (self.y1 - self.y0)
     }
 
+    /// Intersection over union with `other`: 0 when apart, 1 when equal.
+    pub fn overlap(&self, other: &Self) -> f32 {
+        let width = (self.x1.min(other.x1) - self.x0.max(other.x0)).max(0.0);
+        let height = (self.y1.min(other.y1) - self.y0.max(other.y0)).max(0.0);
+        let shared = width * height;
+        shared / (self.area() + other.area() - shared)
+    }
+
     /// The pixels that cover the rectangle in a `width` x `height` frame.
     pub fn pixels(&self, width: usize, height: usize) -> PixelRect {
         PixelRect {
@@ -102,7 +111,41 @@ pub struct RegionCell {
     pilot: Arc<Mutex<Option<Timed>>>,
     detections: Arc<Mutex<Vec<(Kind, Timed)>>>,
     limits: Arc<Mutex<RegionLimits>>,
+    follow: Arc<Mutex<Follow>>,
     origin: Instant,
+}
+
+/// The follow of the pilot's box: the box that began it, where the target is now and how follows
+/// have ended. Off unless `RegionCell::enable_follow` was called, and then the pilot's box is
+/// only where the follow starts: what is kept sharp and confirmed is where the target is now.
+#[derive(Debug, Default)]
+struct Follow {
+    enabled: bool,
+    /// Counts the boxes the pilot has drawn, so the tracker knows a new one from a repeat.
+    generation: u64,
+    seed: Option<NormRect>,
+    /// None when nothing is followed: no box, or the follow ended.
+    now: Option<Timed>,
+    lost: u64,
+    last_lost: Option<Lost>,
+}
+
+impl Follow {
+    /// Starts following `region` unless it is the box already followed (the ground repeats it).
+    fn begin(&mut self, region: Timed) {
+        if !self.enabled || self.seed == Some(region.rect) {
+            return;
+        }
+        self.generation += 1;
+        self.seed = Some(region.rect);
+        self.now = Some(region);
+        self.last_lost = None;
+    }
+
+    fn end(&mut self) {
+        self.seed = None;
+        self.now = None;
+    }
 }
 
 impl Default for RegionCell {
@@ -111,6 +154,7 @@ impl Default for RegionCell {
             pilot: Arc::default(),
             detections: Arc::default(),
             limits: Arc::default(),
+            follow: Arc::default(),
             origin: Instant::now(),
         }
     }
@@ -131,10 +175,69 @@ impl RegionCell {
 
     pub fn set(&self, region: Timed) {
         *locked(&self.pilot) = Some(region);
+        locked(&self.follow).begin(region);
     }
 
     pub fn clear(&self) {
         *locked(&self.pilot) = None;
+        locked(&self.follow).end();
+    }
+
+    /// From now on the pilot's box starts a follow (see `Follow`).
+    pub fn enable_follow(&self) {
+        locked(&self.follow).enabled = true;
+    }
+
+    /// What the tracker is to follow: none when nothing is, or the follow ended.
+    pub fn follow_order(&self) -> Option<Order> {
+        let follow = locked(&self.follow);
+        follow.now?;
+        Some(Order {
+            generation: follow.generation,
+            seed: follow.seed?,
+        })
+    }
+
+    /// The target of request `generation` is at `rect` in the frame taken at `at_ms`. Ignored if
+    /// the pilot has since drawn another box or cleared it.
+    pub fn follow_moved(&self, generation: u64, rect: NormRect, at_ms: u64) {
+        let mut follow = locked(&self.follow);
+        if follow.generation == generation && follow.now.is_some() {
+            follow.now = Some(Timed { rect, at_ms });
+        }
+    }
+
+    /// Request `generation` ended: the target is lost. Ignored like `follow_moved`.
+    pub fn follow_lost(&self, generation: u64, why: Lost) {
+        let mut follow = locked(&self.follow);
+        if follow.generation != generation || follow.now.is_none() {
+            return;
+        }
+        follow.now = None;
+        follow.lost += 1;
+        follow.last_lost = Some(why);
+    }
+
+    /// How many follows ended lost, and why the last did.
+    pub fn follow_lost_count(&self) -> (u64, Option<Lost>) {
+        let follow = locked(&self.follow);
+        (follow.lost, follow.last_lost)
+    }
+
+    /// Where the target is now, if the tracker has said so within `detection_ttl_ms`.
+    pub fn followed(&self) -> Option<NormRect> {
+        let now = locked(&self.follow).now?;
+        let ttl = locked(&self.limits).detection_ttl_ms;
+        (self.now_ms().saturating_sub(now.at_ms) <= ttl).then_some(now.rect)
+    }
+
+    /// The box the vehicle confirms to the ground: where the target is now when following, else
+    /// the pilot's box the sender keeps sharp.
+    pub fn confirmed(&self) -> Option<NormRect> {
+        if locked(&self.follow).enabled {
+            return self.followed();
+        }
+        self.pilot_in_use()
     }
 
     pub fn latest(&self) -> Option<Timed> {
@@ -155,7 +258,17 @@ impl RegionCell {
 
     /// The regions to keep sharp now (see [`active`]).
     pub fn regions(&self) -> Vec<NormRect> {
-        self.active_with(self.latest())
+        self.active_with(self.pilot_box())
+    }
+
+    /// The pilot's box as the sender sees it: where the target is now when following.
+    fn pilot_box(&self) -> Option<Timed> {
+        let follow = locked(&self.follow);
+        if follow.enabled {
+            return follow.now;
+        }
+        drop(follow);
+        self.latest()
     }
 
     /// The detections that are active on their own, with their kind: the ones the sender outlines.
@@ -174,7 +287,7 @@ impl RegionCell {
     /// The pilot's box if the sender keeps it sharp now: fresh, and not dropped for the area or the
     /// number of regions. This, not the box last received, is what the vehicle confirms.
     pub fn pilot_in_use(&self) -> Option<NormRect> {
-        let pilot = self.latest()?.rect;
+        let pilot = self.pilot_box()?.rect;
         self.regions().first().copied().filter(|r| *r == pilot)
     }
 
@@ -380,5 +493,40 @@ mod tests {
         });
         cell.publish_detections([(Kind::Person, small), (Kind::Car, big)], cell.now_ms());
         assert_eq!(cell.detected(), vec![(Kind::Car, big)]);
+    }
+
+    #[test]
+    fn a_follow_starts_with_the_pilot_box_and_a_repeat_or_a_lost_one_does_not_restart_it() {
+        let cell = RegionCell::default();
+        cell.configure(LIMITS);
+        cell.enable_follow();
+        let (drawn, moved) = (rect(0.2, 0.2), rect(0.3, 0.2));
+        cell.set(at(drawn, cell.now_ms()));
+        let order = cell.follow_order().unwrap();
+        assert_eq!((order.generation, order.seed), (1, drawn));
+        assert_eq!(cell.confirmed(), Some(drawn));
+
+        cell.follow_moved(order.generation, moved, cell.now_ms());
+        cell.set(at(drawn, cell.now_ms()));
+        assert_eq!(cell.follow_order().map(|o| o.generation), Some(1));
+        assert_eq!(cell.confirmed(), Some(moved));
+        assert_eq!(cell.regions(), vec![moved]);
+
+        cell.follow_lost(order.generation, Lost::Score);
+        cell.set(at(drawn, cell.now_ms()));
+        assert_eq!(cell.follow_order(), None);
+        assert_eq!(cell.confirmed(), None);
+        assert_eq!(cell.regions(), vec![]);
+        assert_eq!(cell.follow_lost_count(), (1, Some(Lost::Score)));
+
+        cell.clear();
+        cell.set(at(drawn, cell.now_ms()));
+        assert_eq!(cell.follow_order().map(|o| o.generation), Some(2));
+        cell.follow_moved(order.generation, moved, cell.now_ms());
+        assert_eq!(
+            cell.confirmed(),
+            Some(drawn),
+            "a report for the old box is ignored"
+        );
     }
 }

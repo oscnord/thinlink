@@ -151,3 +151,9 @@ max_area_percent = 50
 # The detector's rate and the lowest score that counts as a person.
 detector_fps = 2
 detector_min_score = 0.4
+# Following the pilot's box (`follow = true` in [region] of the vehicle config): the tracker takes
+# this many frames a second, and the follow ends as lost when the correlation with the box the pilot
+# drew stays under this for this many frames in a row (or the target leaves the picture).
+follow_fps = 10
+follow_min_score = 0.5
+follow_lost_frames = 5

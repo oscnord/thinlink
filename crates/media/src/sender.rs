@@ -23,11 +23,12 @@ use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::follow;
 use sat_teleop_policy::stamp::{self, CaptureMs, FrameId, Stamp};
 
 use crate::camera::{self, CameraFormat, CaptureClock, Encoder, EncoderWish};
 use crate::ingest::{self, IngestSnapshot, IngestStats};
-use crate::region::{DetectorFrame, Regional};
+use crate::region::{DetectorFrame, FollowFrame, Regional};
 use crate::stages::{InEncoder, Marks, Stage, StageSnapshot};
 use crate::{
     Health, HealthSnapshot, MediaError, Running, Traffic, TrafficSnapshot, failure, luma_geometry,
@@ -727,6 +728,12 @@ fn build(
         pipeline.add_many(branch.iter().skip(1))?;
         gst::Element::link_many(&branch)?;
     }
+    if regional.follows() {
+        let mut branch = vec![head.last().cloned().ok_or(MediaError::Missing("tee"))?];
+        branch.extend(follow_branch(regional)?);
+        pipeline.add_many(branch.iter().skip(1))?;
+        gst::Element::link_many(&branch)?;
+    }
     let keyframes = Keyframes {
         encoder: encoder.downgrade(),
         every: Duration::from_millis(u64::from(rung.keyframe_interval_ms)),
@@ -1166,6 +1173,68 @@ fn detector_branch(input: u32, regional: &Arc<Regional>) -> Result<Vec<gst::Elem
     ])
 }
 
+/// The tracker's branch after the tee: like the detector's, but the luma plane alone at the size
+/// the tracker works at (`follow::WIDTH` x `follow::HEIGHT`, whatever the camera's shape), handed
+/// to the application's tracker by an appsink that drops what it cannot take.
+fn follow_branch(regional: &Arc<Regional>) -> Result<Vec<gst::Element>, MediaError> {
+    let queue = gst::ElementFactory::make("queue")
+        .property_from_str("leaky", "downstream")
+        .property("max-size-buffers", 1u32)
+        .property("max-size-bytes", 0u32)
+        .property("max-size-time", 0u64)
+        .build()?;
+    copy_frames(&queue, regional.follow_fps())?;
+    let luma = gst::ElementFactory::make("capsfilter")
+        .property(
+            "caps",
+            gst::Caps::builder("video/x-raw")
+                .field("format", "GRAY8")
+                .field("width", follow_side(follow::WIDTH)?)
+                .field("height", follow_side(follow::HEIGHT)?)
+                .build(),
+        )
+        .build()?;
+    let sink = gst_app::AppSink::builder()
+        .max_buffers(1)
+        .drop(true)
+        .sync(false)
+        .build();
+    let regional = Arc::clone(regional);
+    sink.set_callbacks(
+        gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |sink| {
+                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
+                offer_to_tracker(&regional, &sample);
+                Ok(gst::FlowSuccess::Ok)
+            })
+            .build(),
+    );
+    Ok(vec![
+        queue,
+        gst::ElementFactory::make("videoscale").build()?,
+        gst::ElementFactory::make("videoconvert").build()?,
+        luma,
+        sink.upcast(),
+    ])
+}
+
+fn follow_side(pixels: usize) -> Result<i32, MediaError> {
+    i32::try_from(pixels).map_err(|e| MediaError::Config(e.to_string()))
+}
+
+/// Hands the tracker the frame's luma; a buffer that is not exactly the picture the tracker
+/// works on (padded rows) is dropped, never read as another shape.
+fn offer_to_tracker(regional: &Regional, sample: &gst::Sample) {
+    let at_ms = regional.cell.now_ms();
+    let luma = sample
+        .buffer()
+        .and_then(|buffer| buffer.map_readable().ok())
+        .map(|map| map.as_slice().to_vec());
+    if let Some(luma) = luma.filter(|luma| follow::Luma::new(luma).is_some()) {
+        regional.offer_follow(FollowFrame { at_ms, luma });
+    }
+}
+
 fn offer_to_detector(regional: &Regional, sample: &gst::Sample) {
     let at_ms = regional.cell.now_ms();
     let size = sample
@@ -1393,9 +1462,12 @@ mod tests {
             max_area_percent: 50,
             detector_fps: 2,
             detector_min_score: 0.4,
+            follow_fps: 10,
+            follow_min_score: 0.5,
+            follow_lost_frames: 5,
         };
         let cell = sat_teleop_policy::region::RegionCell::default();
-        let regional = Regional::new(settings, cell.clone(), None, 2);
+        let regional = Regional::new(settings, cell.clone(), None, 2, false);
         // The bottom left quarter of the picture.
         let rect = NormRect::new(0.0, 0.5, 0.5, 1.0).unwrap();
         cell.set(Timed {

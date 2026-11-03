@@ -498,6 +498,7 @@ pub(super) fn serve(
             stats.controllers().into_iter().map(PeerId).collect(),
         ),
         holder: None,
+        told: Told::default(),
         next_challenge_ms: 0,
         last_setpoint_ms: 0,
         last_nonce: HashMap::new(),
@@ -525,12 +526,25 @@ struct Endpoint<'a> {
     state: LeaseState<Frame>,
     /// Where the holder asked from; its challenges go there.
     holder: Option<SocketAddr>,
+    /// What the holder was last told of the followed box.
+    told: Told,
     next_challenge_ms: u64,
     /// When a setpoint was last written to SITL, first or again.
     last_setpoint_ms: u64,
     /// The highest lease-request nonce accepted from each controller.
     last_nonce: HashMap<IpAddr, u64>,
 }
+
+/// Where the followed box was last told to the holder, and when, in this endpoint's milliseconds.
+#[derive(Default)]
+struct Told {
+    lost: u64,
+    target: Option<NormRect>,
+    at_ms: u64,
+}
+
+/// The followed box is told to the holder when it moves, no more often than this.
+const FOLLOW_REPORT_EVERY_MS: u64 = 250;
 
 impl Endpoint<'_> {
     /// Writes `frame` to SITL once it is identified, otherwise to the logging sink; false when SITL
@@ -712,7 +726,7 @@ impl Endpoint<'_> {
             None => self.stats.region.clear(),
         }
         self.stats.update(|c| c.applied.region += 1);
-        let region = self.stats.region.pilot_in_use();
+        let region = self.stats.region.confirmed();
         self.reply(to, &ToGround::Region { region });
     }
 
@@ -857,12 +871,40 @@ impl Endpoint<'_> {
         if self.state.holder(now).is_none() {
             self.clear_region();
         }
+        self.tell_follow(now);
         let lease = self
             .state
             .holder(now)
             .zip(self.holder)
             .map(|((_, id), holder)| LeaseView { id: id.0, holder });
         self.stats.update(|c| c.lease = lease);
+    }
+
+    /// Tells the holder where the followed box is when it has moved, and when the follow ended.
+    fn tell_follow(&mut self, now: u64) {
+        let (lost, _) = self.stats.region.follow_lost_count();
+        let ended = lost != self.told.lost;
+        if ended {
+            self.told = Told {
+                lost,
+                target: None,
+                at_ms: now,
+            };
+        }
+        let Some(holder) = self.holder else {
+            return;
+        };
+        if ended {
+            return self.reply(holder, &ToGround::Lost);
+        }
+        let target = self.stats.region.followed();
+        let due = now.saturating_sub(self.told.at_ms) >= FOLLOW_REPORT_EVERY_MS;
+        if target.is_none() || target == self.told.target || !due {
+            return;
+        }
+        self.told.target = target;
+        self.told.at_ms = now;
+        self.reply(holder, &ToGround::Region { region: target });
     }
 
     fn challenge(&mut self, now: u64) {
@@ -961,6 +1003,8 @@ mod tests {
     use mavlink::dialects::ardupilotmega::{
         HEARTBEAT_DATA, MavParamType, MavType, PARAM_VALUE_DATA,
     };
+
+    use sat_teleop_policy::follow::Lost;
 
     use super::*;
     use crate::params::ParamType;
@@ -1084,6 +1128,7 @@ mod tests {
                     ],
                 ),
                 holder: None,
+                told: Told::default(),
                 next_challenge_ms: 0,
                 last_setpoint_ms: 0,
                 last_nonce: HashMap::new(),
@@ -1153,6 +1198,35 @@ mod tests {
 
     fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> NormRect {
         NormRect { x0, y0, x1, y1 }
+    }
+
+    #[test]
+    fn a_followed_box_is_told_where_it_is_and_then_that_it_is_lost() {
+        let rig = rig();
+        rig.stats.region.enable_follow();
+        let mut endpoint = rig.endpoint();
+        let taken = rig.take(&mut endpoint);
+        let (drawn, moved) = (rect(0.2, 0.1, 0.6, 0.7), rect(0.3, 0.1, 0.7, 0.7));
+        rig.send(
+            &mut endpoint,
+            &rig.region_envelope(&taken, 1, Some(drawn), None),
+        );
+        assert!(matches!(rig.reply(), Some(ToGround::Region { region: Some(r) }) if r == drawn));
+
+        let generation = rig.stats.region.follow_order().unwrap().generation;
+        rig.stats
+            .region
+            .follow_moved(generation, moved, rig.stats.region.now_ms());
+        thread::sleep(Duration::from_millis(FOLLOW_REPORT_EVERY_MS + 50));
+        endpoint.tick();
+        assert!(matches!(rig.reply(), Some(ToGround::Region { region: Some(r) }) if r == moved));
+
+        rig.stats.region.follow_lost(generation, Lost::Score);
+        endpoint.tick();
+        assert!(matches!(rig.reply(), Some(ToGround::Lost)));
+        endpoint.tick();
+        assert!(rig.reply().is_none(), "told once");
+        rig.nothing_reached_the_autopilot();
     }
 
     #[test]

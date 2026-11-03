@@ -2,6 +2,7 @@ pub mod adapt;
 pub mod budget;
 pub mod clock;
 pub mod control;
+pub mod follow;
 pub mod freshness;
 pub mod inset;
 pub mod kind;

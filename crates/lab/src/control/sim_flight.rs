@@ -7,6 +7,7 @@
 //! are graded against `perf/budgets.toml`. `checks` only reads what the copter reports: a copter
 //! that falls is a failure, not a state to repair.
 
+pub mod follow;
 pub mod mission;
 
 use std::net::SocketAddr;

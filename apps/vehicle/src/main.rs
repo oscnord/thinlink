@@ -29,6 +29,7 @@ use sat_teleop_media::region::{
 use sat_teleop_media::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
 use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
 use sat_teleop_policy::budget::{Budget, wire_bytes};
+use sat_teleop_policy::follow::{Follower, Luma, Step};
 use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::NormRect;
 use sat_teleop_policy::retrieval::ground_heard;
@@ -104,6 +105,8 @@ struct Config {
     detector: Option<DetectorConfig>,
     /// Block size of the softened area outside the pilot's box and the people found; 1 is off.
     soften_factor: u8,
+    /// Whether the pilot's box is followed from frame to frame.
+    follow: bool,
 }
 
 /// `[region]` of the vehicle config. The limits are in `[region]` of the limits file.
@@ -113,6 +116,9 @@ struct RegionConfig {
     detector: Option<DetectorConfig>,
     /// 1 (the default) is off: the pilot's box is not kept and nothing is softened. 2 to 4 soften.
     soften_factor: Option<u8>,
+    /// Follow the pilot's box from frame to frame (off by default).
+    #[serde(default)]
+    follow: bool,
 }
 
 #[derive(Clone, Deserialize)]
@@ -297,6 +303,7 @@ fn run(
         detail,
         detector,
         soften_factor,
+        follow,
     } = load(config)?;
     let token = tokens
         .metrics
@@ -368,7 +375,12 @@ fn run(
         bridge.control.region.clone(),
         input,
         soften_factor,
+        follow,
     );
+    if follow {
+        let regional = Arc::clone(&regional);
+        thread::spawn(move || follow_things(&regional));
+    }
     match loaded {
         Some((_, Ok(detector))) => {
             let regional = Arc::clone(&regional);
@@ -526,6 +538,41 @@ fn find_things(regional: &Regional, mut detector: Detector, seen: impl Fn(&[Dete
     }
 }
 
+/// Follows the pilot's box on the newest frame the sender offers, over and over, and tells the
+/// cell where the target is or that it is lost.
+fn follow_things(regional: &Regional) {
+    let mut follower = Follower::new(regional.follow_settings());
+    loop {
+        let frame = regional.next_follow_frame();
+        let Some(luma) = Luma::new(&frame.luma) else {
+            continue;
+        };
+        let started = Instant::now();
+        let order = regional.cell.follow_order();
+        let detections: Vec<NormRect> = regional
+            .cell
+            .detected()
+            .into_iter()
+            .map(|(_, rect)| rect)
+            .collect();
+        let step = follower.step(luma, order, &detections);
+        let Some(order) = order else {
+            continue;
+        };
+        match step {
+            Step::Moved(rect, score) => {
+                regional
+                    .cell
+                    .follow_moved(order.generation, rect, frame.at_ms);
+                regional.followed_frame(score, started.elapsed());
+            }
+            Step::Held(score) => regional.followed_frame(score, started.elapsed()),
+            Step::Lost(why) => regional.cell.follow_lost(order.generation, why),
+            Step::Idle => {}
+        }
+    }
+}
+
 /// Records `found` in the frame captured at `capture_ms` as sightings, where the drone is now.
 /// Without a fresh position there is nowhere to say they were.
 fn note_sightings(bridge: &VehicleStats, found: &[Detection], capture_ms: u64) {
@@ -675,6 +722,7 @@ fn load(path: &Path) -> Result<Config> {
         store,
         detail,
         detector: region.detector,
+        follow: region.follow,
         soften_factor,
     })
 }

@@ -3,7 +3,7 @@
 //! detector itself (`sat-teleop-detect`) is in a sibling crate, so the application runs it: the
 //! sender offers it the newest scaled frame (`DetectorFrame`) and it publishes what it finds to the cell.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -12,6 +12,7 @@ use gstreamer_video as gst_video;
 use gstreamer_video::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::follow::{self, Lost};
 use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::{NormRect, RegionCell, RegionLimits};
 use sat_teleop_policy::soften::{outline, soften_i420_plane, tag};
@@ -23,6 +24,8 @@ const MAX_SOFTEN_FACTOR: u8 = 4;
 const MAX_REGIONS: usize = 16;
 const MAX_DETECTOR_FPS: u16 = 10;
 const MAX_TTL_MS: u64 = 60_000;
+const MAX_FOLLOW_FPS: u16 = 30;
+const MAX_LOST_FRAMES: u32 = 60;
 /// The letter of a tag in Y, U and V: black.
 const TAG_INK: [u8; 3] = [16, 128, 128];
 /// An outline is this many pixels at a luma width of `OUTLINE_REFERENCE_WIDTH`, and scales with it.
@@ -47,6 +50,27 @@ pub struct RegionSettings {
     pub max_area_percent: u8,
     pub detector_fps: u16,
     pub detector_min_score: f32,
+    /// How often the tracker takes a frame.
+    #[serde(default = "default_follow_fps")]
+    pub follow_fps: u16,
+    /// The correlation a match must reach to hold the followed box.
+    #[serde(default = "default_follow_min_score")]
+    pub follow_min_score: f32,
+    /// Frames in a row under `follow_min_score` that end the follow as lost.
+    #[serde(default = "default_follow_lost_frames")]
+    pub follow_lost_frames: u32,
+}
+
+fn default_follow_fps() -> u16 {
+    10
+}
+
+fn default_follow_min_score() -> f32 {
+    0.5
+}
+
+fn default_follow_lost_frames() -> u32 {
+    5
 }
 
 impl RegionSettings {
@@ -72,6 +96,18 @@ impl RegionSettings {
             (
                 self.detector_min_score > 0.0 && self.detector_min_score <= 1.0,
                 "detector_min_score must be above 0 and at most 1",
+            ),
+            (
+                (1..=MAX_FOLLOW_FPS).contains(&self.follow_fps),
+                "follow_fps must be 1-30",
+            ),
+            (
+                self.follow_min_score > 0.0 && self.follow_min_score <= 1.0,
+                "follow_min_score must be above 0 and at most 1",
+            ),
+            (
+                (1..=MAX_LOST_FRAMES).contains(&self.follow_lost_frames),
+                "follow_lost_frames must be 1-60",
             ),
         ];
         match rules.iter().find(|(holds, _)| !holds) {
@@ -106,6 +142,50 @@ pub struct DetectorFrame {
     pub rgb: Vec<u8>,
 }
 
+/// A frame for the tracker: the luma plane at `follow::WIDTH` x `follow::HEIGHT`, and the cell's
+/// time when the frame was taken.
+#[derive(Debug)]
+pub struct FollowFrame {
+    pub at_ms: u64,
+    pub luma: Vec<u8>,
+}
+
+/// The newest value handed over and not yet taken: a slow taker skips to the newest, and the giver
+/// never waits.
+#[derive(Debug)]
+struct Handoff<T> {
+    latest: Mutex<Option<T>>,
+    offered: Condvar,
+}
+
+impl<T> Handoff<T> {
+    fn new() -> Self {
+        Self {
+            latest: Mutex::new(None),
+            offered: Condvar::new(),
+        }
+    }
+
+    fn offer(&self, value: T) {
+        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
+        self.offered.notify_one();
+    }
+
+    /// The newest value offered and not taken yet, waiting for one if there is none.
+    fn next(&self) -> T {
+        let mut latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(value) = latest.take() {
+                return value;
+            }
+            latest = self
+                .offered
+                .wait(latest)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
 /// What the sender needs for regional video, and its counters. Shared with the application's
 /// detector thread and its metrics.
 #[derive(Debug)]
@@ -116,14 +196,16 @@ pub struct Regional {
     soften_factor: u8,
     /// The model's input size, when a detector is configured: the sender feeds it.
     detector_input: Option<u32>,
-    /// The newest frame the sender offered that the detector has not taken.
-    latest: Mutex<Option<DetectorFrame>>,
-    offered: Condvar,
+    /// Whether the pilot's box is followed (the sender then feeds the tracker).
+    follow: bool,
+    detector_frames: Handoff<DetectorFrame>,
+    follow_frames: Handoff<FollowFrame>,
     active: AtomicU64,
     softened_frames: AtomicU64,
     shape_failures: AtomicU64,
     soften: Stage,
     detector: Detector,
+    tracker: Tracker,
 }
 
 #[derive(Debug)]
@@ -134,10 +216,34 @@ struct Detector {
     run: Stage,
 }
 
+#[derive(Debug)]
+struct Tracker {
+    frames: AtomicU64,
+    /// The last match's correlation, as `f32` bits.
+    score: AtomicU32,
+    run: Stage,
+}
+
 #[derive(Debug, Serialize)]
 pub struct RegionalSnapshot {
     pub region: RegionCounts,
     pub detector: DetectorSnapshot,
+    pub follow: FollowSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FollowSnapshot {
+    /// `off`, `idle` (nothing followed) or `following`.
+    pub state: &'static str,
+    pub frames: u64,
+    /// Correlation of the last match.
+    pub score: f32,
+    /// Follows that ended lost, and why the last did (`score`, `edge` or `flat`).
+    pub lost: u64,
+    pub last_lost: Option<&'static str>,
+    /// Where the target is now: x0, y0, x1, y1 in fractions of the picture.
+    pub target: Option<[f32; 4]>,
+    pub ms: StageSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -157,26 +263,34 @@ pub struct DetectorSnapshot {
     pub runs: u64,
     pub found: u64,
     pub ms: StageSnapshot,
+    /// What is active now: kind and x0, y0, x1, y1 in fractions of the picture.
+    pub boxes: Vec<(&'static str, [f32; 4])>,
 }
 
 impl Regional {
     /// Regional video with `settings` (already validated) around `cell`, which the control loop
     /// shares. `detector_input` is the model's input size when a detector runs: the sender then
-    /// feeds it. `soften_factor` is the block size of the softened area (1 is off).
+    /// feeds it. `soften_factor` is the block size of the softened area (1 is off). With `follow`
+    /// the pilot's box starts a follow and the sender feeds the tracker.
     pub fn new(
         settings: RegionSettings,
         cell: RegionCell,
         detector_input: Option<u32>,
         soften_factor: u8,
+        follow: bool,
     ) -> Arc<Self> {
         cell.configure(settings.limits(soften_factor));
+        if follow {
+            cell.enable_follow();
+        }
         let regional = Self {
             cell,
             settings,
             soften_factor,
             detector_input,
-            latest: Mutex::new(None),
-            offered: Condvar::new(),
+            follow,
+            detector_frames: Handoff::new(),
+            follow_frames: Handoff::new(),
             active: AtomicU64::new(0),
             softened_frames: AtomicU64::new(0),
             shape_failures: AtomicU64::new(0),
@@ -185,6 +299,11 @@ impl Regional {
                 state: Mutex::new("off".to_owned()),
                 runs: AtomicU64::new(0),
                 found: AtomicU64::new(0),
+                run: Stage::new(),
+            },
+            tracker: Tracker {
+                frames: AtomicU64::new(0),
+                score: AtomicU32::new(0),
                 run: Stage::new(),
             },
         };
@@ -203,25 +322,47 @@ impl Regional {
         self.settings.detector_min_score
     }
 
+    pub(crate) fn follows(&self) -> bool {
+        self.follow
+    }
+
+    pub(crate) fn follow_fps(&self) -> u16 {
+        self.settings.follow_fps
+    }
+
+    /// The tracker's settings from `[region]` of the limits file.
+    pub fn follow_settings(&self) -> follow::Settings {
+        follow::Settings {
+            min_score: self.settings.follow_min_score,
+            lost_frames: self.settings.follow_lost_frames,
+        }
+    }
+
     /// Hands a frame to the detector, replacing one it has not taken yet: a busy detector skips
     /// to the newest frame, so what it finds is never a run old, and the live video never waits.
     pub(crate) fn offer(&self, frame: DetectorFrame) {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(frame);
-        self.offered.notify_one();
+        self.detector_frames.offer(frame);
     }
 
     /// The newest frame offered and not taken yet, waiting for one if there is none.
     pub fn next_frame(&self) -> DetectorFrame {
-        let mut latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            if let Some(frame) = latest.take() {
-                return frame;
-            }
-            latest = self
-                .offered
-                .wait(latest)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
+        self.detector_frames.next()
+    }
+
+    /// Hands a frame to the tracker like `offer` does for the detector.
+    pub(crate) fn offer_follow(&self, frame: FollowFrame) {
+        self.follow_frames.offer(frame);
+    }
+
+    pub fn next_follow_frame(&self) -> FollowFrame {
+        self.follow_frames.next()
+    }
+
+    /// Counts a frame the tracker took, with its last correlation and how long it took.
+    pub fn followed_frame(&self, score: f32, took: Duration) {
+        self.tracker.frames.fetch_add(1, Ordering::Relaxed);
+        self.tracker.score.store(score.to_bits(), Ordering::Relaxed);
+        self.tracker.run.record(took);
     }
 
     /// Counts a frame that could not be shaped.
@@ -273,8 +414,48 @@ impl Regional {
                 runs: self.detector.runs.load(Ordering::Relaxed),
                 found: self.detector.found.load(Ordering::Relaxed),
                 ms: self.detector.run.snapshot(),
+                boxes: self
+                    .cell
+                    .detected()
+                    .into_iter()
+                    .map(|(kind, rect)| (kind.name(), corners(rect)))
+                    .collect(),
             },
+            follow: self.follow_snapshot(),
         }
+    }
+
+    fn follow_snapshot(&self) -> FollowSnapshot {
+        let target = self.cell.followed();
+        let (lost, last_lost) = self.cell.follow_lost_count();
+        let state = match (self.follow, self.cell.follow_order()) {
+            (false, _) => "off",
+            (true, None) => "idle",
+            (true, Some(_)) => "following",
+        };
+        FollowSnapshot {
+            state,
+            frames: self.tracker.frames.load(Ordering::Relaxed),
+            score: f32::from_bits(self.tracker.score.load(Ordering::Relaxed)),
+            lost,
+            last_lost: last_lost.map(Lost::name),
+            target: target.map(corners),
+            ms: self.tracker.run.snapshot(),
+        }
+    }
+
+    /// What is outlined: the detections in their kind's colour, then the followed box in its own.
+    fn outlines(&self) -> Vec<([u8; 3], [u8; 7], NormRect)> {
+        let detected = self
+            .cell
+            .detected()
+            .into_iter()
+            .map(|(kind, rect)| (kind.yuv(), kind.glyph(), rect));
+        let followed = self
+            .cell
+            .followed()
+            .map(|rect| (follow::YUV, follow::GLYPH, rect));
+        detected.chain(followed).collect()
     }
 
     /// Softens the picture outside the regions and outlines what was found. Runs before the
@@ -285,13 +466,13 @@ impl Regional {
     ) -> Result<(), MediaError> {
         let started = Instant::now();
         let regions = self.cell.regions();
-        let boxes = self.cell.detected();
+        let outlines = self.outlines();
         let softening = self.soften_factor > 1 && !regions.is_empty();
         self.active.store(
             if softening { regions.len() as u64 } else { 0 },
             Ordering::Relaxed,
         );
-        if !softening && boxes.is_empty() {
+        if !softening && outlines.is_empty() {
             return Ok(());
         }
         let factor = if softening {
@@ -306,11 +487,11 @@ impl Regional {
             let data = frame.plane_data_mut(plane)?;
             soften_i420_plane(index, data, geometry, &regions, factor);
             let thickness = outline_thickness(index, width);
-            for (kind, rect) in &boxes {
+            for (yuv, glyph, rect) in &outlines {
                 let pixels = rect.pixels(geometry.width, geometry.height);
-                let colour = kind.yuv().get(index).copied().unwrap_or(ink);
+                let colour = yuv.get(index).copied().unwrap_or(ink);
                 outline(data, geometry, pixels, thickness, colour);
-                tag(data, geometry, pixels, kind.glyph(), thickness, colour, ink);
+                tag(data, geometry, pixels, *glyph, thickness, colour, ink);
             }
         }
         if softening {
@@ -319,6 +500,10 @@ impl Regional {
         }
         Ok(())
     }
+}
+
+fn corners(rect: NormRect) -> [f32; 4] {
+    [rect.x0, rect.y0, rect.x1, rect.y1]
 }
 
 /// The outline's thickness, which is also the tag's pixel size, in plane `index` of a frame
@@ -339,6 +524,9 @@ mod tests {
         max_area_percent: 50,
         detector_fps: 2,
         detector_min_score: 0.4,
+        follow_fps: 10,
+        follow_min_score: 0.5,
+        follow_lost_frames: 5,
     };
 
     #[test]
@@ -354,7 +542,7 @@ mod tests {
     #[test]
     fn with_softening_off_detections_count_and_the_pilot_box_does_not() {
         let cell = RegionCell::default();
-        let _regional = Regional::new(SETTINGS, cell.clone(), Some(320), 1);
+        let _regional = Regional::new(SETTINGS, cell.clone(), Some(320), 1, false);
         let pilot = NormRect::new(0.1, 0.1, 0.3, 0.3).unwrap();
         let person = (Kind::Person, NormRect::new(0.5, 0.5, 0.6, 0.8).unwrap());
         cell.set(sat_teleop_policy::region::Timed {
@@ -368,7 +556,7 @@ mod tests {
 
     #[test]
     fn a_busy_detector_gets_the_newest_frame() {
-        let regional = Regional::new(SETTINGS, RegionCell::default(), Some(320), 2);
+        let regional = Regional::new(SETTINGS, RegionCell::default(), Some(320), 2, false);
         for at_ms in [1, 2, 3] {
             regional.offer(DetectorFrame {
                 at_ms,

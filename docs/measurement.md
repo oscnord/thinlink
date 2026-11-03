@@ -247,6 +247,24 @@ x264's adaptive quantization is not a cause: the sender's `speed-preset=ultrafas
 
 What they show: on this card the top rung is not starved (the plain picture scores 0.89 to 0.95 inside the box), so there is no spare quality for softening to move into the box. Tracking a box changed the SSIM inside it by between -0.016 and +0.003 pilot-only (no gain), and lowered the SSIM outside it by 0.005 to 0.007 against the same rung plain; at rung 0 the outside with regional video was 0.005 to 0.042 below the plain picture one rung down and the fine-detail contrast kept was 0.89 to 1.01 of the rung below's. So `region_ssim_gain` is not above 0 in any run, and `outside_ssim_vs_lower_rung` fails at rung 0. The cause was not found; no threshold or softening setting was changed. The vehicle's frame age with the box was 365 to 455 ms at p95, within the skeleton's `geo` budget plus the output's hops. Not measured: rung 2 against the rung below, the V4L2 hardware encoder (the testbed has no path to one), people in the picture (the card's figures are shapes, so the detector found nobody and its cost, not its accuracy, is measured), a moving picture and a real Pi.
 
+## Following
+
+The vehicle follows the pilot's box with a correlation tracker (`sat_teleop_policy::follow`, `docs/architecture.md`, "Regional video"). Two simple candidates were measured on the simulated people; the one kept is normalised cross-correlation (NCC) of a template in a window around the last place.
+
+Method. One retained snapshot of the simulated world (640 x 360, from the simulated flight's camera, the right-most person 13 x 35 px at the tracker's 320 x 180) is panned left by 4, 10 or 14 px a frame, 70, 40 or 30 frames, with a slow gain swing of 10 % or 30 % and noise, so the true place is known. The candidates: NCC (the policy crate's `Follower`, search 16 px) and the sum of absolute differences (SAD, fixed template, search 16 px, lost when the mean difference stays over 20 grey levels for three frames). MOSSE was not measured: it needs an FFT and the workspace has none, and NCC already costs under a millisecond.
+
+| Pan and gain swing | NCC | SAD |
+|---|---|---|
+| 4 px, 10 % | held to the edge, 0.5 px mean error, lost on the frame the person left | 0.7 px, lost 2 frames after she left |
+| 4 px, 30 % | the same | lost on frame 5 with her in view |
+| 10 px, 10 % | the same | lost 2 frames after she left |
+| 10 px, 30 % | the same | lost on frame 5 with her in view |
+| 14 px, 10 % | lost 2 frames after she left | the same |
+
+NCC ignores brightness and contrast, which a real yaw changes, and its score says how good a match is, which a lost threshold needs; SAD has neither. The cost is NCC 0.27 ms a frame on average (p95 0.45 ms) and SAD 0.14 ms in a container capped to 0.5 CPUs (the `PI=pi4` cap), and NCC 1.2 ms on average (p95 0.5 to 0.6 ms; the average carries the cap's throttling) at 0.25 CPUs (`PI=pi-zero-2w`). A building-size box (the pad and the gate, 160 x 90 px) is sampled on a lattice of at most 3000 samples and costs NCC 1.0 ms (p95 1.3 ms) at 0.5 CPUs and about 3 ms on average at 0.25; SAD without a lattice costs 2.6 ms and 3.7 ms. The caps are CPU quotas on the host's cores, not slower cores, so a real Pi is slower. In the follow check on the Pi 4 caps (run `1793685977901-follow-lan`) the tracker took 0.256 ms at p50 and 0.65 ms at p95 per frame, at `follow_fps` 10, next to the detector's 21.7 ms at p50 and 38.9 ms at p95.
+
+What the simulated flight taught. The pan above is a shifted still; the real people walk and the camera pitches and rolls. Replaying the 1 frame a second snapshots of run `1793685368056-follow-lan` (the person still in view when its follow ended), a template that stays as the pilot drew it scored 1.0, 0.9 a third of the way through the yaw and 0.73 on the plateau after it, and the run's own 10 frame a second tracker was under 0.6 for three frames 14 s in; a template that moves one part in eight towards every match of 0.7 or better scored 0.83 to 0.94 on the same frames, and falls to 0.2 to 0.4 on a different picture (the copter landing), where unrelated pictures also score. A template that learns from every match slid onto the background when the person left, in a synthetic test with a repeating background; learning only from matches of 0.7 or better, and ending the follow when the box reaches an edge it did not touch at the start, avoids it. The defaults: `follow_min_score` 0.5, five weak frames in a row, and a search window that grows with each weak frame in a row (up to three times).
+
 ## Obstacles
 
 Whether a small model a Pi can run sees wires, poles and masts, and bare branches in drone-height photos, at the 320 px the detector works at. Measured on the host (macOS arm64) with a script outside the repo, one pass, no tuning.

@@ -153,6 +153,7 @@ enum Scenario {
     RealMode,
     SimFlight,
     SimMission,
+    Follow,
     QgcStatus,
     Adaptation,
     Recording,
@@ -172,6 +173,7 @@ impl Scenario {
             Self::RealMode => "real-mode",
             Self::SimFlight => "sim-flight",
             Self::SimMission => "sim-mission",
+            Self::Follow => "follow",
             Self::QgcStatus => "qgc-status",
             Self::Adaptation => "adaptation",
             Self::Recording => "recording",
@@ -310,6 +312,7 @@ fn run_check(args: &CheckArgs) -> Result<Verdict> {
         Scenario::SimMission => {
             control::sim_flight::mission::run(&agent, &text, &sim_settings(args)?)
         }
+        Scenario::Follow => control::sim_flight::follow::run(&agent, &text, &sim_settings(args)?),
         Scenario::QgcStatus => {
             let budgets = load_budgets()?;
             let limits = fs::read_to_string(LIMITS_PATH)
