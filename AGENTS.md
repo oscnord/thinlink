@@ -46,6 +46,7 @@ Packages that exist today:
 | Layer | Package | Dir | Responsibility |
 |---|---|---|---|
 | L0 | `sat-teleop-video-core` | `crates/video-core` | The core of the workspace, pure: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token check |
+| L0 | `sat-teleop-x264` | `crates/x264` | The `satx264enc` GStreamer element and safe libx264 wrapper; GPL-2.0-or-later |
 | L1 | `sat-teleop-video` | `crates/video` | The core of the workspace, GStreamer: sender with live rung changes, its snapshot branch, its frame hook and taps, relay ingress and its feedback, the sender's adaptation loop, headless receiver and the ground's freshness output with its decoration, `GET /metrics` endpoint. Knows nothing about drones |
 | L1 | `sat-teleop-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, softening, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
 | L2 | `sat-teleop-media` | `crates/media` | What the drone adds to the video: regional softening and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
@@ -62,7 +63,7 @@ Packages that exist today:
 
 Do not create speculative modules, placeholder crates or frameworks. Each new package must justify a distinct dependency boundary or pure policy boundary, register in `xtask/src/layers.rs`, inherit workspace dependencies and lints (`[lints] workspace = true`), add its own `AGENTS.md` and add a line to the index in section 14.
 
-The video path is the core of the workspace: `video-core` and `video` know nothing about drones, and `video` depends on `video-core` only, so it can move to a repository of its own. Everything drone-specific builds on them (`policy`, `control`, `detect`, `detail`, `media`) and reaches the video through the sender's frame hook and taps and the output's decoration (`crates/video/AGENTS.md`). `cargo xtask layers` enforces downward dependencies. Packages of one layer do not depend on each other. Applications remain thin. Testkit has no workspace dependencies and is never imported by runtime code.
+The video path is the core of the workspace. Its crates know nothing about drones: `video` depends on `video-core` and `x264`. Everything drone-specific builds on them (`policy`, `control`, `detect`, `detail`, `media`) and reaches the video through the sender's frame hook and taps and the output's decoration (`crates/video/AGENTS.md`). `cargo xtask layers` enforces downward dependencies. Packages of one layer do not depend on each other. Applications remain thin. Testkit has no workspace dependencies and is never imported by runtime code.
 
 ## 4. Golden rules
 
@@ -128,11 +129,11 @@ Developer Macs may run endpoint protection (here Microsoft Defender for Endpoint
 
 ### Unsafe code
 
-Workspace Rust code is under `unsafe_code = "forbid"`. Safe bindings to native dependencies do not imply those dependencies contain no unsafe code.
+Workspace Rust code is under `unsafe_code = "deny"`. Only `sat-teleop-x264` may allow it, in `crates/x264/src/encoder.rs` (the FFI wrapper) and the generated bindings module `sys` in `crates/x264/src/lib.rs`. `just check` rejects any `.rs` file under `crates`, `apps` or `xtask` that mentions `unsafe_code` outside `crates/x264`. Safe bindings to native dependencies do not imply those dependencies contain no unsafe code.
 
-A future V4L2/FFI requirement must first document the exact named crate/file boundary, why existing safe bindings are insufficient, and the verification plan. Changing this rule requires an explicit reviewed exception. No exception is granted by this file, and no empty FFI crate should be created in anticipation.
+Direct bindings are needed because GStreamer's `x264enc` cannot force a whole IDR with intra refresh enabled or change its refresh period while playing. It also exposes no per-macroblock quantiser offsets. The published `x264-sys` crate bundles an old `x264.h` without `quant_offsets`; `crates/x264/build.rs` generates bindings from the system header with bindgen. The crate's tests assert NAL type 5 for a forced IDR, delta units at refresh-wave starts, and the new refresh period after a frame-rate change.
 
-Any accepted exception must expose a safe API, isolate unsafe blocks, explain each block with a `SAFETY:` comment and keep all other code under the prohibition.
+Every exception must expose a safe API, isolate unsafe blocks, explain each block with a `SAFETY:` comment and keep all other code under the prohibition. Any further exception requires explicit review of the named crate/file boundary, why safe bindings are insufficient and the verification plan. Do not create an empty FFI crate in anticipation.
 
 ## 5. Workflow and picking work
 
@@ -336,6 +337,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 
 - [xtask](xtask/AGENTS.md): layer registry, fixture verification and repeatable checks.
 - [sat-teleop-video-core](crates/video-core/AGENTS.md): the pure core of the video path: the in-picture stamp and the state stamp, video freshness, pacing, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token.
+- [sat-teleop-x264](crates/x264/AGENTS.md): the `satx264enc` GStreamer element, libx264 FFI boundary and encoder checks.
 - [sat-teleop-video](crates/video/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the sender's adaptation loop, metrics endpoint, and the frame hook, taps and decoration the drone plugs into.
 - [sat-teleop-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, softening, sightings, landing, the predictive display, the detail inset, retention, retrieval.
 - [sat-teleop-media](crates/media/AGENTS.md): what the drone adds to the video: regional video, the detector, tracker and tag feeds, the aim ring and detail inset, retrieval's view of adaptation.

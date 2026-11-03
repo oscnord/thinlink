@@ -1,0 +1,24 @@
+[package]
+name = "sat-teleop-x264"
+version.workspace = true
+edition.workspace = true
+# libx264 is GPL: this is the workspace's only crate that links it.
+license = "GPL-2.0-or-later"
+rust-version.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+gstreamer.workspace = true
+gstreamer-video.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+gstreamer-app.workspace = true
+
+[build-dependencies]
+bindgen.workspace = true
+pkg-config.workspace = true

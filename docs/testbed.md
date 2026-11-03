@@ -12,6 +12,8 @@ The tool list, workspace layers, lint policy, package rules and commit rules are
 
 `rust-toolchain.toml` pins Rust 1.99.0 with rustfmt and Clippy. The workspace uses edition 2024 and resolver 3. Container builds use `docker.io/library/rust:1.99.0-trixie`, with `docker.io/library/debian:trixie-slim` as the runtime base.
 
+The build image includes `libx264-dev` and `libclang-dev`. `crates/x264/build.rs` uses pkg-config to find libx264 and bindgen to generate bindings from the system `x264.h`.
+
 The pin only takes effect when `cargo` is a rustup proxy. On some machines `~/.cargo/bin/cargo` is a plain symlink to another toolchain, so the pin is ignored and builds fail on `rust-version = "1.99"`. Check with:
 
 ```sh
@@ -36,11 +38,11 @@ Do not rewrite your global toolchain setup just for this project.
 
 ## Builds and gates
 
-Pure crates build and test natively. GStreamer-linked packages (`sat-teleop-video`, `sat-teleop-media`, `sat-teleop-lab` and the applications) build in the build container. The host does not need GStreamer.
+Pure crates build and test natively. GStreamer-linked packages (`sat-teleop-x264`, `sat-teleop-video`, `sat-teleop-media`, `sat-teleop-lab` and the applications) build in the build container. The host does not need GStreamer.
 
 | Recipe | Purpose |
 |---|---|
-| `just check` | Full workspace fmt, Clippy, tests and layer checks in `localhost/sat-teleop-build:dev`, including control and vehicle checks with the `testbed` feature. |
+| `just check` | Full workspace fmt, Clippy, tests, layer checks and the unsafe-code boundary check in `localhost/sat-teleop-build:dev`, including control and vehicle checks with the `testbed` feature. |
 | `just check-native` | Host gates for packages without GStreamer, including control's `testbed` feature. Needs `jq` and Bash and uses the pinned toolchain even when `cargo` is not a rustup proxy. |
 | `just fmt` | Format the workspace on the host. |
 | `just image <target>` | Build `runtime` or `build` from `testbed/Containerfile`. The runtime includes vehicle test hooks. |
@@ -57,6 +59,8 @@ Container builds and `just check` use `BUILD_JOBS` cargo jobs under the `BUILD_M
 
 Builds use a registry cache and a separate cargo target cache for each checkout and build architecture. Retire a checkout's build output with `just forget-checkout <folder>` from another checkout.
 
+The workspace sets `unsafe_code = "deny"`. `just check` rejects any `.rs` file under `crates`, `apps` or `xtask` that mentions `unsafe_code` outside `crates/x264`. The permitted FFI scope is in [AGENTS.md](../AGENTS.md#unsafe-code).
+
 ## Image cache
 
 `just image runtime` tags the build stage so its dependency layers remain reachable. Apt installs use cache mounts. Podman reads the build context through the VM's file share, which needs free 512 KiB memory blocks. If fewer than 16 are available, the image recipes drop clean page cache and compact memory before building. This avoids `readdirent: cannot allocate memory` from a fragmented VM; other containers reread clean cached files from disk.
@@ -69,7 +73,7 @@ Builds use a registry cache and a separate cargo target cache for each checkout 
 
 `cargo xtask <command>` is an alias for `cargo run -q -p sat-teleop-xtask --` (see `.cargo/config.toml`).
 
-- `cargo xtask layers` loads the workspace with `cargo metadata` and checks it against the registry in `xtask/src/layers.rs`. It reports every violation and exits 1 if there are any: unregistered members, missing `[lints] workspace = true`, upward or sideways dependencies, dependencies on apps or tooling, non-dev use of `sat-teleop-testkit`, forbidden families in `sat-teleop-policy`, GStreamer outside `sat-teleop-video`, `sat-teleop-media` and apps. It checks dependencies as declared, including optional and target-specific ones.
+- `cargo xtask layers` loads the workspace with `cargo metadata` and checks it against the registry in `xtask/src/layers.rs`. It reports every violation and exits 1 if there are any: unregistered members, missing `[lints] workspace = true`, upward or sideways dependencies, dependencies on apps or tooling, non-dev use of `sat-teleop-testkit`, forbidden families in `sat-teleop-policy`, GStreamer outside `sat-teleop-x264`, `sat-teleop-video`, `sat-teleop-media` and apps. It checks dependencies as declared, including optional and target-specific ones. `sat-teleop-x264` sits at L0 beside `sat-teleop-video-core`; `sat-teleop-video` depends on both.
 - `cargo xtask fixtures` reads `fixtures/manifest.toml`, downloads each missing fixture into `.cache/fixtures/` and verifies it. `cargo xtask fixtures --check` only verifies files already present and fails on a missing one.
 
 ## Fixtures

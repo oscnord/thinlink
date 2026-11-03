@@ -1,7 +1,7 @@
 //! Vehicle sender: source -> convert -> tee -> scale/rate -> I420 rung -> stamp -> leaky queue ->
 //! encoder -> RTP -> UDP to the relay. The encoder is x264 or, on a board that has one, the V4L2
 //! hardware H.264 encoder (`camera`). The rung changes while it runs: x264's bitrate and VBV buffer
-//! at the next frame, its resolution and frame rate through the rung's caps and a new encoder.
+//! at the next frame, its resolution and frame rate through the rung's caps (it reopens itself).
 //! The tee's second branch takes the source's full-resolution frames for retained snapshots:
 //! a copy of each frame -> leaky queue -> videorate -> jpegenc -> appsink, handed to the caller's writer. The RTP packets leave through the pacer (`pacer`), which holds the video to the
 //! uplink measured.
@@ -43,8 +43,6 @@ const MAX_WIDTH: u16 = 3840;
 const MAX_HEIGHT: u16 = 2160;
 const MAX_FPS: u16 = 60;
 const ENCODER: &str = "encoder";
-const ENCODER_QUEUE: &str = "encoder-queue";
-const ENCODED_CAPS: &str = "encoded-caps";
 /// A camera keeps its mode whatever the rung: the test pattern is held to one rate too.
 const TEST_PATTERN_FPS: i32 = 30;
 const MAX_SNAPSHOT_FPS: u16 = 10;
@@ -300,7 +298,6 @@ pub struct Applied {
 struct Handles {
     pipeline: gst::Pipeline,
     rung_filter: gst::Element,
-    stats: Arc<SenderStats>,
     kind: Encoder,
     rung: Rung,
     /// The ingest's reading thread, stopped when the run ends.
@@ -314,7 +311,6 @@ impl Handles {
         let change = Change {
             pipeline: self.pipeline.clone(),
             rung_filter: self.rung_filter.clone(),
-            stats: Arc::clone(&self.stats),
             kind: self.kind,
             from: self.rung,
             to: rung,
@@ -327,28 +323,22 @@ impl Handles {
 struct Change {
     pipeline: gst::Pipeline,
     rung_filter: gst::Element,
-    stats: Arc<SenderStats>,
     kind: Encoder,
     from: Rung,
     to: Rung,
 }
 
 impl Change {
-    /// The new bitrate and VBV buffer take effect at x264's next frame. A new size or frame rate
-    /// goes into the rung filter's caps; x264 gets a new encoder for it (`swap_x264`), since its
-    /// refresh period counts frames and cannot change while it runs, and a new encoder starts with
-    /// a whole keyframe.
+    /// The new bitrate and VBV buffer take effect at the encoder's next frame. A new size or frame
+    /// rate goes into the rung filter's caps: x264 reopens itself for them (`sat-teleop-x264`),
+    /// with a refresh period of the same duration at the new rate, starting with an IDR frame.
     fn apply(self) {
         let rung = self.to;
         set_bitrate(&self.pipeline, self.kind, rung);
         let shape = |r: Rung| (r.width, r.height, r.fps);
-        if shape(rung) == shape(self.from) {
-            return;
+        if shape(rung) != shape(self.from) {
+            self.rung_filter.set_property("caps", rung.caps());
         }
-        if self.kind == Encoder::X264 {
-            swap_x264_when_idle(&self.pipeline, rung, &self.stats);
-        }
-        self.rung_filter.set_property("caps", rung.caps());
     }
 }
 
@@ -710,7 +700,7 @@ fn build(
         .build()?;
     let kind = camera::choose_encoder(config.encoder, camera::hardware_encoder_present());
     if config.encoder == EncoderWish::Hardware && kind == Encoder::X264 {
-        eprintln!("no v4l2h264enc on this board: encoding with x264enc");
+        eprintln!("no v4l2h264enc on this board: encoding with x264");
     }
     let encoder = make_encoder(kind, rung, stats)?;
     let sink = pacer::sink(config.destination, stats)?;
@@ -723,7 +713,6 @@ fn build(
             .build()?,
         rung_filter.clone(),
         gst::ElementFactory::make("queue")
-            .name(ENCODER_QUEUE)
             .property_from_str("leaky", "downstream")
             .property("max-size-buffers", 2u32)
             .property("max-size-bytes", 0u32)
@@ -731,7 +720,6 @@ fn build(
             .build()?,
         encoder,
         gst::ElementFactory::make("capsfilter")
-            .name(ENCODED_CAPS)
             .property("caps", encoded_caps(kind))
             .build()?,
         gst::ElementFactory::make("rtph264pay")
@@ -768,7 +756,6 @@ fn build(
     let handles = Handles {
         pipeline: pipeline.clone(),
         rung_filter,
-        stats: Arc::clone(stats),
         kind,
         rung,
         _ingest: ingest,
@@ -776,24 +763,24 @@ fn build(
     Ok((pipeline, handles))
 }
 
-/// The encoder element for `kind`, counted into `stats`. x264 is configured for the lowest latency
-/// and refreshes the picture with a moving column of intra blocks every `key-int-max` frames.
+/// The encoder element for `kind`, counted into `stats`. x264 (`sat-teleop-x264`) is configured for
+/// the lowest latency and refreshes the picture with a moving column of intra blocks over the
+/// rung's keyframe interval; it gives a whole IDR frame only when asked for one.
 fn make_encoder(
     kind: Encoder,
     rung: Rung,
     stats: &Arc<SenderStats>,
 ) -> Result<gst::Element, MediaError> {
     let encoder = match kind {
-        Encoder::X264 => gst::ElementFactory::make("x264enc")
-            .name(ENCODER)
-            .property_from_str("tune", "zerolatency")
-            .property_from_str("speed-preset", "ultrafast")
-            .property("bitrate", rung.encoder_kbit())
-            .property("vbv-buf-capacity", rung.vbv_ms())
-            .property("key-int-max", rung.keyframe_frames())
-            .property("intra-refresh", true)
-            .property("bframes", 0u32)
-            .build()?,
+        Encoder::X264 => {
+            sat_teleop_x264::register()?;
+            gst::ElementFactory::make(sat_teleop_x264::ELEMENT)
+                .name(ENCODER)
+                .property("bitrate", rung.encoder_kbit())
+                .property("vbv-buf-capacity", rung.vbv_ms())
+                .property("refresh-ms", rung.keyframe_interval_ms)
+                .build()?
+        }
         Encoder::V4l2 => gst::ElementFactory::make("v4l2h264enc")
             .name(ENCODER)
             .property("extra-controls", v4l2_controls(rung))
@@ -815,53 +802,8 @@ fn encoded_caps(kind: Encoder) -> gst::Caps {
     }
 }
 
-/// Replaces the x264 encoder with one made for `rung` as soon as the leaky queue before it holds
-/// a frame: the queue's source pad blocks, the old encoder goes, the new one takes its place and
-/// the pad is released. Relinking sends the stream's sticky events again.
-fn swap_x264_when_idle(pipeline: &gst::Pipeline, rung: Rung, stats: &Arc<SenderStats>) {
-    let Some(queue) = pipeline
-        .by_name(ENCODER_QUEUE)
-        .and_then(|q| q.static_pad("src"))
-    else {
-        return;
-    };
-    let (pipeline, stats) = (pipeline.clone(), Arc::clone(stats));
-    queue.add_probe(gst::PadProbeType::BLOCK_DOWNSTREAM, move |_, _| {
-        if let Err(error) = swap_x264(&pipeline, rung, &stats) {
-            eprintln!("replacing x264enc failed: {error}");
-        }
-        gst::PadProbeReturn::Remove
-    });
-}
-
-fn swap_x264(
-    pipeline: &gst::Pipeline,
-    rung: Rung,
-    stats: &Arc<SenderStats>,
-) -> Result<(), MediaError> {
-    let by_name = |name| pipeline.by_name(name).ok_or(MediaError::Missing(name));
-    let (queue, old, caps) = (
-        by_name(ENCODER_QUEUE)?,
-        by_name(ENCODER)?,
-        by_name(ENCODED_CAPS)?,
-    );
-    queue.unlink(&old);
-    old.unlink(&caps);
-    old.set_state(gst::State::Null)
-        .map_err(|e| MediaError::State {
-            state: gst::State::Null,
-            reason: e.to_string(),
-        })?;
-    pipeline.remove(&old)?;
-    let new = make_encoder(Encoder::X264, rung, stats)?;
-    pipeline.add(&new)?;
-    gst::Element::link_many([&queue, &new, &caps])?;
-    new.sync_state_with_parent()?;
-    Ok(())
-}
-
 /// How often the stamp probe forces a keyframe by time. x264 refreshes the picture by itself every
-/// `key-int-max` frames, so only on request; the V4L2 encoder gets a keyframe every interval.
+/// refresh period, so a whole IDR frame only on request; the V4L2 encoder gets a keyframe every interval.
 fn periodic_keyframe_every(kind: Encoder, rung: Rung) -> Duration {
     match kind {
         Encoder::X264 => Duration::MAX,

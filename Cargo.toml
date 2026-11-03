@@ -13,6 +13,7 @@ members = [
     "crates/policy",
     "crates/video",
     "crates/video-core",
+    "crates/x264",
     "xtask",
 ]
 
@@ -25,6 +26,7 @@ publish = false
 
 [workspace.dependencies]
 anyhow = "1.0.104"
+bindgen = "0.73.2"
 apriltag = "0.4.0"
 base64 = "0.23.1"
 cargo_metadata = "0.23.1"
@@ -35,6 +37,7 @@ gstreamer-app = "0.25.2"
 gstreamer-video = "0.25.4"
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 mavlink = { version = "0.21.0", default-features = false, features = ["std", "dialect-ardupilotmega", "mav2-message-extensions"] }
+pkg-config = "0.3.33"
 rustix = { version = "1.1.6", features = ["fs"] }
 serialport = { version = "4.7.2", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
@@ -48,7 +51,7 @@ tract-onnx = "0.23.9"
 ureq = "3.5.0"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

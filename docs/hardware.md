@@ -28,7 +28,7 @@ The relay's firewall (`deploy/relay/nftables.conf`) opens SSH and UDP 51820 to t
 
 ## Images and binaries
 
-The release recipes build locally. The runtime image carries all four programs; the vehicle's binary is taken out of the arm64 one, so `just vehicle-release` needs an arm64 build host (Apple Silicon or arm64 Linux) and stops if the binary it packs is not aarch64.
+The release recipes build locally. The runtime image carries all four programs; the vehicle's binary is taken out of the arm64 one, so `just vehicle-release` needs an arm64 build host (Apple Silicon or arm64 Linux) and stops if the binary it packs is not aarch64. All four programs link libx264, so their binaries are distributed under the GPL.
 
 ```sh
 just deploy-keys 203.0.113.7:51820   # your relay's public address; keys and configs in deploy/secrets/
@@ -79,7 +79,7 @@ Until the ground has a fresh clock bound of its own and the vehicle has reported
 | Pi 4 | Recommended | Yes |
 | Pi 5 | Software encoding only | No |
 
-Raspberry Pi's camera documentation gives `v4l2h264enc` as the encoder for "a Raspberry Pi 4B or earlier device" and `x264enc` for a Pi 5, and says "Raspberry Pi 5 uses software video encoders" ([Camera software](https://www.raspberrypi.com/documentation/computers/camera_software.html), sections "GStreamer", "`libcamerasrc` GStreamer element" and "Low latency video with Raspberry Pi 5"). The page does not name the Zero 2 W; "Pi 4B or earlier" is the reading that puts it with the Pi 4. On a Pi 5 the config's `encoder = "hardware"` falls back to `x264enc` and says so in the log; whether a Pi 5's cores keep up at the rungs of `testbed/ladder.toml` is unmeasured.
+Raspberry Pi's camera documentation gives `v4l2h264enc` as the encoder for "a Raspberry Pi 4B or earlier device" and `x264enc` for a Pi 5, and says "Raspberry Pi 5 uses software video encoders" ([Camera software](https://www.raspberrypi.com/documentation/computers/camera_software.html), sections "GStreamer", "`libcamerasrc` GStreamer element" and "Low latency video with Raspberry Pi 5"). The page does not name the Zero 2 W; "Pi 4B or earlier" is the reading that puts it with the Pi 4. On a Pi 5 the config's `encoder = "hardware"` falls back to `satx264enc` and says so in the log; whether a Pi 5's cores keep up at the rungs of `testbed/ladder.toml` is unmeasured.
 
 The camera paths need raw pixels for the in-picture stamp. MJPEG webcam frames pass through a decoder; YUYV and libcamera frames need no decode. A camera that sends H.264 cannot use these V4L2 or libcamera paths. The separate [RTP ingest](drone.md#mac-camera-demo) decodes H.264 before stamping.
 
@@ -104,7 +104,7 @@ Camera Module through libcamera, `kind = "libcamera"`: `libcamerasrc` from the `
 
 ## Encoder
 
-`encoder = "hardware"` asks for `v4l2h264enc`. GStreamer registers that element only on a board with the encoder, so its presence is the check; without it the vehicle uses `x264enc` and logs `no v4l2h264enc on this board`. The vehicle gives the encoder, as `extra-controls`, `video_bitrate` (the same reduced bitrate target as `x264enc`), `repeat_sequence_header=1` and `h264_i_frame_period` (the rung's keyframe distance), and constrains its output to `video/x-h264,profile=main,level=4` with a capsfilter after it, so the level and profile are negotiated before the stream starts. Raspberry Pi's own example passes `extra-controls` the same way.
+`encoder = "hardware"` asks for `v4l2h264enc`. GStreamer registers that element only on a board with the encoder, so its presence is the check; without it the vehicle uses `satx264enc` and logs `no v4l2h264enc on this board`. The vehicle gives the encoder, as `extra-controls`, `video_bitrate` (the same reduced bitrate target as `satx264enc`), `repeat_sequence_header=1` and `h264_i_frame_period` (the rung's keyframe distance), and constrains its output to `video/x-h264,profile=main,level=4` with a capsfilter after it, so the level and profile are negotiated at stream startup. Raspberry Pi's own example passes `extra-controls` the same way.
 
 Unverified, and the likeliest to need a change on first contact: that the hardware encoder keeps to that bitrate (V4L2's controls here set no VBV buffer size, so its own rate control decides how far one second can exceed it; compare the relay's measured uplink rate with the rung's on a narrow link), that these control names and the caps are accepted by the Pi's driver, that a changed bitrate takes effect while playing (the vehicle sets `extra-controls` again on every rung change), that a size change renegotiates, and that a forced keyframe is honoured. The code that sets them is `make_encoder` and `set_bitrate` in `crates/video/src/sender.rs`.
 
@@ -165,7 +165,7 @@ Run it on the bench, props off and the flight controller powered from USB or a b
 On the bench, with props off, before anything else ([the bring-up checklist](#bring-up-checklist)):
 
 1. Glass to glass. Film a stopwatch or a millisecond display beside the ground's picture with a phone at 120 or 240 frames per second; the difference between the stopwatch and its image on the ground screen is the real latency. The stamp and stage measurements have narrower boundaries; see [video age](video.md#measurement-method). The optical measurement includes the camera and the ground display.
-2. Encoder latency. The time between a frame passing the stamp and its first RTP packet leaving, with `v4l2h264enc` and with `x264enc` at the same rung. Compare the ground's age with the encoder swapped (`encoder = "x264"`).
+2. Encoder latency. The time between a frame passing the stamp and its first RTP packet leaving, with `v4l2h264enc` and with `satx264enc` at the same rung. Compare the ground's age with `encoder = "hardware"` and `encoder = "x264"`.
 3. Uplink rate. The vehicle's `adapt.uplink_bytes_per_s` and `rtp_bytes` on the real link, against what the modem and the plan deliver, and the rung the adaptation settles at.
 4. CPU and memory of the vehicle per rung (`top`, or `systemctl show -p MemoryCurrent sat-teleop-vehicle`), on the board that will fly.
 5. Regional video's cost. With `[region] detector` on, the tee's detector branch copies a source frame in the streaming thread `detector_fps` times a second (as the snapshot branch does) and the detector runs next to the encoder. Compare the vehicle's CPU and the frame age with the detector off and on, and read `detector.ms` and `region.soften` in the metrics; the testbed's figures are emulated limits, not a Pi ([the regional check](testbed.md#regional-check)).

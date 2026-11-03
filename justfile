@@ -3,7 +3,7 @@
 engine := env_var_or_default("CONTAINER_ENGINE", "podman")
 # keep-id maps the host user into the container on Podman; Docker needs the uid spelled out.
 user_flags := if engine == "podman" { "--userns=keep-id" } else { "--user $(id -u):$(id -g)" }
-gstreamer_packages := "sat-teleop-video sat-teleop-media sat-teleop-lab sat-teleop-lab-cli sat-teleop-vehicle sat-teleop-relay sat-teleop-ground"
+gstreamer_packages := "sat-teleop-x264 sat-teleop-video sat-teleop-media sat-teleop-lab sat-teleop-lab-cli sat-teleop-vehicle sat-teleop-relay sat-teleop-ground"
 # The testbed's runtime image has the vehicle's test hooks; the release images (`image-for`) do not.
 testbed_features := "--build-arg CARGO_FEATURES='--features sat-teleop-vehicle/testbed'"
 build_image := "localhost/sat-teleop-build:dev"
@@ -45,6 +45,7 @@ check: (image "build")
         -v sat-teleop-cargo-registry:/cache/cargo -v sat-teleop-target:/cache/target \
         -e HOME=/tmp -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target/{{checkout}} \
         {{build_image}} sh -ec ' \
+            if grep -rl --include="*.rs" unsafe_code crates apps xtask | grep -v "^crates/x264/"; then echo "unsafe_code may be allowed only in crates/x264"; exit 1; fi; \
             cargo fmt --all -- --check; \
             cargo clippy --workspace --all-targets --locked -- -D warnings; \
             cargo test --workspace --locked; \

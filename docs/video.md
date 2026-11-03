@@ -9,9 +9,10 @@ This page covers the video path, its adaptation and how its age is measured. [Dr
 | Package | Owns |
 |---|---|
 | `sat-teleop-video-core` (L0) | Pure stamp and state stamp, freshness, pacing admission, byte-rate token bucket, uplink budget, adaptation ladder and controller, bearer-token check. No I/O or clock reads. |
-| `sat-teleop-video` (L1) | GStreamer sender, relay ingress, feedback and adaptation loop, headless receiver, freshness output, snapshot encoding and metrics endpoint. Its only workspace dependency is `video-core`. |
+| `sat-teleop-x264` (L0) | The `satx264enc` GStreamer element and its libx264 wrapper. |
+| `sat-teleop-video` (L1) | GStreamer sender, relay ingress, feedback and adaptation loop, headless receiver, freshness output, snapshot encoding and metrics endpoint. Its workspace dependencies are `video-core` and `x264`. |
 
-Both crates know nothing about drones. Applications wire the video to `media`, `control`, `detail` and `policy`. Dependencies point downward, packages on one layer do not depend on each other, and `cargo xtask layers` checks the boundaries. See [development setup](testbed.md#development-setup).
+These crates know nothing about drones. Applications wire the video to `media`, `control`, `detail` and `policy`. Dependencies point downward, packages on one layer do not depend on each other, and `cargo xtask layers` checks the boundaries. See [development setup](testbed.md#development-setup).
 
 GStreamer through `gstreamer-rs` supplies capture, encoding, RTP and decoding. Rust owns coordination and policy. Workers use synchronous threads and bounded `sync_channel` queues; there is no async runtime.
 
@@ -61,9 +62,9 @@ The ladder is [testbed/ladder.toml](../testbed/ladder.toml), best first. `start 
 
 The rung bitrate is the video allowance for any one second, including refresh bursts. x264 gets the rung bitrate times `1000 / (1000 + frame_period_ms)`, with a one-frame VBV buffer. That is about 94 % at 15 fps, two thirds at 2 fps and half at 1 fps. Headers come on top: each RTP packet costs another 122 bytes of RTP, UDP, IPv4, WireGuard and Ethernet headers. The source may send less than the allowance.
 
-x264 uses `tune=zerolatency`, `speed-preset=ultrafast`, no B-frames and `intra-refresh=true`. Each frame carries a column of intra blocks that sweeps the picture over `keyframe_interval_ms = 2000`. There are no periodic IDRs. `key-int-max` is the rung's frame count for that interval.
+The sender uses `satx264enc`, a GStreamer `VideoEncoder` registered from Rust at startup, with no plugin file. It drives libx264 with preset `ultrafast` and tune `zerolatency`: no lookahead or B-frames, with sliced threads. Rate control uses average bitrate under the one-frame VBV. Parameter sets repeat. Intra refresh sweeps the picture over `refresh-ms`, set from `keyframe_interval_ms = 2000`. There are no periodic IDRs.
 
-A size or frame-rate change updates the capsfilter and replaces `x264enc`, because `key-int-max` cannot change while playing. The replacement starts with an IDR. Bitrate and VBV changes apply in place at the next frame. A forced key unit starts an x264 refresh wave, including after an outage or a pacing drop. Time-based forced keyframes apply only to V4L2. Metrics keep `requested` and `applied` separate, including the first stamped frame in the new shape.
+A size or frame-rate change needs only new caps. The element reopens libx264 for those caps and starts with an IDR. It computes `i_keyint_max` from their frame rate and the refresh period. `bitrate` and `vbv-buf-capacity` changes apply in place at the next frame. A forced key unit from upstream or downstream makes the next picture a whole IDR. Only IDRs are sync points; all other frames, including refresh-wave starts, are delta units. Time-based forced keyframes apply only to V4L2. Metrics keep `requested` and `applied` separate, including the first stamped frame in the new shape.
 
 ## Adaptation
 
@@ -83,7 +84,7 @@ Queue delay is the smaller of the last two round trips minus the smallest over t
 
 Above 150 ms and rising, the controller cuts to the best rung that fits 75 % of measured capacity after the budget reserve. Capacity includes received video and the other traffic in the proportion that reached the relay. The spare quarter drains the queue. A standing queue causes a one-rung cut. If the delay still does not fall, the base delay changed: the cut is taken back and the base resets. A falling queue is held while it drains.
 
-A single answer more than 300 ms above the base is a deep queue and can cause an immediate cut. At `drain_above_ms = 300`, the video pauses before encoding until the queue drains. Control, telemetry and probes continue. Answers to probes sent before the pause refine the capacity estimate, and video resumes at the rung it supports with a refresh wave. Delay that does not drain while paused is treated as a base shift.
+A single answer more than 300 ms above the base is a deep queue and can cause an immediate cut. At `drain_above_ms = 300`, the video pauses at the stamp probe until the queue drains. Control, telemetry and probes continue. Answers to probes sent ahead of the pause refine the capacity estimate, and video resumes at the rung it supports with a whole IDR. `LinkBack`, the first answer after a fall for silence, also requests an IDR for the next picture. Delay that does not drain while paused is treated as a base shift.
 
 Loss below 2 % permits a climb, above 10 % cuts one rung, and between them holds. The reading needs at least 500 packets within 10 s. At the slow rungs there may be too few packets, so delay guards them alone.
 
@@ -97,7 +98,7 @@ A cut within a dwell of a climb or ceiling raise doubles that rung's hold, start
 
 The sender's pacer holds RTP packets in its own backlog. `Controller::pace_bytes_per_s` uses `video-core::pace::rate`: never below the wire cost allowed to the encoder, never above 120 % of it, and within those bounds 110 % of the believed uplink. The belief includes capacity proved by later ceiling raises, so a recovered link is not held to an old measurement. Without a measurement, the pace is 120 % of the allowance.
 
-A token bucket allows a 20 ms burst, at least two packets. A frame whose backlog ahead would take more than 150 ms to send is dropped whole. Following delta frames are dropped until a frame marked as a sync point fits. The first drop requests a forced key unit. A frame whose own send time exceeds 150 ms is admitted if the backlog ahead fits. Control, probes and telemetry use other sockets and never wait behind this queue.
+A token bucket allows a 20 ms burst, at least two packets. A frame whose backlog ahead would take more than 150 ms to send is dropped whole. Following delta frames are dropped until a frame marked as a sync point fits. The first drop requests a forced key unit, so `satx264enc` encodes the next picture as a whole IDR. A frame whose own send time exceeds 150 ms is admitted if the backlog ahead fits. Control, probes and telemetry use other sockets and never wait behind this queue.
 
 ### Shared uplink budget
 
@@ -249,9 +250,9 @@ The operator's loop also includes the command's outward delay. Propagation canno
 
 ## Recommended settings
 
-Use `encoder = "hardware"` on a Pi 4 or Zero 2 W, as in `deploy/vehicle/vehicle.toml`. The sender selects `v4l2h264enc` when available and falls back to x264. The hardware path remains unverified; [Hardware](hardware.md) describes the bench checks. CPU quotas on the development Mac do not emulate a board's cores, memory bandwidth, caches or hardware encoder.
+Use `encoder = "hardware"` on a Pi 4 or Zero 2 W, as in `deploy/vehicle/vehicle.toml`. The sender selects `v4l2h264enc` when available and falls back to `satx264enc`. The hardware path remains unverified; [Hardware](hardware.md) describes the bench checks. CPU quotas on the development Mac do not emulate a board's cores, memory bandwidth, caches or hardware encoder.
 
-x264 already uses no lookahead, sliced threads, no B-frames and a one-frame VBV buffer. Keep these latency bounds. H.264 is the implemented codec.
+Keep the sender's [encoder settings](#rungs-and-encoder) for bounded latency. The ground output uses GStreamer's `x264enc`. H.264 is the implemented codec.
 
 The relay needs no jitter-buffer tuning. `JITTER_LATENCY_MS` in `crates/video/src/ingress.rs` is 50 ms and only bounds a missing packet's wait. Keep its sinks unsynchronised.
 

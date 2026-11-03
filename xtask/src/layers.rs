@@ -41,6 +41,7 @@ pub struct Graph {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
     VideoCore,
+    Codec,
     Video,
     Policy,
     Media,
@@ -55,7 +56,7 @@ impl Layer {
     /// Testkit and tool packages sit outside the layer ordering.
     fn rank(self) -> Option<u8> {
         match self {
-            Self::VideoCore => Some(0),
+            Self::VideoCore | Self::Codec => Some(0),
             Self::Policy | Self::Video => Some(1),
             Self::Media | Self::Sibling => Some(2),
             Self::Lab => Some(3),
@@ -69,6 +70,7 @@ impl Layer {
 fn registry(name: &str) -> Option<Layer> {
     match name {
         "sat-teleop-video-core" => Some(Layer::VideoCore),
+        "sat-teleop-x264" => Some(Layer::Codec),
         "sat-teleop-video" => Some(Layer::Video),
         "sat-teleop-policy" => Some(Layer::Policy),
         "sat-teleop-media" => Some(Layer::Media),
@@ -130,8 +132,15 @@ fn workspace_edge_violation(from: Layer, dep: &Dependency) -> Option<&'static st
 }
 
 fn external_violation(from: Layer, dep: &str) -> Option<&'static str> {
-    if dep.starts_with("gstreamer") && !matches!(from, Layer::Video | Layer::Media | Layer::App) {
-        return Some("only sat-teleop-video, sat-teleop-media and apps may use GStreamer");
+    if dep.starts_with("gstreamer")
+        && !matches!(
+            from,
+            Layer::Codec | Layer::Video | Layer::Media | Layer::App
+        )
+    {
+        return Some(
+            "only sat-teleop-x264, sat-teleop-video, sat-teleop-media and apps may use GStreamer",
+        );
     }
     let forbidden = dep.starts_with("mavlink") || POLICY_FORBIDDEN.contains(&dep);
     (from == Layer::Policy && forbidden).then_some("sat-teleop-policy must stay pure")
@@ -232,6 +241,8 @@ mod tests {
                 ],
             ),
             pkg("sat-teleop-testkit", &[]),
+            pkg("sat-teleop-x264", &[("gstreamer-video", Kind::Normal)]),
+            pkg("sat-teleop-video", &[("sat-teleop-x264", Kind::Normal)]),
             pkg(
                 "sat-teleop-vehicle",
                 &[
@@ -315,7 +326,7 @@ mod tests {
                     "sat-teleop-lab",
                     &[("gstreamer-video", Kind::Normal)],
                 )]),
-                "sat-teleop-lab: normal dependency on gstreamer-video (only sat-teleop-video, sat-teleop-media and apps may use GStreamer)",
+                "sat-teleop-lab: normal dependency on gstreamer-video (only sat-teleop-x264, sat-teleop-video, sat-teleop-media and apps may use GStreamer)",
             ),
             (
                 "unregistered member",

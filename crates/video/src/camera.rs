@@ -59,7 +59,7 @@ pub fn plan(format: CameraFormat) -> CameraPlan {
 pub enum EncoderWish {
     #[default]
     X264,
-    /// The board's H.264 encoder (`v4l2h264enc`) if it has one, else `x264enc`.
+    /// The board's H.264 encoder (`v4l2h264enc`) if it has one, else x264.
     Hardware,
 }
 
