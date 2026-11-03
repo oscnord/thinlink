@@ -95,6 +95,20 @@ vm-memory:
     podman machine ssh "sudo sh -c 'sync; echo 1 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory'"
     echo "vm-memory: $blocks free blocks of 512 KiB or more; dropped the machine's page cache for the build"
 
+# The image builds' target directories are cache mounts in the Podman machine, which buildah names by
+# the first 16 hex digits of sha256("<cache id>:<uid>:<gid>").
+# Deletes a retired checkout's cargo target directories, `check`'s and the image builds', by its folder.
+forget-checkout folder:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [ -n "{{folder}}" ] && [ "{{folder}}" != "{{checkout}}" ] || { echo "name another checkout's folder"; exit 1; }
+    {{engine}} run --rm -v sat-teleop-target:/t {{build_image}} rm -rf "/t/{{folder}}"
+    [ "{{engine}}" = podman ] && podman machine inspect >/dev/null 2>&1 || exit 0
+    for arch in amd64 arm64 cross-amd64; do
+        dir=$(printf '%s' "sat-teleop-target-$arch-{{folder}}:0:0" | shasum -a 256 | cut -c1-16)
+        podman machine ssh "sudo rm -rf /var/tmp/buildah-cache-*/$dir"
+    done
+
 # ArduRover SITL image; x86_64 only, emulated on other hosts.
 sitl-image: vm-memory
     {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/sat-teleop-sitl:dev -f testbed/Containerfile.sitl .

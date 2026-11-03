@@ -298,7 +298,7 @@ Delegate bounded research or implementation when ownership is clear.
 - Use isolated compose projects and ports for concurrent lab runs.
 - The primary agent personally reviews every code change before accepting, committing or pushing it.
 - Report which agents were used and what they found.
-- Clean up only owned temporary resources after coordinating with active work, and delete a retired worktree's build output. `just check` and the images build into a target directory per checkout, named after its folder; remove a retired worktree's with `podman run --rm -v sat-teleop-target:/t localhost/sat-teleop-build:dev rm -rf /t/<folder>`.
+- Clean up only owned temporary resources after coordinating with active work, and delete a retired worktree's build output. `just check` and the image builds each keep a cargo target directory per checkout, named after its folder; remove a retired worktree's with `just forget-checkout <folder>`.
 
 Subagent output is draft work until reviewed.
 
