@@ -1,4 +1,4 @@
-//! The uplink budget: what the vehicle may send, split between control, telemetry, retrieval and
+//! The uplink budget: what the vehicle may send, split between control, telemetry, a reserved flow and
 //! live video, in that order. Rates are bytes per second on the wire, the bytes the bottleneck
 //! carries: payload, inner UDP and IPv4, `WireGuard` with its padding, outer UDP and IPv4 and the
 //! Ethernet header.
@@ -69,15 +69,15 @@ pub struct Usage {
 pub struct Allocation {
     pub control: u32,
     pub telemetry: u32,
-    pub retrieval: u32,
+    pub reserved: u32,
     pub video: u32,
 }
 
 impl Budget {
     /// Splits `total`: control first, the larger of the reserve and what was measured; then
-    /// telemetry, what it wants with its datagrams' headers; then retrieval up to what it asks for
+    /// telemetry, what it wants with its datagrams' headers; then the reserved flow up to what it asks for
     /// (zero while idle), and video gets the rest. Each takes at most what is left.
-    pub fn split(self, total: u32, usage: Usage, retrieval_wanted: u32) -> Allocation {
+    pub fn split(self, total: u32, usage: Usage, reserved_wanted: u32) -> Allocation {
         let mut left = total;
         let mut take = |wanted: u32| {
             let granted = wanted.min(left);
@@ -89,20 +89,20 @@ impl Budget {
             self.telemetry_wanted(usage)
                 .saturating_add(telemetry_headers(usage)),
         );
-        let retrieval = take(retrieval_wanted);
+        let reserved = take(reserved_wanted);
         Allocation {
             control,
             telemetry,
-            retrieval,
+            reserved,
             video: left,
         }
     }
 
-    /// The part of `wanted` retrieval may reserve out of `total`: all of it if the video left
-    /// after it still passes `video_ok`, else none, so retrieval never pushes the video out of the
+    /// The part of `wanted` the reserved flow may take out of `total`: all of it if the video left
+    /// after it still passes `video_ok`, else none, so the reserved flow never pushes the video out of the
     /// rungs it must keep. A pure function of capacity, so granting and holding cannot feed back
     /// into each other.
-    pub fn retrieval_reserve(
+    pub fn reserve_share(
         self,
         total: u32,
         usage: Usage,
@@ -166,8 +166,8 @@ mod tests {
             control,
             video_packets_per_frame: 7,
         };
-        // (total, telemetry offered, control measured, retrieval wanted, expected shares: control,
-        // telemetry, retrieval, video, and the telemetry cap in frame bytes). Telemetry wants
+        // (total, telemetry offered, control measured, reserved wanted, expected shares: control,
+        // telemetry, reserved, video, and the telemetry cap in frame bytes). Telemetry wants
         // twice what is offered (the cap while that is unmeasured), at least the floor and at most
         // the cap, plus 3300 B/s of headers; its cap never falls below the floor.
         let cases = [
@@ -192,7 +192,7 @@ mod tests {
         for (total, offered, control_measured, wanted, expected) in cases {
             let usage = usage(offered, control_measured);
             let shares = budget.split(total, usage, wanted);
-            let (control, telemetry, retrieval, video, cap) = expected;
+            let (control, telemetry, reserved, video, cap) = expected;
             assert_eq!(
                 budget.telemetry_cap(Some(total), usage),
                 cap,
@@ -201,24 +201,24 @@ mod tests {
             let expected = Allocation {
                 control,
                 telemetry,
-                retrieval,
+                reserved,
                 video,
             };
             assert_eq!(
                 shares, expected,
                 "{total} B/s, {offered:?} offered, {wanted} wanted"
             );
-            let sum = [shares.control, shares.telemetry, shares.retrieval]
+            let sum = [shares.control, shares.telemetry, shares.reserved]
                 .into_iter()
                 .fold(u64::from(shares.video), |sum, s| sum + u64::from(s));
             assert!(sum <= u64::from(total), "{total} B/s split into {sum}");
         }
-        // (total, retrieval wanted, video that must be left, reserve granted): control 1000 and
+        // (total, reserved wanted, video that must be left, reserve granted): control 1000 and
         // telemetry 5100 come off first, as above.
         let reserves = [(16_000, 2000, 7000, 2000), (16_000, 2000, 8000, 0)];
         for (total, wanted, needed, expected) in reserves {
-            let reserve = budget
-                .retrieval_reserve(total, usage(Some(900), 0), wanted, |video| video >= needed);
+            let reserve =
+                budget.reserve_share(total, usage(Some(900), 0), wanted, |video| video >= needed);
             assert_eq!(
                 reserve, expected,
                 "{total} B/s, {wanted} wanted, {needed} needed"

@@ -6,7 +6,7 @@ All numbers come from the compose testbed on the development Mac (Podman machine
 
 ## Method
 
-Each process times every frame through its own stages and serves the p50, p95 and maximum of its last 1024 frames in its metrics (`crates/media/src/stages.rs`). `lab check skeleton` keeps them all in `summary.json`, and `just stages <run>` prints them:
+Each process times every frame through its own stages and serves the p50, p95 and maximum of its last 1024 frames in its metrics (`crates/video/src/stages.rs`). `lab check skeleton` keeps them all in `summary.json`, and `just stages <run>` prints them:
 
 ```sh
 just lab-check skeleton geo --warmup-s 20 --duration-s 60

@@ -12,8 +12,9 @@ workspace = true
 mavlink.workspace = true
 sat-teleop-control = { path = "../control" }
 sat-teleop-detail = { path = "../detail" }
-sat-teleop-media = { path = "../media" }
 sat-teleop-policy = { path = "../policy" }
+sat-teleop-video = { path = "../video" }
+sat-teleop-video-core = { path = "../video-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::rate::{Priority, TokenBucket};
 use sat_teleop_policy::retrieval::{self, Conditions, Hold};
 use sat_teleop_policy::sighting::Sightings;
-use sat_teleop_policy::token::Token;
+use sat_teleop_video_core::rate::{Priority, TokenBucket};
+use sat_teleop_video_core::token::Token;
 
 use crate::DetailError;
 use crate::client::{Client, ClientError};

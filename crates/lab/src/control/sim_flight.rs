@@ -21,8 +21,8 @@ use mavlink::dialects::ardupilotmega::{
 use serde_json::{Value, json};
 
 use sat_teleop_control::envelope::ControlLimits;
-use sat_teleop_media::receiver::Source;
-use sat_teleop_media::unix_ms;
+use sat_teleop_video::receiver::Source;
+use sat_teleop_video::unix_ms;
 
 use super::sim_evidence::{Commanded, Phase, PhaseRun, record_phases, record_run, video_json};
 use super::sim_probe::Probe;
@@ -445,7 +445,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_media::init() {
+    if let Err(e) = sat_teleop_video::init() {
         results.record("telemetry_received", Verdict::Incomplete, e.to_string());
         return results;
     }

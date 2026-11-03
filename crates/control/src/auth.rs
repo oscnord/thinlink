@@ -17,7 +17,7 @@ use base64::engine::general_purpose::STANDARD;
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde::Deserialize;
 
-use sat_teleop_policy::token::exposed;
+use sat_teleop_video_core::token::exposed;
 
 use crate::envelope::{Envelope, Refusal};
 

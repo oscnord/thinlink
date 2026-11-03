@@ -3,7 +3,7 @@
 engine := env_var_or_default("CONTAINER_ENGINE", "podman")
 # keep-id maps the host user into the container on Podman; Docker needs the uid spelled out.
 user_flags := if engine == "podman" { "--userns=keep-id" } else { "--user $(id -u):$(id -g)" }
-gstreamer_packages := "sat-teleop-media sat-teleop-lab sat-teleop-lab-cli sat-teleop-vehicle sat-teleop-relay sat-teleop-ground"
+gstreamer_packages := "sat-teleop-video sat-teleop-media sat-teleop-lab sat-teleop-lab-cli sat-teleop-vehicle sat-teleop-relay sat-teleop-ground"
 # The testbed's runtime image has the vehicle's test hooks; the release images (`image-for`) do not.
 testbed_features := "--build-arg CARGO_FEATURES='--features sat-teleop-vehicle/testbed'"
 build_image := "localhost/sat-teleop-build:dev"

@@ -14,7 +14,7 @@ use gstreamer::prelude::*;
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
 
-use sat_teleop_policy::stamp::{self, Stamp, StateStamp};
+use sat_teleop_video_core::stamp::{self, Stamp, StateStamp};
 
 use crate::stages::{Marks, Stage};
 use crate::{MediaError, Running, luma_geometry, unix_ms};

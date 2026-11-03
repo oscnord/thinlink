@@ -8,6 +8,9 @@
 //! uplink measured.
 
 mod pacer;
+mod tap;
+
+pub use tap::{Tap, TapFormat, TapFrame, TapSpec};
 
 use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
@@ -23,14 +26,11 @@ use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::follow;
-use sat_teleop_policy::stamp::{self, CaptureMs, FrameId, Stamp};
+use sat_teleop_video_core::stamp::{self, CaptureMs, FrameId, Stamp};
 
 use crate::camera::{self, CameraFormat, CaptureClock, Encoder, EncoderWish};
 use crate::ingest::{self, IngestSnapshot, IngestStats};
-use crate::region::{DetectorFrame, FollowFrame, Regional};
 use crate::stages::{InEncoder, Marks, Stage, StageSnapshot};
-use crate::tags::{TagFeed, TagFrame};
 use crate::{
     Health, HealthSnapshot, MediaError, Running, Traffic, TrafficSnapshot, failure, luma_geometry,
     unix_ms,
@@ -46,8 +46,21 @@ const MAX_FPS: u16 = 60;
 const MAX_SNAPSHOT_FPS: u16 = 10;
 /// Snapshot frames waiting for their identity or their JPEG.
 const SNAPSHOT_IN_FLIGHT: usize = 4;
+/// A mapped raw frame the hook may draw into.
+pub type Frame<'a> = gst_video::VideoFrameRef<&'a mut gst::BufferRef>;
+
 const STAMP_PROBE: gst::PadProbeType =
     gst::PadProbeType::BUFFER.union(gst::PadProbeType::EVENT_DOWNSTREAM);
+
+/// Called with each raw frame before the stamp is drawn into it, in the streaming thread.
+pub type FrameHook = Arc<dyn Fn(&mut Frame) + Send + Sync>;
+
+/// What the caller adds to the sender: a hook on every raw frame and taps off the tee.
+#[derive(Clone, Default)]
+pub struct Hooks {
+    pub frame: Option<FrameHook>,
+    pub taps: Vec<Arc<Tap>>,
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -618,15 +631,14 @@ impl Drop for Attached<'_> {
 pub fn run(
     config: &SenderConfig,
     stats: &Arc<SenderStats>,
-    regional: &Arc<Regional>,
-    tags: Option<&Arc<TagFeed>>,
+    hooks: &Hooks,
     snapshots: &SyncSender<Snapshot>,
 ) -> Result<(), MediaError> {
     let rung = stats
         .requested()
         .ok_or(MediaError::Missing("requested rung"))?;
     rung.validate()?;
-    let (pipeline, handles) = build(config, rung, stats, regional, tags, snapshots)?;
+    let (pipeline, handles) = build(config, rung, stats, hooks, snapshots)?;
     let running = Running(pipeline);
     let _attached = stats.attach(handles);
     running.set(gst::State::Playing)?;
@@ -652,8 +664,7 @@ fn build(
     config: &SenderConfig,
     rung: Rung,
     stats: &Arc<SenderStats>,
-    regional: &Arc<Regional>,
-    tags: Option<&Arc<TagFeed>>,
+    hooks: &Hooks,
     snapshots: &SyncSender<Snapshot>,
 ) -> Result<(gst::Pipeline, Handles), MediaError> {
     let (mut head, ingest) = source(&config.source, &stats.ingest)?;
@@ -725,21 +736,9 @@ fn build(
         pipeline.add_many(branch.iter().skip(1))?;
         gst::Element::link_many(&branch)?;
     }
-    if let Some(input) = regional.detector_input() {
+    for tap in &hooks.taps {
         let mut branch = vec![head.last().cloned().ok_or(MediaError::Missing("tee"))?];
-        branch.extend(detector_branch(input, regional)?);
-        pipeline.add_many(branch.iter().skip(1))?;
-        gst::Element::link_many(&branch)?;
-    }
-    if let Some(feed) = tags {
-        let mut branch = vec![head.last().cloned().ok_or(MediaError::Missing("tee"))?];
-        branch.extend(tag_branch(feed)?);
-        pipeline.add_many(branch.iter().skip(1))?;
-        gst::Element::link_many(&branch)?;
-    }
-    if regional.follows() {
-        let mut branch = vec![head.last().cloned().ok_or(MediaError::Missing("tee"))?];
-        branch.extend(follow_branch(regional)?);
+        branch.extend(tap::branch(tap)?);
         pipeline.add_many(branch.iter().skip(1))?;
         gst::Element::link_many(&branch)?;
     }
@@ -748,7 +747,7 @@ fn build(
         every: Duration::from_millis(u64::from(rung.keyframe_interval_ms)),
         last: None,
     };
-    stamp_frames(&rung_filter, keyframes, stats, regional, capture)?;
+    stamp_frames(&rung_filter, keyframes, stats, hooks, capture)?;
     count_encoded(&encoder, stats)?;
     let handles = Handles {
         rung_filter,
@@ -943,10 +942,10 @@ fn stamp_frames(
     rung_filter: &gst::Element,
     keyframes: Keyframes,
     stats: &Arc<SenderStats>,
-    regional: &Arc<Regional>,
+    hooks: &Hooks,
     capture: Option<Arc<CaptureClock>>,
 ) -> Result<(), MediaError> {
-    let (stats, regional) = (Arc::clone(stats), Arc::clone(regional));
+    let (stats, hook) = (Arc::clone(stats), hooks.frame.clone());
     let format = Mutex::new(None);
     let frozen = Mutex::new(None);
     let keyframes = Mutex::new(keyframes);
@@ -971,7 +970,7 @@ fn stamp_frames(
             SourceMode::Live => {
                 *frozen = None;
                 record_before_stamp(pad, buffer, &stats);
-                stamp_next(buffer, &format, &stats, &regional, capture.as_deref());
+                stamp_next(buffer, &format, &stats, hook.as_deref(), capture.as_deref());
             }
             SourceMode::Paused => {
                 *frozen = None;
@@ -983,7 +982,7 @@ fn stamp_frames(
                     &mut frozen,
                     &format,
                     &stats,
-                    &regional,
+                    hook.as_deref(),
                     capture.as_deref(),
                 );
             }
@@ -1017,7 +1016,7 @@ fn stamp_next(
     buffer: &mut gst::Buffer,
     format: &Mutex<Option<gst_video::VideoInfo>>,
     stats: &SenderStats,
-    regional: &Regional,
+    hook: Option<&(dyn Fn(&mut Frame) + Send + Sync)>,
     capture: Option<&CaptureClock>,
 ) {
     let frame_id = FrameId(stats.next_frame_id.fetch_add(1, Ordering::Relaxed));
@@ -1029,7 +1028,7 @@ fn stamp_next(
     let capture_ms = capture
         .and_then(CaptureClock::latest_ms)
         .unwrap_or_else(unix_ms);
-    let counter = match stamp_buffer(buffer, &video, frame_id, capture_ms, regional) {
+    let counter = match stamp_buffer(buffer, &video, frame_id, capture_ms, hook) {
         Ok(()) => &stats.frames_stamped,
         Err(_) => &stats.stamp_failures,
     };
@@ -1043,11 +1042,11 @@ fn repeat_frozen(
     frozen: &mut Option<gst::Buffer>,
     format: &Mutex<Option<gst_video::VideoInfo>>,
     stats: &SenderStats,
-    regional: &Regional,
+    hook: Option<&(dyn Fn(&mut Frame) + Send + Sync)>,
     capture: Option<&CaptureClock>,
 ) {
     let Some(held) = frozen.as_ref() else {
-        stamp_next(buffer, format, stats, regional, capture);
+        stamp_next(buffer, format, stats, hook, capture);
         *frozen = buffer.copy_deep().ok();
         return;
     };
@@ -1078,12 +1077,11 @@ fn stamp_buffer(
     video: &gst_video::VideoInfo,
     frame_id: FrameId,
     capture_ms: u64,
-    regional: &Regional,
+    hook: Option<&(dyn Fn(&mut Frame) + Send + Sync)>,
 ) -> Result<(), MediaError> {
     let mut frame = gst_video::VideoFrameRef::from_buffer_ref_writable(buffer.make_mut(), video)?;
-    // A frame that cannot be shaped still goes out, with its stamp.
-    if regional.shape(&mut frame).is_err() {
-        regional.shape_failed();
+    if let Some(hook) = hook {
+        hook(&mut frame);
     }
     let geometry = luma_geometry(&frame)?;
     let stamp = Stamp {
@@ -1134,205 +1132,6 @@ fn snapshot_branch(
     identify_frames(&at_rate, stats, &identities)?;
     hand_over(&sink, stats, snapshots, identities);
     Ok(vec![queue, rate, at_rate, encoder, sink.upcast()])
-}
-
-/// The detector's branch after the tee: frames thinned to the detector's rate and copied as they
-/// enter a leaky queue of one buffer (`copy_frames`), scaled to the model's square input as RGB and
-/// handed to the application's detector by an appsink that drops what it cannot take.
-fn detector_branch(input: u32, regional: &Arc<Regional>) -> Result<Vec<gst::Element>, MediaError> {
-    let queue = gst::ElementFactory::make("queue")
-        .property_from_str("leaky", "downstream")
-        .property("max-size-buffers", 1u32)
-        .property("max-size-bytes", 0u32)
-        .property("max-size-time", 0u64)
-        .build()?;
-    copy_frames(&queue, regional.detector_fps())?;
-    let side = i32::try_from(input).map_err(|e| MediaError::Config(e.to_string()))?;
-    let model_input = gst::ElementFactory::make("capsfilter")
-        .property(
-            "caps",
-            gst::Caps::builder("video/x-raw")
-                .field("format", "RGB")
-                .field("width", side)
-                .field("height", side)
-                .build(),
-        )
-        .build()?;
-    let sink = gst_app::AppSink::builder()
-        .max_buffers(1)
-        .drop(true)
-        .sync(false)
-        .build();
-    let regional = Arc::clone(regional);
-    sink.set_callbacks(
-        gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |sink| {
-                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                offer_to_detector(&regional, &sample);
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build(),
-    );
-    Ok(vec![
-        queue,
-        gst::ElementFactory::make("videoscale").build()?,
-        gst::ElementFactory::make("videoconvert").build()?,
-        model_input,
-        sink.upcast(),
-    ])
-}
-
-/// The tracker's branch after the tee: like the detector's, but the luma plane alone at the size
-/// the tracker works at (`follow::WIDTH` x `follow::HEIGHT`, whatever the camera's shape), handed
-/// to the application's tracker by an appsink that drops what it cannot take.
-fn follow_branch(regional: &Arc<Regional>) -> Result<Vec<gst::Element>, MediaError> {
-    let queue = gst::ElementFactory::make("queue")
-        .property_from_str("leaky", "downstream")
-        .property("max-size-buffers", 1u32)
-        .property("max-size-bytes", 0u32)
-        .property("max-size-time", 0u64)
-        .build()?;
-    copy_frames(&queue, regional.follow_fps())?;
-    let luma = gst::ElementFactory::make("capsfilter")
-        .property(
-            "caps",
-            gst::Caps::builder("video/x-raw")
-                .field("format", "GRAY8")
-                .field("width", follow_side(follow::WIDTH)?)
-                .field("height", follow_side(follow::HEIGHT)?)
-                .build(),
-        )
-        .build()?;
-    let sink = gst_app::AppSink::builder()
-        .max_buffers(1)
-        .drop(true)
-        .sync(false)
-        .build();
-    let regional = Arc::clone(regional);
-    sink.set_callbacks(
-        gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |sink| {
-                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                offer_to_tracker(&regional, &sample);
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build(),
-    );
-    Ok(vec![
-        queue,
-        gst::ElementFactory::make("videoscale").build()?,
-        gst::ElementFactory::make("videoconvert").build()?,
-        luma,
-        sink.upcast(),
-    ])
-}
-
-fn follow_side(pixels: usize) -> Result<i32, MediaError> {
-    i32::try_from(pixels).map_err(|e| MediaError::Config(e.to_string()))
-}
-
-/// Hands the tracker the frame's luma; a buffer that is not exactly the picture the tracker
-/// works on (padded rows) is dropped, never read as another shape.
-fn offer_to_tracker(regional: &Regional, sample: &gst::Sample) {
-    let at_ms = regional.cell.now_ms();
-    let luma = sample
-        .buffer()
-        .and_then(|buffer| buffer.map_readable().ok())
-        .map(|map| map.as_slice().to_vec());
-    if let Some(luma) = luma.filter(|luma| follow::Luma::new(luma).is_some()) {
-        regional.offer_follow(FollowFrame { at_ms, luma });
-    }
-}
-
-fn offer_to_detector(regional: &Regional, sample: &gst::Sample) {
-    let at_ms = regional.cell.now_ms();
-    let size = sample
-        .caps()
-        .and_then(|caps| gst_video::VideoInfo::from_caps(caps).ok())
-        .map(|info| (info.width(), info.height()));
-    let rgb = sample
-        .buffer()
-        .and_then(|buffer| buffer.map_readable().ok())
-        .map(|map| map.as_slice().to_vec());
-    if let (Some((width, height)), Some(rgb)) = (size, rgb) {
-        regional.offer(DetectorFrame {
-            at_ms,
-            width,
-            height,
-            rgb,
-        });
-    }
-}
-
-/// The landing marker's branch after the tee: frames thinned to the tag rate and copied as they enter
-/// a leaky queue of one buffer, scaled to the feed's width as greyscale and handed to the tag thread
-/// by an appsink that drops what it cannot take. Like the detector's, it never holds the live
-/// frames back.
-fn tag_branch(feed: &Arc<TagFeed>) -> Result<Vec<gst::Element>, MediaError> {
-    let queue = gst::ElementFactory::make("queue")
-        .property_from_str("leaky", "downstream")
-        .property("max-size-buffers", 1u32)
-        .property("max-size-bytes", 0u32)
-        .property("max-size-time", 0u64)
-        .build()?;
-    copy_frames(&queue, feed.fps())?;
-    let width = i32::try_from(feed.width()).map_err(|e| MediaError::Config(e.to_string()))?;
-    let grey = gst::ElementFactory::make("capsfilter")
-        .property(
-            "caps",
-            gst::Caps::builder("video/x-raw")
-                .field("format", "GRAY8")
-                .field("width", width)
-                .build(),
-        )
-        .build()?;
-    let sink = gst_app::AppSink::builder()
-        .max_buffers(1)
-        .drop(true)
-        .sync(false)
-        .build();
-    let feed = Arc::clone(feed);
-    sink.set_callbacks(
-        gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |sink| {
-                let sample = sink.pull_sample().map_err(|_| gst::FlowError::Eos)?;
-                if let Some(frame) = tag_frame(&sample) {
-                    feed.offer(frame);
-                }
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build(),
-    );
-    Ok(vec![
-        queue,
-        gst::ElementFactory::make("videoscale").build()?,
-        gst::ElementFactory::make("videoconvert").build()?,
-        grey,
-        sink.upcast(),
-    ])
-}
-
-/// The greyscale rows of `sample` without the padding `GStreamer` may add to each.
-fn tag_frame(sample: &gst::Sample) -> Option<TagFrame> {
-    let at = Instant::now();
-    let info = gst_video::VideoInfo::from_caps(sample.caps()?).ok()?;
-    let (width, height) = (
-        usize::try_from(info.width()).ok()?,
-        usize::try_from(info.height()).ok()?,
-    );
-    let stride = usize::try_from(*info.stride().first()?).ok()?;
-    let map = sample.buffer()?.map_readable().ok()?;
-    let mut luma = Vec::with_capacity(width.checked_mul(height)?);
-    for row in 0..height {
-        let start = row.checked_mul(stride)?;
-        luma.extend_from_slice(map.as_slice().get(start..start.checked_add(width)?)?);
-    }
-    Some(TagFrame {
-        at,
-        width: info.width(),
-        height: info.height(),
-        luma,
-    })
 }
 
 /// Thins the frames entering `element` to about `fps` a second and replaces each one it keeps with
@@ -1529,69 +1328,22 @@ mod tests {
     }
 
     #[test]
-    fn region_frames_are_softened_and_stamped() {
-        use crate::region::RegionSettings;
-        use gst_video::prelude::*;
-        use sat_teleop_policy::region::{NormRect, Timed};
-
+    fn the_hook_runs_before_the_stamp_is_drawn() {
         crate::init().unwrap();
-        let settings = RegionSettings {
-            pilot_ttl_ms: 3000,
-            detection_ttl_ms: 1000,
-            max_regions: 4,
-            max_area_percent: 50,
-            detector_fps: 2,
-            detector_min_score: 0.4,
-            follow_fps: 10,
-            follow_min_score: 0.5,
-            follow_lost_frames: 5,
-        };
-        let cell = sat_teleop_policy::region::RegionCell::default();
-        let regional = Regional::new(settings, cell.clone(), None, 2, false);
-        // The bottom left quarter of the picture.
-        let rect = NormRect::new(0.0, 0.5, 0.5, 1.0).unwrap();
-        cell.set(Timed {
-            rect,
-            at_ms: cell.now_ms(),
-        });
-
         let video = gst_video::VideoInfo::builder(gst_video::VideoFormat::I420, 640, 360)
             .build()
             .unwrap();
         let mut buffer = gst::Buffer::with_size(video.size()).unwrap();
-        {
-            let mut frame = gst_video::VideoFrameRef::from_buffer_ref_writable(
-                buffer.get_mut().unwrap(),
-                &video,
-            )
-            .unwrap();
-            let stride = usize::try_from(frame.plane_stride()[0]).unwrap();
-            for (y, row) in frame
-                .plane_data_mut(0)
-                .unwrap()
-                .chunks_mut(stride)
-                .enumerate()
-            {
-                for (x, pixel) in row.iter_mut().enumerate() {
-                    *pixel = if (x + y) % 2 == 0 { 0 } else { 200 };
-                }
-            }
-        }
-        stamp_buffer(&mut buffer, &video, FrameId(5), 1_234_567, &regional).unwrap();
+        // A hook that paints the whole luma plane, the stamp's rows included.
+        let paint = |frame: &mut Frame| frame.plane_data_mut(0).unwrap().fill(200);
+        stamp_buffer(&mut buffer, &video, FrameId(5), 1_234_567, Some(&paint)).unwrap();
 
         let frame =
             gst_video::VideoFrameRef::from_buffer_ref_readable(buffer.as_ref(), &video).unwrap();
         let geometry = luma_geometry(&frame).unwrap();
         let luma = frame.plane_data(0).unwrap();
-        let at = |x: usize, y: usize| luma[y * geometry.stride + x];
-        assert_eq!(
-            at(101, 300),
-            200,
-            "inside the region the picture is untouched"
-        );
-        assert_eq!(at(401, 300), 100, "outside it each block is its average");
-        assert_eq!(at(400, 300), 100);
-        let stamp = stamp::read(luma, geometry).expect("the stamp survives the softening");
+        assert_eq!(luma[300 * geometry.stride + 101], 200, "the hook drew");
+        let stamp = stamp::read(luma, geometry).expect("the stamp survives the hook");
         assert_eq!(stamp.frame_id, FrameId(5));
         assert_eq!(stamp.capture_ms, CaptureMs::from_unix_ms(1_234_567));
     }

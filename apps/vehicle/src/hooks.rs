@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use sat_teleop_control::clock::{Clock, Injection};
 use sat_teleop_control::vehicle::VehicleStats;
-use sat_teleop_media::sender::{Rung, SenderStats, SourceMode};
+use sat_teleop_video::sender::{Rung, SenderStats, SourceMode};
 
 use super::{Retained, SLOW_WRITE};
 

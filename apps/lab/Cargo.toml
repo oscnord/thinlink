@@ -19,3 +19,4 @@ sat-teleop-control = { path = "../../crates/control" }
 sat-teleop-detail = { path = "../../crates/detail" }
 sat-teleop-lab = { path = "../../crates/lab" }
 sat-teleop-policy = { path = "../../crates/policy" }
+sat-teleop-video-core = { path = "../../crates/video-core" }

@@ -13,7 +13,7 @@ use sat_teleop_detail::crop::Crop;
 use sat_teleop_detail::wire::{JobId, JobRequest, Kind, ListedSighting, MAX_LISTED};
 use sat_teleop_policy::position::Position;
 use sat_teleop_policy::sighting::utc_time;
-use sat_teleop_policy::token::Token;
+use sat_teleop_video_core::token::Token;
 
 /// The relay's job API for the ground, on `ground_net`.
 pub const RELAY: &str = "http://192.168.232.20:8080";

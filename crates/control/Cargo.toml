@@ -18,6 +18,7 @@ base64.workspace = true
 ed25519-dalek.workspace = true
 mavlink.workspace = true
 sat-teleop-policy = { path = "../policy" }
+sat-teleop-video-core = { path = "../video-core" }
 serde.workspace = true
 serialport.workspace = true
 serde_json.workspace = true

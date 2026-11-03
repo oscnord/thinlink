@@ -11,6 +11,8 @@ members = [
     "crates/lab",
     "crates/media",
     "crates/policy",
+    "crates/video",
+    "crates/video-core",
     "xtask",
 ]
 

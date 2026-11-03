@@ -1,6 +1,6 @@
 //! The relay's job API. Two listeners share one job table: the overlay address the vehicle polls and
 //! uploads on, and the ground network address the ground asks and fetches on. Each answers only its
-//! own routes. Every request needs the bearer token (`sat_teleop_policy::token`; without a token only
+//! own routes. Every request needs the bearer token (`sat_teleop_video_core::token`; without a token only
 //! loopback is served) and is then checked as hostile once read: bounded
 //! URL and body sizes, strict parsing, opaque ids, bounded jobs and bytes, expiry. `tiny_http` does
 //! not bound the request line, the headers or a stalled client; `docs/architecture.md` says what that
@@ -25,7 +25,7 @@ use crate::wire::{
     JobId, JobRequest, Listing, POSITION_HEADER, SOURCE_HEADER, is_sha256_hex, position_text,
 };
 use sat_teleop_policy::retrieval::MAX_CHUNK;
-use sat_teleop_policy::token::{Token, admit};
+use sat_teleop_video_core::token::{Token, admit};
 
 /// The vehicle's poll waits this long for a job.
 const LONG_POLL: Duration = Duration::from_secs(5);

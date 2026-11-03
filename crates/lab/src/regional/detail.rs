@@ -4,10 +4,10 @@
 //! reference, so the two differ only by what they carry.
 
 use sat_teleop_detail::crop::{Crop, pixel_rect};
-use sat_teleop_media::card::Luma;
-use sat_teleop_policy::freshness::State;
 use sat_teleop_policy::inset::{self, Placement};
 use sat_teleop_policy::region::{NormRect, PixelRect};
+use sat_teleop_video::card::Luma;
+use sat_teleop_video_core::freshness::State;
 
 use super::ssim;
 

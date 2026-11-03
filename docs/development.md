@@ -7,7 +7,9 @@ Toolchain, builds, gates and the `just` recipes. The plan is [issue #2](https://
 | Path | Contents |
 |---|---|
 | `crates/policy/` | Pure decisions: stamps, freshness, the control lease, the uplink budget and the adaptation ladder |
-| `crates/media/` | GStreamer pipelines: sender (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder), relay ingress, receivers and the labelled ground output |
+| `crates/video-core/` | The pure core of the video path: stamp, freshness, pacing, the uplink budget, the adaptation controller |
+| `crates/video/` | GStreamer pipelines: sender (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder), relay ingress, receivers and the labelled ground output |
+| `crates/media/` | What the drone adds to the video: regional video, detector, tracker and tag feeds, aim ring and detail inset |
 | `crates/control/` | MAVLink: vehicle bridge (SITL over TCP or a flight controller over serial), SITL identification and the command gate, telemetry budget, the ground's camera component |
 | `crates/detail/` | Retained snapshots: the vehicle's store, the relay's job API, retrieval at low priority |
 | `crates/detect/` | The person detector: a small ONNX model run with `tract-onnx` (pure Rust), fetched by `just model` |
@@ -46,7 +48,7 @@ Do not rewrite your global toolchain setup just for this project.
 
 ## Native and container builds
 
-Pure crates (`sat-teleop-policy`, `sat-teleop-control`, `sat-teleop-detect`, `sat-teleop-xtask`, and other crates without native dependencies) build and test natively. Crates that link GStreamer (`sat-teleop-media`, `sat-teleop-lab`, whose skeleton check runs `sat-teleop-media`'s headless receiver, and the applications) build only in the build container, so the host never needs GStreamer.
+Pure crates (`sat-teleop-video-core`, `sat-teleop-policy`, `sat-teleop-control`, `sat-teleop-detect`, `sat-teleop-xtask`, and other crates without native dependencies) build and test natively. Crates that link GStreamer (`sat-teleop-video`, `sat-teleop-media`, `sat-teleop-lab`, whose skeleton check runs `sat-teleop-video`'s headless receiver, and the applications) build only in the build container, so the host never needs GStreamer.
 
 Recipes:
 
@@ -100,7 +102,7 @@ CI is disabled on GitHub, and `just` runs the lab under Docker instead of Podman
 
 `cargo xtask <command>` is an alias for `cargo run -q -p sat-teleop-xtask --` (see `.cargo/config.toml`).
 
-- `cargo xtask layers` loads the workspace with `cargo metadata` and checks it against the registry in `xtask/src/layers.rs`. It reports every violation and exits 1 if there are any: unregistered members, missing `[lints] workspace = true`, upward or sideways dependencies, dependencies on apps or tooling, non-dev use of `sat-teleop-testkit`, forbidden families in `sat-teleop-policy`, GStreamer outside `sat-teleop-media` and apps. It checks dependencies as declared, including optional and target-specific ones.
+- `cargo xtask layers` loads the workspace with `cargo metadata` and checks it against the registry in `xtask/src/layers.rs`. It reports every violation and exits 1 if there are any: unregistered members, missing `[lints] workspace = true`, upward or sideways dependencies, dependencies on apps or tooling, non-dev use of `sat-teleop-testkit`, forbidden families in `sat-teleop-policy`, GStreamer outside `sat-teleop-video`, `sat-teleop-media` and apps. It checks dependencies as declared, including optional and target-specific ones.
 - `cargo xtask fixtures` reads `fixtures/manifest.toml`, downloads each missing fixture into `.cache/fixtures/` and verifies it. `cargo xtask fixtures --check` only verifies files already present and fails on a missing one.
 
 ## Fixtures

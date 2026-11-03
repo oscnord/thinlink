@@ -2,7 +2,7 @@
 //! plays a still test card (`card`: a landing pad and a person-sized figure inside the box, another
 //! figure, thin lines and blocks outside it, 1280x720) at its top rung from a one-frame y4m clip the check
 //! writes to the vehicle's volume; `checks` plays the ground's output and scores each decoded frame
-//! against the card scaled to the output's size (`sat_teleop_media::card`). In three windows of the
+//! against the card scaled to the output's size (`sat_teleop_video::card`). In three windows of the
 //! same length:
 //!
 //! 1. a box is tracked the way `QGroundControl` asks for it (`CAMERA_TRACK_RECTANGLE` to the
@@ -35,10 +35,10 @@ use mavlink::dialects::ardupilotmega::{COMMAND_LONG_DATA, MavCmd, MavMessage};
 use serde_json::{Value, json};
 
 use sat_teleop_control::ground::LeaseStatus;
-use sat_teleop_media::card::{self as reference_card, Luma};
-use sat_teleop_media::receiver::Source;
-use sat_teleop_media::{Health, supervise};
-use sat_teleop_policy::stamp::plausible_age;
+use sat_teleop_video::card::{self as reference_card, Luma};
+use sat_teleop_video::receiver::Source;
+use sat_teleop_video::{Health, supervise};
+use sat_teleop_video_core::stamp::plausible_age;
 
 use self::detail::Detail;
 use self::ssim::{Region, Scores};

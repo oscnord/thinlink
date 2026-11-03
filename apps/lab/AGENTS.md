@@ -1,6 +1,6 @@
 # AGENTS.md: apps/lab
 
-`sat-teleop-lab-cli` builds the `lab` executable (L3). It stays thin: argument parsing and wiring over `sat-teleop-lab`.
+`sat-teleop-lab-cli` builds the `lab` executable (L4). It stays thin: argument parsing and wiring over `sat-teleop-lab`.
 
 - `lab router --listen <addr> --uplink-if <name|auto> --downlink-if <name|auto>` runs the router agent.
 - `lab impair --agent <url> --profile <path> [--start-timeline]` validates a profile locally, then applies it through the agent.

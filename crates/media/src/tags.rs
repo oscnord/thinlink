@@ -1,11 +1,12 @@
-//! Frames for the landing marker's detector: the newest greyscale frame the sender's tag branch
+//! Frames for the landing marker's detector: the newest greyscale frame the sender's tag tap
 //! offers. The application's tag thread takes them; a thread that is busy skips to the newest, so
 //! the live video never waits and a marker is never found in an old frame.
 
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Instant;
 
-use crate::MediaError;
+use sat_teleop_video::MediaError;
+use sat_teleop_video::sender::{Tap, TapFormat, TapFrame, TapSpec};
 
 const WIDTHS: std::ops::RangeInclusive<u32> = 160..=1920;
 const MAX_FPS: u16 = 15;
@@ -38,10 +39,7 @@ pub fn validate(fps: u16, width: u32) -> Result<(), MediaError> {
 
 #[derive(Debug)]
 pub struct TagFeed {
-    fps: u16,
-    width: u32,
-    latest: Mutex<Option<TagFrame>>,
-    offered: Condvar,
+    tap: Arc<Tap>,
 }
 
 impl TagFeed {
@@ -49,39 +47,47 @@ impl TagFeed {
     /// picture's shape).
     pub fn new(fps: u16, width: u32) -> Result<Arc<Self>, MediaError> {
         validate(fps, width)?;
-        Ok(Arc::new(Self {
-            fps,
+        let tap = Tap::new(TapSpec {
+            format: TapFormat::Gray8,
             width,
-            latest: Mutex::new(None),
-            offered: Condvar::new(),
-        }))
+            height: None,
+            fps,
+        });
+        Ok(Arc::new(Self { tap }))
     }
 
-    pub(crate) fn fps(&self) -> u16 {
-        self.fps
+    /// The tap the sender feeds.
+    pub fn tap(&self) -> Arc<Tap> {
+        Arc::clone(&self.tap)
     }
 
-    pub(crate) fn width(&self) -> u32 {
-        self.width
-    }
-
-    /// Replaces a frame the tag thread has not taken.
-    pub(crate) fn offer(&self, frame: TagFrame) {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(frame);
-        self.offered.notify_one();
-    }
-
-    /// The newest frame offered and not taken yet, waiting for one if there is none.
+    /// The newest frame offered and not taken yet, waiting for one if there is none. A frame
+    /// whose rows cannot be read without their padding is skipped.
     pub fn next_frame(&self) -> TagFrame {
-        let mut latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
-            if let Some(frame) = latest.take() {
+            let frame = self.tap.next_frame();
+            if let Some(frame) = unpadded(&frame) {
                 return frame;
             }
-            latest = self
-                .offered
-                .wait(latest)
-                .unwrap_or_else(PoisonError::into_inner);
         }
     }
+}
+
+/// The greyscale rows of `frame` without the padding `GStreamer` may add to each.
+fn unpadded(frame: &TapFrame) -> Option<TagFrame> {
+    let (width, height) = (
+        usize::try_from(frame.width).ok()?,
+        usize::try_from(frame.height).ok()?,
+    );
+    let mut luma = Vec::with_capacity(width.checked_mul(height)?);
+    for row in 0..height {
+        let start = row.checked_mul(frame.stride)?;
+        luma.extend_from_slice(frame.data.get(start..start.checked_add(width)?)?);
+    }
+    Some(TagFrame {
+        at: frame.at,
+        width: frame.width,
+        height: frame.height,
+        luma,
+    })
 }

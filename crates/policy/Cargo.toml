@@ -9,6 +9,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+sat-teleop-video-core = { path = "../video-core" }
 serde.workspace = true
-subtle.workspace = true
 thiserror.workspace = true

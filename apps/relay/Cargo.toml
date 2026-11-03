@@ -12,6 +12,6 @@ workspace = true
 anyhow.workspace = true
 clap.workspace = true
 sat-teleop-detail = { path = "../../crates/detail" }
-sat-teleop-media = { path = "../../crates/media" }
+sat-teleop-video = { path = "../../crates/video" }
 serde.workspace = true
 toml.workspace = true

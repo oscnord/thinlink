@@ -1718,6 +1718,7 @@ dependencies = [
  "ed25519-dalek",
  "mavlink",
  "sat-teleop-policy",
+ "sat-teleop-video-core",
  "serde",
  "serde_json",
  "serialport",
@@ -1731,6 +1732,7 @@ dependencies = [
  "image",
  "rustix",
  "sat-teleop-policy",
+ "sat-teleop-video-core",
  "serde",
  "serde_json",
  "sha2",
@@ -1759,6 +1761,8 @@ dependencies = [
  "sat-teleop-detail",
  "sat-teleop-media",
  "sat-teleop-policy",
+ "sat-teleop-video",
+ "sat-teleop-video-core",
  "serde",
  "serde_json",
  "toml",
@@ -1772,8 +1776,9 @@ dependencies = [
  "mavlink",
  "sat-teleop-control",
  "sat-teleop-detail",
- "sat-teleop-media",
  "sat-teleop-policy",
+ "sat-teleop-video",
+ "sat-teleop-video-core",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1792,6 +1797,7 @@ dependencies = [
  "sat-teleop-detail",
  "sat-teleop-lab",
  "sat-teleop-policy",
+ "sat-teleop-video-core",
 ]
 
 [[package]]
@@ -1799,22 +1805,21 @@ name = "sat-teleop-media"
 version = "0.1.0"
 dependencies = [
  "gstreamer",
- "gstreamer-app",
  "gstreamer-video",
  "image",
  "sat-teleop-policy",
+ "sat-teleop-video",
+ "sat-teleop-video-core",
  "serde",
- "serde_json",
  "thiserror 2.0.21",
- "tiny_http",
 ]
 
 [[package]]
 name = "sat-teleop-policy"
 version = "0.1.0"
 dependencies = [
+ "sat-teleop-video-core",
  "serde",
- "subtle",
  "thiserror 2.0.21",
 ]
 
@@ -1825,7 +1830,7 @@ dependencies = [
  "anyhow",
  "clap",
  "sat-teleop-detail",
- "sat-teleop-media",
+ "sat-teleop-video",
  "serde",
  "toml",
 ]
@@ -1841,9 +1846,33 @@ dependencies = [
  "sat-teleop-detect",
  "sat-teleop-media",
  "sat-teleop-policy",
+ "sat-teleop-video",
+ "sat-teleop-video-core",
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "sat-teleop-video"
+version = "0.1.0"
+dependencies = [
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "sat-teleop-video-core",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tiny_http",
+]
+
+[[package]]
+name = "sat-teleop-video-core"
+version = "0.1.0"
+dependencies = [
+ "subtle",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

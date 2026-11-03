@@ -1,7 +1,6 @@
-use crate::{
-    region::{NormRect, PixelRect},
-    stamp::PlaneGeometry,
-};
+use sat_teleop_video_core::stamp::PlaneGeometry;
+
+use crate::region::{NormRect, PixelRect};
 
 /// Replaces every `factor` x `factor` block of the plane that does not overlap a rectangle in
 /// `keep` with its average. Blocks start at the plane's origin; a partial block at the right or

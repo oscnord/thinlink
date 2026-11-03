@@ -40,6 +40,8 @@ pub struct Graph {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Layer {
+    VideoCore,
+    Video,
     Policy,
     Media,
     Sibling,
@@ -53,10 +55,11 @@ impl Layer {
     /// Testkit and tool packages sit outside the layer ordering.
     fn rank(self) -> Option<u8> {
         match self {
-            Self::Policy => Some(0),
-            Self::Media | Self::Sibling => Some(1),
-            Self::Lab => Some(2),
-            Self::App => Some(3),
+            Self::VideoCore => Some(0),
+            Self::Policy | Self::Video => Some(1),
+            Self::Media | Self::Sibling => Some(2),
+            Self::Lab => Some(3),
+            Self::App => Some(4),
             Self::Testkit | Self::Tool => None,
         }
     }
@@ -65,6 +68,8 @@ impl Layer {
 /// Every planned package, including those later tasks add.
 fn registry(name: &str) -> Option<Layer> {
     match name {
+        "sat-teleop-video-core" => Some(Layer::VideoCore),
+        "sat-teleop-video" => Some(Layer::Video),
         "sat-teleop-policy" => Some(Layer::Policy),
         "sat-teleop-media" => Some(Layer::Media),
         "sat-teleop-control" | "sat-teleop-detail" | "sat-teleop-detect" => Some(Layer::Sibling),
@@ -125,8 +130,8 @@ fn workspace_edge_violation(from: Layer, dep: &Dependency) -> Option<&'static st
 }
 
 fn external_violation(from: Layer, dep: &str) -> Option<&'static str> {
-    if dep.starts_with("gstreamer") && !matches!(from, Layer::Media | Layer::App) {
-        return Some("only sat-teleop-media and apps may use GStreamer");
+    if dep.starts_with("gstreamer") && !matches!(from, Layer::Video | Layer::Media | Layer::App) {
+        return Some("only sat-teleop-video, sat-teleop-media and apps may use GStreamer");
     }
     let forbidden = dep.starts_with("mavlink") || POLICY_FORBIDDEN.contains(&dep);
     (from == Layer::Policy && forbidden).then_some("sat-teleop-policy must stay pure")
@@ -252,6 +257,14 @@ mod tests {
                 "sat-teleop-media: normal dependency on sat-teleop-control (same or higher layer)",
             ),
             (
+                "video knows nothing of the drone",
+                graph(vec![
+                    pkg("sat-teleop-video", &[("sat-teleop-policy", Kind::Normal)]),
+                    pkg("sat-teleop-policy", &[]),
+                ]),
+                "sat-teleop-video: normal dependency on sat-teleop-policy (same or higher layer)",
+            ),
+            (
                 "upward edge",
                 graph(vec![
                     pkg("sat-teleop-policy", &[("sat-teleop-lab", Kind::Build)]),
@@ -302,7 +315,7 @@ mod tests {
                     "sat-teleop-lab",
                     &[("gstreamer-video", Kind::Normal)],
                 )]),
-                "sat-teleop-lab: normal dependency on gstreamer-video (only sat-teleop-media and apps may use GStreamer)",
+                "sat-teleop-lab: normal dependency on gstreamer-video (only sat-teleop-video, sat-teleop-media and apps may use GStreamer)",
             ),
             (
                 "unregistered member",

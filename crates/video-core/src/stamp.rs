@@ -6,7 +6,7 @@ const COLUMNS: usize = 24;
 const ROWS: usize = 3;
 const BITS: usize = COLUMNS * ROWS;
 /// The state stamp is one more row of blocks, right below the stamp.
-pub(crate) const STATE_ROWS: usize = ROWS + 1;
+pub const STATE_ROWS: usize = ROWS + 1;
 /// 4 bits state, 16 bits age, 4 bits CRC-4.
 const STATE_DATA_BITS: u32 = 20;
 const STATE_CRC_BITS: u32 = 4;
@@ -82,11 +82,7 @@ pub fn state_rows_px(width: usize) -> usize {
 }
 
 /// Checks the geometry, with `rows` rows of blocks, against the buffer and returns the block side.
-pub(crate) fn validate(
-    geometry: PlaneGeometry,
-    len: usize,
-    rows: usize,
-) -> Result<usize, StampError> {
+pub fn validate(geometry: PlaneGeometry, len: usize, rows: usize) -> Result<usize, StampError> {
     let PlaneGeometry {
         width,
         height,

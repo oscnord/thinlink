@@ -20,8 +20,8 @@ use sat_teleop_detail::crop::{self, Crop};
 use sat_teleop_detail::store::{self, Entry};
 use sat_teleop_detail::vehicle::RetrievalLimits;
 use sat_teleop_detail::wire::{JobRequest, Kind};
-use sat_teleop_media::receiver::Source;
-use sat_teleop_media::unix_ms;
+use sat_teleop_video::receiver::Source;
+use sat_teleop_video::unix_ms;
 
 use crate::adaptation::{self, Expect, ages_ms, new_frames, offered_bytes};
 use crate::budget::{self, Budget};
@@ -128,7 +128,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_media::init() {
+    if let Err(e) = sat_teleop_video::init() {
         results.record("video_received", Verdict::Incomplete, e.to_string());
         return results;
     }

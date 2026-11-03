@@ -178,10 +178,10 @@ pub struct Feedback {
     /// `None` until enough was measured.
     pub uplink_bytes_per_s: Option<u32>,
     pub usage: Usage,
-    /// What retrieval of retained detail asks to reserve while a job is waiting to send, on the
+    /// What a secondary flow (the caller names it) asks to reserve while it has work waiting, on the
     /// wire, zero while idle: taken out of the uplink before the video is fitted to it, unless
     /// that would push the video out of the normal rungs.
-    pub retrieval: u32,
+    pub reserved: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -800,7 +800,7 @@ impl Controller {
 
     fn fitting(&self, from: usize, f: &Feedback) -> usize {
         let video = self.share().map_or(u32::MAX, |share| {
-            let reserve = self.reserve(from, share, f.usage, f.retrieval);
+            let reserve = self.reserve(from, share, f.usage, f.reserved);
             self.budget.split(share, f.usage, reserve).video
         });
         self.ladder
@@ -816,24 +816,23 @@ impl Controller {
         })
     }
 
-    /// What retrieval is granted of `wanted` when the video is fitted from rung `from`: all of it
+    /// What the reserved flow is granted of `wanted` when the video is fitted from rung `from`: all of it
     /// while the rung that fits the rest is still a normal one.
     fn reserve(&self, from: usize, share: u32, usage: Usage, wanted: u32) -> u32 {
-        self.budget
-            .retrieval_reserve(share, usage, wanted, |video| {
-                let rung = self
-                    .ladder
-                    .fitting(from, video, usage.video_packets_per_frame);
-                self.ladder
-                    .rung(rung)
-                    .is_some_and(|r| r.group == Group::Normal)
-            })
+        self.budget.reserve_share(share, usage, wanted, |video| {
+            let rung = self
+                .ladder
+                .fitting(from, video, usage.video_packets_per_frame);
+            self.ladder
+                .rung(rung)
+                .is_some_and(|r| r.group == Group::Normal)
+        })
     }
 
-    /// Whether `allowance` could be reserved for retrieval at `now_ms`: the uplink measured at the
+    /// Whether `allowance` could be reserved for the reserved flow at `now_ms`: the uplink measured at the
     /// last cut, while it still bounds the current rung, carries a normal rung beside it. Decided
     /// from capacity alone, whether or not a job runs.
-    pub fn retrieval_fits(&self, allowance: u32, usage: Usage, now_ms: u64) -> bool {
+    pub fn reserve_fits(&self, allowance: u32, usage: Usage, now_ms: u64) -> bool {
         let Some(share) = self.share().filter(|_| self.bounds(self.current, now_ms)) else {
             return true;
         };
@@ -1155,7 +1154,7 @@ mod tests {
                 control: 0,
                 video_packets_per_frame: 1,
             },
-            retrieval: 0,
+            reserved: 0,
         }
     }
 

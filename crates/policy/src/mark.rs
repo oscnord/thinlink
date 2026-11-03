@@ -3,7 +3,7 @@
 //! the scene. They stay below the stamp rows, which the lab reads back.
 
 use crate::predict::{Aim, Horizon};
-use crate::stamp::{PlaneGeometry, STATE_ROWS, StampError, validate};
+use sat_teleop_video_core::stamp::{PlaneGeometry, STATE_ROWS, StampError, validate};
 
 const LUMA: u8 = 235;
 /// The circle is this many dashes and gaps; the horizon's dash and gap are this long in pixels.

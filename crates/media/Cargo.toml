@@ -10,11 +10,10 @@ workspace = true
 
 [dependencies]
 gstreamer.workspace = true
-gstreamer-app.workspace = true
 gstreamer-video.workspace = true
 image.workspace = true
 sat-teleop-policy = { path = "../policy" }
+sat-teleop-video = { path = "../video" }
+sat-teleop-video-core = { path = "../video-core" }
 serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
-tiny_http.workspace = true

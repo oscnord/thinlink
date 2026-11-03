@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -17,14 +17,17 @@ use sat_teleop_control::ground::{
     GroundSnapshot, GroundStats, TakeError,
 };
 use sat_teleop_detail::client::Client;
+use sat_teleop_media::decorate::{self, CameraConfig, InsetCount, Predictive};
 use sat_teleop_media::inset::DetailCell;
-use sat_teleop_media::metrics;
-use sat_teleop_media::output::{
-    self, CameraConfig, FreshnessLimits, OutputConfig, OutputSnapshot, OutputStats, Predictive,
-};
-use sat_teleop_policy::freshness::Thresholds;
 use sat_teleop_policy::predict::Inputs;
-use sat_teleop_policy::token::Token;
+use sat_teleop_video::metrics;
+use sat_teleop_video::output::{
+    self, Decoration, FreshnessLimits, OutputConfig, OutputSnapshot, OutputStats,
+};
+use sat_teleop_video::sender::Frame;
+use sat_teleop_video_core::freshness::Thresholds;
+use sat_teleop_video_core::stamp::StateStamp;
+use sat_teleop_video_core::token::Token;
 
 use crate::detail::Detail;
 
@@ -103,7 +106,15 @@ struct Metrics {
     clock: ClockView,
     /// `null` when no camera is announced.
     camera: Option<CameraCounts>,
-    video: OutputSnapshot,
+    video: VideoView,
+}
+
+/// The output's counters and the frames that had the detail inset.
+#[derive(Serialize)]
+struct VideoView {
+    #[serde(flatten)]
+    output: OutputSnapshot,
+    inset_frames: u64,
 }
 
 /// `testbed/config/ground.toml`: the `MAVLink` bridge and, under `[video]`, the output.
@@ -173,10 +184,11 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, tokens: &Tokens) -> Res
     let (control_limits, thresholds, tracking) = load_limits(limits)?;
     let stations = ground::resolve(&ground.gcs).context("ground stations")?;
     let destinations = ground::resolve(&video.destinations).context("video destinations")?;
-    sat_teleop_media::init().context("GStreamer")?;
+    sat_teleop_video::init().context("GStreamer")?;
     let camera = camera_stream(&video).map(|stream| Arc::new(Camera::new(stream, tracking)));
     let output_stats = Arc::new(OutputStats::default());
     let detail = Arc::new(DetailCell::default());
+    let inset_count = Arc::new(InsetCount::default());
     let picture = (
         usize::from(video.encoding.width),
         usize::from(video.encoding.height),
@@ -190,11 +202,12 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, tokens: &Tokens) -> Res
         signer,
     ));
     {
-        let (output_stats, stats, controller, detail) = (
+        let (output_stats, stats, controller, detail, inset_count) = (
             Arc::clone(&output_stats),
             Arc::clone(&stats),
             Arc::clone(&controller),
             Arc::clone(&detail),
+            Arc::clone(&inset_count),
         );
         thread::spawn(move || {
             let bound = || stats.clock_bound();
@@ -209,14 +222,27 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, tokens: &Tokens) -> Res
                 camera,
                 inputs: &inputs,
             });
+            let draw = |frame: &mut Frame, state: StateStamp, decided_at: Instant| {
+                decorate::draw(
+                    predictive.as_ref(),
+                    &detail,
+                    &inset_count,
+                    frame,
+                    state,
+                    decided_at,
+                )
+            };
+            let decoration = Decoration {
+                draw: &draw,
+                note: decorate::NOTE,
+            };
             output::run(
                 &video,
                 &destinations,
                 thresholds,
                 &output_stats,
                 &bound,
-                predictive.as_ref(),
-                &detail,
+                &decoration,
             );
         });
     }
@@ -239,7 +265,10 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, tokens: &Tokens) -> Res
         control: controller.snapshot(),
         clock: stats.clock_view(&controller),
         camera: camera.as_deref().map(Camera::counts),
-        video: output_stats.snapshot(),
+        video: VideoView {
+            output: output_stats.snapshot(),
+            inset_frames: inset_count.get(),
+        },
     };
     let route = |method: &str, path: &str| match (method, path) {
         ("POST", "/lease") => Some(take(&controller)),

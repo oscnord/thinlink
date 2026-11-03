@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use sat_teleop_policy::token::Token;
+use sat_teleop_video_core::token::Token;
 
 use ureq::Body;
 use ureq::http::Response;
@@ -15,8 +15,8 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 static TOKENS: OnceLock<BTreeMap<String, Token>> = OnceLock::new();
 
 /// The token in `path`: one line, in a file only its owner can read.
-pub fn load_token(path: &Path) -> Result<Token, sat_teleop_media::MediaError> {
-    sat_teleop_media::metrics::load_token(path)
+pub fn load_token(path: &Path) -> Result<Token, sat_teleop_video::MediaError> {
+    sat_teleop_video::metrics::load_token(path)
 }
 
 /// Sets the tokens the clients send, by base URL; the first call wins.

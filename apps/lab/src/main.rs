@@ -19,7 +19,7 @@ use sat_teleop_lab::{
     adaptation, boot, control, ingest, mavlink, qgc_status, recording, regional, retrieval,
     sightings, skeleton,
 };
-use sat_teleop_policy::token::Token;
+use sat_teleop_video_core::token::Token;
 
 const PROFILES_DIR: &str = "testbed/profiles";
 const BUDGETS_PATH: &str = "perf/budgets.toml";

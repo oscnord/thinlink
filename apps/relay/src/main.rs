@@ -9,9 +9,9 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 
 use sat_teleop_detail::relay::{self, Relay, RelayConfig, RelaySnapshot};
-use sat_teleop_media::feedback::{self, FeedbackConfig, FeedbackSnapshot, FeedbackStats};
-use sat_teleop_media::ingress::{self, IngressConfig, IngressSnapshot, IngressStats};
-use sat_teleop_media::{metrics, supervise};
+use sat_teleop_video::feedback::{self, FeedbackConfig, FeedbackSnapshot, FeedbackStats};
+use sat_teleop_video::ingress::{self, IngressConfig, IngressSnapshot, IngressStats};
+use sat_teleop_video::{metrics, supervise};
 
 #[derive(Parser)]
 #[command(
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
         feedback,
         detail,
     } = load(&config)?;
-    sat_teleop_media::init().context("GStreamer")?;
+    sat_teleop_video::init().context("GStreamer")?;
     let stats = Arc::new(IngressStats::default());
     {
         let stats = Arc::clone(&stats);

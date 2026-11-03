@@ -1,7 +1,7 @@
 //! The vehicle's side of adaptation: it probes the relay every probe interval, turns each answer
-//! into feedback for `sat_teleop_policy::adapt::Controller` and gives the sender the rung the controller
+//! into feedback for `sat_teleop_video_core::adapt::Controller` and gives the sender the rung the controller
 //! picks. The uplink the controller measured at its last cut also caps the telemetry, through the
-//! caller, from the same budget (`sat_teleop_policy::budget`), sized to what the autopilot offers.
+//! caller, from the same budget (`sat_teleop_video_core::budget`), sized to what the autopilot offers.
 
 use std::collections::VecDeque;
 use std::io;
@@ -12,11 +12,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::adapt::{
+use sat_teleop_video_core::adapt::{
     Controller, Decision, Feedback, Group, Ladder, Reason, Rung as LadderRung, Thresholds,
 };
-use sat_teleop_policy::budget::{Budget, DATAGRAM_OVERHEAD, Usage, wire_bytes};
-use sat_teleop_policy::retrieval::Conditions;
+use sat_teleop_video_core::budget::{Budget, DATAGRAM_OVERHEAD, Usage, wire_bytes};
 
 use crate::feedback::{self, MAX_DATAGRAM, Probe, Report};
 use crate::sender::{Rung, SenderStats};
@@ -290,7 +289,7 @@ pub struct AdaptSnapshot {
     pub rung: usize,
     pub group: Option<&'static str>,
     #[serde(skip)]
-    group_kind: Option<Group>,
+    pub group_kind: Option<Group>,
     /// When the relay last answered a probe, on the monotonic clock.
     #[serde(skip)]
     last_answer: Option<Instant>,
@@ -318,8 +317,8 @@ pub struct AdaptSnapshot {
     pub capacity_bytes_per_s: Option<u32>,
     /// The telemetry cap now, in `MAVLink` frame bytes per second.
     pub telemetry_cap: Option<u32>,
-    /// The uplink carries a normal rung beside the retrieval allowance (`Controller::retrieval_fits`).
-    pub retrieval_fits: bool,
+    /// The uplink carries a normal rung beside the reserved flow's allowance (`Controller::reserve_fits`).
+    pub reserve_fits: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -337,25 +336,11 @@ impl AdaptStats {
         self.lock().clone()
     }
 
-    /// What retrieval asks adaptation before it sends (`sat_teleop_policy::retrieval::permit`).
-    pub fn retrieval_conditions(
-        &self,
-        now: Instant,
-        limits: &AdaptLimits,
-        allowance: u32,
-    ) -> Conditions {
-        let s = self.lock();
-        Conditions {
-            group: s.group_kind,
-            draining: s.draining,
-            since_answer_ms: s
-                .last_answer
-                .map(|at| duration_ms(now.saturating_duration_since(at))),
-            stale_after_ms: limits.stale_after_ms,
-            queue_delay_ms: s.queue_delay_ms,
-            queue_delay_base_ms: limits.queue_delay_base_ms,
-            allowance: if s.retrieval_fits { allowance } else { 0 },
-        }
+    /// Milliseconds since the relay last answered a probe; `None` if it never did.
+    pub fn since_answer_ms(&self, now: Instant) -> Option<u64> {
+        self.lock()
+            .last_answer
+            .map(|at| duration_ms(now.saturating_duration_since(at)))
     }
 
     fn update(&self, f: impl FnOnce(&mut AdaptSnapshot)) {
@@ -543,15 +528,15 @@ fn duration_ms(duration: Duration) -> u64 {
 
 /// Probes the relay and adapts until the socket cannot be opened. `uplink` reads the vehicle's
 /// other uplink counters; `telemetry_cap` takes the telemetry cap in frame bytes per second
-/// (`Budget::telemetry_cap`); `retrieval_wanted` is what retrieval asks to reserve on the wire per
-/// second now, zero while idle; `retrieval_allowance` is what it would ask for with a job.
+/// (`Budget::telemetry_cap`); `reserved_wanted` is what the reserved flow asks to hold on the wire per
+/// second now, zero while idle; `reserved_allowance` is what it would ask for with work waiting.
 pub fn run(
     setup: &Setup,
     sender: &SenderStats,
     uplink: impl Fn() -> Uplink,
     telemetry_cap: impl Fn(u32),
-    retrieval_wanted: impl Fn() -> u32,
-    retrieval_allowance: u32,
+    reserved_wanted: impl Fn() -> u32,
+    reserved_allowance: u32,
     stats: &AdaptStats,
 ) -> Result<(), MediaError> {
     let any = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));
@@ -570,8 +555,8 @@ pub fn run(
         stats,
         uplink,
         telemetry_cap,
-        retrieval_wanted,
-        retrieval_allowance,
+        reserved_wanted,
+        reserved_allowance,
         controller,
         prober: Prober {
             socket,
@@ -624,8 +609,8 @@ struct Adapter<'a, U, C, R> {
     stats: &'a AdaptStats,
     uplink: U,
     telemetry_cap: C,
-    retrieval_wanted: R,
-    retrieval_allowance: u32,
+    reserved_wanted: R,
+    reserved_allowance: u32,
     controller: Controller,
     prober: Prober,
     meter: Meter,
@@ -668,7 +653,7 @@ impl<U: Fn() -> Uplink, C: Fn(u32), R: Fn() -> u32> Adapter<'_, U, C, R> {
         let feedback = Feedback {
             uplink_bytes_per_s,
             usage,
-            retrieval: (self.retrieval_wanted)(),
+            reserved: (self.reserved_wanted)(),
             ..feedback
         };
         let now_ms = self.prober.ms(Instant::now());
@@ -685,11 +670,11 @@ impl<U: Fn() -> Uplink, C: Fn(u32), R: Fn() -> u32> Adapter<'_, U, C, R> {
         self.sender
             .set_pace(self.controller.pace_bytes_per_s(usage));
         let status = self.controller.status(now_ms);
-        let retrieval_fits =
-            self.controller
-                .retrieval_fits(self.retrieval_allowance, usage, now_ms);
+        let reserve_fits = self
+            .controller
+            .reserve_fits(self.reserved_allowance, usage, now_ms);
         self.stats.update(|s| {
-            s.retrieval_fits = retrieval_fits;
+            s.reserve_fits = reserve_fits;
             s.answers += 1;
             s.last_answer = Some(Instant::now());
             s.rtt_ms = status.rtt_ms;
@@ -889,7 +874,7 @@ impl Prober {
                 control: 0,
                 video_packets_per_frame: 1,
             },
-            retrieval: 0,
+            reserved: 0,
         };
         Some((report, feedback))
     }

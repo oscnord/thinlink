@@ -1,6 +1,6 @@
 # AGENTS.md: crates/detect
 
-`sat-teleop-detect` (L1) finds people and vehicles in a frame. It depends on `sat-teleop-policy` (`NormRect`, `Kind`) and on no GStreamer: the sender scales a frame to the model's input and hands over RGB bytes. It builds natively. See the root `AGENTS.md`.
+`sat-teleop-detect` (L2) finds people and vehicles in a frame. It depends on `sat-teleop-policy` (`NormRect`, `Kind`) and on no GStreamer: the sender scales a frame to the model's input and hands over RGB bytes. It builds natively. See the root `AGENTS.md`.
 
 ## Model
 

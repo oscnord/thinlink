@@ -11,15 +11,18 @@ use image::imageops::{self, FilterType};
 use image::{ImageFormat, ImageReader, Limits};
 
 use sat_teleop_policy::inset::{self, FRAME_PX, Placement};
-use sat_teleop_policy::stamp::PlaneGeometry;
-
-use crate::MediaError;
+use sat_teleop_video_core::stamp::PlaneGeometry;
 
 /// The most a crop may decode to (a retained snapshot is at most 8192 on a side).
 const MAX_SIDE: u32 = 8192;
 const MAX_ALLOC: u64 = 256 * 1024 * 1024;
 const FRAME_LUMA: u8 = 235;
 const NEUTRAL_CHROMA: u8 = 128;
+
+/// A crop that cannot be shown.
+#[derive(Debug, thiserror::Error)]
+#[error("the crop cannot be shown: {0}")]
+pub struct CropError(String);
 
 /// A crop as the I420 planes it is drawn from, at the size it is shown at.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,8 +34,8 @@ pub struct Image {
 
 impl Image {
     /// Decodes `jpeg` and scales it to the size `inset::fit` gives for a `picture` of this size.
-    pub fn from_jpeg(jpeg: &[u8], picture: (usize, usize)) -> Result<Self, MediaError> {
-        let bad = |e: &dyn std::fmt::Display| MediaError::Crop(e.to_string());
+    pub fn from_jpeg(jpeg: &[u8], picture: (usize, usize)) -> Result<Self, CropError> {
+        let bad = |e: &dyn std::fmt::Display| CropError(e.to_string());
         let mut limits = Limits::default();
         limits.max_image_width = Some(MAX_SIDE);
         limits.max_image_height = Some(MAX_SIDE);
@@ -176,7 +179,7 @@ impl DetailCell {
 
 #[cfg(test)]
 mod tests {
-    use sat_teleop_policy::freshness::State;
+    use sat_teleop_video_core::freshness::State;
 
     use super::*;
 

@@ -45,22 +45,24 @@ Packages that exist today:
 
 | Layer | Package | Dir | Responsibility |
 |---|---|---|---|
-| L0 | `sat-teleop-policy` | `crates/policy` | Pure decisions; today the in-picture stamp and the state stamp, the landing target decision, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the control lease, video freshness, snapshot retention and when retrieval may send |
-| L1 | `sat-teleop-media` | `crates/media` | Sender with live rung changes and its snapshot branch, relay ingress and its feedback, the vehicle's adaptation loop, headless receiver and the ground's freshness output, `GET /metrics` endpoint |
-| L1 | `sat-teleop-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
-| L1 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
-| L1 | `sat-teleop-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
-| L2 | `sat-teleop-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
-| L3 | `sat-teleop-vehicle`, `sat-teleop-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |
-| L3 | `sat-teleop-ground` | `apps/ground` | The ground adapter: MAVLink between mavlink-router and the ground stations, their command endpoint, the camera component, the video freshness output, the lease CLI and the detail request and fetch CLI |
-| L3 | `sat-teleop-lab-cli` | `apps/lab` | The `lab` executable (`router`, `impair`, `check`) |
+| L0 | `sat-teleop-video-core` | `crates/video-core` | The core of the workspace, pure: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token check |
+| L1 | `sat-teleop-video` | `crates/video` | The core of the workspace, GStreamer: sender with live rung changes, its snapshot branch, its frame hook and taps, relay ingress and its feedback, the sender's adaptation loop, headless receiver and the ground's freshness output with its decoration, `GET /metrics` endpoint. Knows nothing about drones |
+| L1 | `sat-teleop-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, softening, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
+| L2 | `sat-teleop-media` | `crates/media` | What the drone adds to the video: regional softening and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
+| L2 | `sat-teleop-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
+| L2 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
+| L2 | `sat-teleop-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
+| L3 | `sat-teleop-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
+| L4 | `sat-teleop-vehicle`, `sat-teleop-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |
+| L4 | `sat-teleop-ground` | `apps/ground` | The ground adapter: MAVLink between mavlink-router and the ground stations, their command endpoint, the camera component, the video freshness output, the lease CLI and the detail request and fetch CLI |
+| L4 | `sat-teleop-lab-cli` | `apps/lab` | The `lab` executable (`router`, `impair`, `check`) |
 | Tooling | `sat-teleop-xtask` | `xtask` | Layers check and pinned fixtures |
 
 `sat-teleop-testkit` (test support, `crates/testkit`) is registered in `xtask/src/layers.rs` and created only when two crates reuse a helper; it is a dev-dependency only.
 
 Do not create speculative modules, placeholder crates or frameworks. Each new package must justify a distinct dependency boundary or pure policy boundary, register in `xtask/src/layers.rs`, inherit workspace dependencies and lints (`[lints] workspace = true`), add its own `AGENTS.md` and add a line to the index in section 14.
 
-`cargo xtask layers` enforces downward dependencies. L1 siblings do not depend on each other. Applications remain thin. Testkit has no workspace dependencies and is never imported by runtime code.
+The video path is the core of the workspace: `video-core` and `video` know nothing about drones, and `video` depends on `video-core` only, so it can move to a repository of its own. Everything drone-specific builds on them (`policy`, `control`, `detect`, `detail`, `media`) and reaches the video through the sender's frame hook and taps and the output's decoration (`crates/video/AGENTS.md`). `cargo xtask layers` enforces downward dependencies. Packages of one layer do not depend on each other. Applications remain thin. Testkit has no workspace dependencies and is never imported by runtime code.
 
 ## 4. Golden rules
 
@@ -333,8 +335,10 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 ## 14. Per-package instruction index
 
 - [xtask](xtask/AGENTS.md): layer registry, fixture verification and repeatable checks.
-- [sat-teleop-policy](crates/policy/AGENTS.md): pure decisions, the in-picture stamp and the state stamp, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the control lease and command freshness, video freshness.
-- [sat-teleop-media](crates/media/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the vehicle's adaptation loop, metrics endpoint.
+- [sat-teleop-video-core](crates/video-core/AGENTS.md): the pure core of the video path: the in-picture stamp and the state stamp, video freshness, pacing, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token.
+- [sat-teleop-video](crates/video/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the sender's adaptation loop, metrics endpoint, and the frame hook, taps and decoration the drone plugs into.
+- [sat-teleop-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, softening, sightings, landing, the predictive display, the detail inset, retention, retrieval.
+- [sat-teleop-media](crates/media/AGENTS.md): what the drone adds to the video: regional video, the detector, tracker and tag feeds, the aim ring and detail inset, retrieval's view of adaptation.
 - [sat-teleop-control](crates/control/AGENTS.md): MAVLink frames, the autopilot link (SITL TCP or serial) and SITL identification, the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge, controller and camera component, the control envelope.
 - [sat-teleop-detect](crates/detect/AGENTS.md): the detector, its model and output layout, and how it is fetched.
 - [sat-teleop-detail](crates/detail/AGENTS.md): the snapshot store, the job API (relay and vehicle sides) and its client, crop mapping and chunk assembly.

@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use sat_teleop_detail::client::Client;
 use sat_teleop_detail::wire::{JobRequest, Kind as JobKind, Listing, MAX_LISTED};
-use sat_teleop_media::unix_ms;
+use sat_teleop_video::unix_ms;
 
 use crate::check::{self, Results, Verdict};
 use crate::client::AgentClient;

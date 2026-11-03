@@ -4,7 +4,7 @@
 //! sender offers it the newest scaled frame (`DetectorFrame`) and it publishes what it finds to the cell.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use gstreamer as gst;
@@ -17,8 +17,19 @@ use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::{NormRect, RegionCell, RegionLimits};
 use sat_teleop_policy::soften::{outline, soften_i420_plane, tag};
 
-use crate::stages::{Stage, StageSnapshot};
-use crate::{MediaError, plane_geometry};
+use sat_teleop_video::sender::{FrameHook, Tap, TapFormat, TapSpec};
+use sat_teleop_video::stages::{Stage, StageSnapshot};
+use sat_teleop_video::{MediaError, plane_geometry};
+
+fn wait_forever() -> ! {
+    loop {
+        std::thread::park();
+    }
+}
+
+fn follow_side(pixels: usize) -> u32 {
+    u32::try_from(pixels).unwrap_or(u32::MAX)
+}
 
 const MAX_SOFTEN_FACTOR: u8 = 4;
 const MAX_REGIONS: usize = 16;
@@ -150,42 +161,6 @@ pub struct FollowFrame {
     pub luma: Vec<u8>,
 }
 
-/// The newest value handed over and not yet taken: a slow taker skips to the newest, and the giver
-/// never waits.
-#[derive(Debug)]
-struct Handoff<T> {
-    latest: Mutex<Option<T>>,
-    offered: Condvar,
-}
-
-impl<T> Handoff<T> {
-    fn new() -> Self {
-        Self {
-            latest: Mutex::new(None),
-            offered: Condvar::new(),
-        }
-    }
-
-    fn offer(&self, value: T) {
-        *self.latest.lock().unwrap_or_else(PoisonError::into_inner) = Some(value);
-        self.offered.notify_one();
-    }
-
-    /// The newest value offered and not taken yet, waiting for one if there is none.
-    fn next(&self) -> T {
-        let mut latest = self.latest.lock().unwrap_or_else(PoisonError::into_inner);
-        loop {
-            if let Some(value) = latest.take() {
-                return value;
-            }
-            latest = self
-                .offered
-                .wait(latest)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-    }
-}
-
 /// What the sender needs for regional video, and its counters. Shared with the application's
 /// detector thread and its metrics.
 #[derive(Debug)]
@@ -194,12 +169,10 @@ pub struct Regional {
     settings: RegionSettings,
     /// Block size of the softened area; 1 is off.
     soften_factor: u8,
-    /// The model's input size, when a detector is configured: the sender feeds it.
-    detector_input: Option<u32>,
     /// Whether the pilot's box is followed (the sender then feeds the tracker).
     follow: bool,
-    detector_frames: Handoff<DetectorFrame>,
-    follow_frames: Handoff<FollowFrame>,
+    detector_tap: Option<Arc<Tap>>,
+    follow_tap: Option<Arc<Tap>>,
     active: AtomicU64,
     softened_frames: AtomicU64,
     shape_failures: AtomicU64,
@@ -287,10 +260,23 @@ impl Regional {
             cell,
             settings,
             soften_factor,
-            detector_input,
             follow,
-            detector_frames: Handoff::new(),
-            follow_frames: Handoff::new(),
+            detector_tap: detector_input.map(|side| {
+                Tap::new(TapSpec {
+                    format: TapFormat::Rgb,
+                    width: side,
+                    height: Some(side),
+                    fps: settings.detector_fps,
+                })
+            }),
+            follow_tap: follow.then(|| {
+                Tap::new(TapSpec {
+                    format: TapFormat::Gray8,
+                    width: follow_side(follow::WIDTH),
+                    height: Some(follow_side(follow::HEIGHT)),
+                    fps: settings.follow_fps,
+                })
+            }),
             active: AtomicU64::new(0),
             softened_frames: AtomicU64::new(0),
             shape_failures: AtomicU64::new(0),
@@ -310,24 +296,8 @@ impl Regional {
         Arc::new(regional)
     }
 
-    pub(crate) fn detector_input(&self) -> Option<u32> {
-        self.detector_input
-    }
-
-    pub(crate) fn detector_fps(&self) -> u16 {
-        self.settings.detector_fps
-    }
-
     pub fn detector_min_score(&self) -> f32 {
         self.settings.detector_min_score
-    }
-
-    pub(crate) fn follows(&self) -> bool {
-        self.follow
-    }
-
-    pub(crate) fn follow_fps(&self) -> u16 {
-        self.settings.follow_fps
     }
 
     /// The tracker's settings from `[region]` of the limits file.
@@ -338,24 +308,53 @@ impl Regional {
         }
     }
 
-    /// Hands a frame to the detector, replacing one it has not taken yet: a busy detector skips
-    /// to the newest frame, so what it finds is never a run old, and the live video never waits.
-    pub(crate) fn offer(&self, frame: DetectorFrame) {
-        self.detector_frames.offer(frame);
+    /// The taps the sender feeds the detector and the tracker with, when they run.
+    pub fn taps(&self) -> Vec<Arc<Tap>> {
+        self.detector_tap
+            .iter()
+            .chain(&self.follow_tap)
+            .cloned()
+            .collect()
     }
 
-    /// The newest frame offered and not taken yet, waiting for one if there is none.
+    /// The newest frame the sender offered the detector and it has not taken yet, waiting for one
+    /// if there is none: a busy detector skips to the newest frame, so what it finds is never a
+    /// run old, and the live video never waits.
     pub fn next_frame(&self) -> DetectorFrame {
-        self.detector_frames.next()
+        let Some(tap) = &self.detector_tap else {
+            wait_forever()
+        };
+        let frame = tap.next_frame();
+        DetectorFrame {
+            at_ms: self.taken_ms(frame.at),
+            width: frame.width,
+            height: frame.height,
+            rgb: frame.data,
+        }
     }
 
-    /// Hands a frame to the tracker like `offer` does for the detector.
-    pub(crate) fn offer_follow(&self, frame: FollowFrame) {
-        self.follow_frames.offer(frame);
-    }
-
+    /// The tracker's next frame, like `next_frame`. A buffer that is not exactly the picture the
+    /// tracker works on (padded rows) is skipped, never read as another shape.
     pub fn next_follow_frame(&self) -> FollowFrame {
-        self.follow_frames.next()
+        let Some(tap) = &self.follow_tap else {
+            wait_forever()
+        };
+        loop {
+            let frame = tap.next_frame();
+            if follow::Luma::new(&frame.data).is_some() {
+                let at_ms = self.taken_ms(frame.at);
+                return FollowFrame {
+                    at_ms,
+                    luma: frame.data,
+                };
+            }
+        }
+    }
+
+    /// The cell's time at which a frame left the tee.
+    fn taken_ms(&self, at: Instant) -> u64 {
+        let ago = u64::try_from(at.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.cell.now_ms().saturating_sub(ago)
     }
 
     /// Counts a frame the tracker took, with its last correlation and how long it took.
@@ -366,7 +365,7 @@ impl Regional {
     }
 
     /// Counts a frame that could not be shaped.
-    pub(crate) fn shape_failed(&self) {
+    fn shape_failed(&self) {
         self.shape_failures.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -456,6 +455,17 @@ impl Regional {
             .followed()
             .map(|rect| (follow::YUV, follow::GLYPH, rect));
         detected.chain(followed).collect()
+    }
+
+    /// The sender's hook for regional video: shapes each raw frame before its stamp is drawn. A
+    /// frame that cannot be shaped still goes out, with its stamp.
+    pub fn frame_hook(self: &Arc<Self>) -> FrameHook {
+        let regional = Arc::clone(self);
+        Arc::new(move |frame| {
+            if regional.shape(frame).is_err() {
+                regional.shape_failed();
+            }
+        })
     }
 
     /// Softens the picture outside the regions and outlines what was found. Runs before the
@@ -555,16 +565,47 @@ mod tests {
     }
 
     #[test]
-    fn a_busy_detector_gets_the_newest_frame() {
-        let regional = Regional::new(SETTINGS, RegionCell::default(), Some(320), 2, false);
-        for at_ms in [1, 2, 3] {
-            regional.offer(DetectorFrame {
-                at_ms,
-                width: 1,
-                height: 1,
-                rgb: Vec::new(),
-            });
+    fn frames_are_softened_outside_the_region_only() {
+        use gstreamer_video::VideoFrameExt;
+
+        sat_teleop_video::init().unwrap();
+        let cell = RegionCell::default();
+        let regional = Regional::new(SETTINGS, cell.clone(), None, 2, false);
+        // The bottom left quarter of the picture.
+        let rect = NormRect::new(0.0, 0.5, 0.5, 1.0).unwrap();
+        cell.set(sat_teleop_policy::region::Timed {
+            rect,
+            at_ms: cell.now_ms(),
+        });
+        let video = gst_video::VideoInfo::builder(gst_video::VideoFormat::I420, 640, 360)
+            .build()
+            .unwrap();
+        let mut buffer = gst::Buffer::with_size(video.size()).unwrap();
+        let mut frame =
+            gst_video::VideoFrameRef::from_buffer_ref_writable(buffer.get_mut().unwrap(), &video)
+                .unwrap();
+        let stride = usize::try_from(frame.plane_stride()[0]).unwrap();
+        for (y, row) in frame
+            .plane_data_mut(0)
+            .unwrap()
+            .chunks_mut(stride)
+            .enumerate()
+        {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                *pixel = if (x + y) % 2 == 0 { 0 } else { 200 };
+            }
         }
-        assert_eq!(regional.next_frame().at_ms, 3);
+
+        regional.frame_hook()(&mut frame);
+
+        let luma = frame.plane_data(0).unwrap();
+        let at = |x: usize, y: usize| luma[y * stride + x];
+        assert_eq!(
+            at(101, 300),
+            200,
+            "inside the region the picture is untouched"
+        );
+        assert_eq!(at(401, 300), 100, "outside it each block is its average");
+        assert_eq!(at(400, 300), 100);
     }
 }

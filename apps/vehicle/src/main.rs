@@ -19,22 +19,24 @@ use sat_teleop_detail::vehicle::{
     self as retrieval, RetrievalLimits, RetrievalSnapshot, RetrievalStats,
 };
 use sat_teleop_detect::{Detection, Detector};
-use sat_teleop_media::adapt::{
-    self, AdaptLimits, AdaptSnapshot, AdaptStats, LadderConfig, Rungs, Setup, Uplink,
-};
-use sat_teleop_media::camera;
+use sat_teleop_media::hooks::sender_hooks;
 use sat_teleop_media::region::{
     RegionSettings, Regional, RegionalSnapshot, validate_soften_factor,
 };
-use sat_teleop_media::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
+use sat_teleop_media::retrieval as media_retrieval;
 use sat_teleop_media::tags::TagFeed;
-use sat_teleop_media::{Health, HealthSnapshot, metrics, supervise, unix_ms};
-use sat_teleop_policy::budget::{Budget, wire_bytes};
 use sat_teleop_policy::follow::{Follower, Luma, Step};
 use sat_teleop_policy::kind::Kind;
 use sat_teleop_policy::region::NormRect;
 use sat_teleop_policy::retrieval::ground_heard;
 use sat_teleop_policy::sighting::Seen;
+use sat_teleop_video::adapt::{
+    self, AdaptLimits, AdaptSnapshot, AdaptStats, LadderConfig, Rungs, Setup, Uplink,
+};
+use sat_teleop_video::camera;
+use sat_teleop_video::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
+use sat_teleop_video::{Health, HealthSnapshot, metrics, supervise, unix_ms};
+use sat_teleop_video_core::budget::{Budget, wire_bytes};
 
 #[cfg(feature = "testbed")]
 mod hooks;
@@ -277,7 +279,7 @@ fn main() -> Result<()> {
 }
 
 fn probe_camera() -> Result<()> {
-    sat_teleop_media::init().context("GStreamer")?;
+    sat_teleop_video::init().context("GStreamer")?;
     let devices = camera::probe().context("device monitor")?;
     if devices.is_empty() {
         println!(
@@ -347,7 +349,7 @@ fn run(
         },
         rungs,
     };
-    sat_teleop_media::init().context("GStreamer")?;
+    sat_teleop_video::init().context("GStreamer")?;
     let retained = store
         .map(|settings| open_store(settings, sender.snapshot.is_some()))
         .transpose()?
@@ -425,10 +427,11 @@ fn run(
     let video = Arc::new(SenderStats::default());
     video.request(start);
     {
-        let (video, regional) = (Arc::clone(&video), Arc::clone(&regional));
+        let video = Arc::clone(&video);
+        let hooks = sender_hooks(&regional, tag_feed.as_ref());
         thread::spawn(move || {
             supervise(&video.health, || {
-                sender::run(&sender, &video, &regional, tag_feed.as_ref(), &snapshots)
+                sender::run(&sender, &video, &hooks, &snapshots)
             });
         });
     }
@@ -481,9 +484,7 @@ fn run(
         );
         thread::spawn(move || {
             let conditions = || {
-                adaptation
-                    .0
-                    .retrieval_conditions(Instant::now(), &adapt_limits, allowance)
+                media_retrieval::conditions(&adaptation.0, Instant::now(), &adapt_limits, allowance)
             };
             retrieval::run(
                 &relay,
@@ -531,9 +532,7 @@ fn run(
 
 /// Whether the relay answers the vehicle's probes, so the ground can be heard.
 fn heard(adaptation: &(AdaptStats, Health), limits: &AdaptLimits, allowance: u32) -> bool {
-    let conditions = adaptation
-        .0
-        .retrieval_conditions(Instant::now(), limits, allowance);
+    let conditions = media_retrieval::conditions(&adaptation.0, Instant::now(), limits, allowance);
     ground_heard(&conditions)
 }
 
