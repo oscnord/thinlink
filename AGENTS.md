@@ -1,200 +1,93 @@
 # AGENTS.md: thinlink
 
-A hobby Rust bench prototype for adaptive video and test-only control over cellular and GEO-like IP links.
+Rust on GStreamer for low-latency H.264 video over cellular and satellite links. Drone features build on the video core. QGroundControl is the primary ground station.
 
-QGroundControl is the primary ground station. The vehicle sends one H.264 RTP/UDP uplink inside WireGuard to a relay. Live video, retained recording and historical-detail retrieval have separate bounded work queues and share one network budget.
+## Read first
 
-Real mode (`docs/real-mode.md`) is off by default and routes control through interlocks.
+Read the GitHub issue, root instructions and relevant package instructions before editing. Plan non-trivial changes. Search for existing helpers before adding code. If assumptions fail, reassess the plan.
 
-## 1. Setup
-
-Required development tools:
-
-- Rust 1.99.0 through rustup. `rust-toolchain.toml` pins it with rustfmt and Clippy. If `cargo` on your PATH is not a rustup proxy, see `docs/testbed.md#toolchain`.
-- Podman and a compose provider (`podman compose`), for the container testbed and the build container. `CONTAINER_ENGINE=docker` runs the lab under Docker instead (the Podman machine workarounds are skipped).
-- `just`, `jq`, `gh`, Git and `rg`.
-- GStreamer is only needed inside the containers. Do not install it on the host to build the workspace.
-- Linux `tc`/`iproute2`, WireGuard and packet-capture tools live in the testbed containers, not on the host.
-- The native macOS QGC artifact for manual ground-station checks.
-- V4L2 inspection tools on the Pi when working on hardware integration.
-
-Verify installed tools. Do not assume a tool exists because a reference repository used it. Record tested versions and artifact identities.
-
-Run full native-dependency and Linux checks in the build container. Pure policy checks must also run without GStreamer, network privileges or hardware.
-
-Use Chrome Canary with an isolated profile for optional browser testing and debugging.
-
-## 2. Orientation
-
-| Read | Purpose |
+| Reference | Purpose |
 |---|---|
-| `README.md` | Plain-language overview for people: what it does, quickstart, limitations (no implementation detail) |
-| `docs/video.md` | Video ownership, data paths, adaptation and age measurement |
-| `docs/testbed.md` | Toolchain, builds, gates, code layout, fixtures and lab checks |
-| Relevant per-package `AGENTS.md` | Local invariants, dependencies and checks |
-| `log/devlog.md` | Gitignored local resume notes (may not exist) |
+| `README.md` | Overview and quickstart for people |
+| `docs/video.md` | Video ownership, adaptation and age measurement |
+| `docs/drone.md` | Control, regional video and retained detail |
+| `docs/real-mode.md` | Real-mode configuration and command admission |
+| `docs/hardware.md`, `deploy/` | Hardware setup and installation files |
+| `docs/testbed.md#development-setup` | Code layout and development setup |
+| `perf/budgets.toml` | Measurement budgets and evidence |
+| `fixtures/manifest.toml` | Fixture pins and checksums |
+| `log/devlog.md` | Gitignored local resume notes, if present |
 
-`docs/video.md` covers the video core and age measurement. `docs/drone.md` covers control, QGroundControl, regional video, retained detail, simulation and the Mac camera demo. `docs/hardware.md` covers the Pi, relay, ground machine and bench bring-up; `deploy/` holds the installation files. `docs/testbed.md` covers builds, the lab and its checks; `perf/budgets.toml` holds the budgets.
+## Workspace and per-package instruction index
 
-Read the root and relevant local instructions before editing. The GitHub issue identifies the active work.
+Directory links open each package's `AGENTS.md`.
 
-## 3. Workspace map
-
-Packages that exist today:
-
-| Layer | Package | Dir | Responsibility |
+| Layer | Package | Directory | Owns |
 |---|---|---|---|
-| L0 | `thinlink-video-core` | `crates/video-core` | The core of the workspace, pure: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token check |
-| L0 | `thinlink-x264` | `crates/x264` | The `thinlinkx264enc` GStreamer element and safe libx264 wrapper; GPL-2.0-or-later |
-| L1 | `thinlink-video` | `crates/video` | The core of the workspace, GStreamer: sender with live rung changes, its snapshot branch, its frame hook and taps, relay ingress and its feedback, the sender's adaptation loop, headless receiver and the ground's freshness output with its decoration, `GET /metrics` endpoint. Knows nothing about drones |
-| L1 | `thinlink-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, outline drawing, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
-| L2 | `thinlink-media` | `crates/media` | What the drone adds to the video: regional encoding and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
-| L2 | `thinlink-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
-| L2 | `thinlink-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
-| L2 | `thinlink-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
-| L3 | `thinlink-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
-| L4 | `thinlink-vehicle`, `thinlink-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |
-| L4 | `thinlink-ground` | `apps/ground` | The ground adapter: MAVLink between mavlink-router and the ground stations, their command endpoint, the camera component, the video freshness output, the lease CLI and the detail request and fetch CLI |
-| L4 | `thinlink-lab-cli` | `apps/lab` | The `lab` executable (`router`, `impair`, `check`) |
-| Tooling | `thinlink-xtask` | `xtask` | Layers check and pinned fixtures |
+| L0 | `thinlink-video-core` | [crates/video-core](crates/video-core/AGENTS.md) | Pure stamps, freshness, pacing and adaptation |
+| L0 | `thinlink-x264` | [crates/x264](crates/x264/AGENTS.md) | `thinlinkx264enc` and libx264 wrapper |
+| L1 | `thinlink-video` | [crates/video](crates/video/AGENTS.md) | GStreamer video and extension hooks |
+| L1 | `thinlink-policy` | [crates/policy](crates/policy/AGENTS.md) | Pure drone and retention decisions |
+| L2 | `thinlink-media` | [crates/media](crates/media/AGENTS.md) | Drone video hooks and decoration |
+| L2 | `thinlink-control` | [crates/control](crates/control/AGENTS.md) | MAVLink bridges and command admission |
+| L2 | `thinlink-detect` | [crates/detect](crates/detect/AGENTS.md) | ONNX detection and AprilTag detection |
+| L2 | `thinlink-detail` | [crates/detail](crates/detail/AGENTS.md) | Snapshot store and retrieval jobs |
+| L3 | `thinlink-lab` | [crates/lab](crates/lab/AGENTS.md) | Impairments, scenarios and verdicts |
+| L4 | `thinlink-vehicle` | [apps/vehicle](apps/vehicle/AGENTS.md) | Vehicle wiring |
+| L4 | `thinlink-relay` | [apps/relay](apps/relay/AGENTS.md) | Relay wiring |
+| L4 | `thinlink-ground` | [apps/ground](apps/ground/AGENTS.md) | Ground adapter and CLI |
+| L4 | `thinlink-lab-cli` | [apps/lab](apps/lab/AGENTS.md) | `lab` CLI |
+| Tooling | `thinlink-xtask` | [xtask](xtask/AGENTS.md) | Layer checks and fixtures |
 
-`thinlink-testkit` (test support, `crates/testkit`) is registered in `xtask/src/layers.rs` and created only when two crates reuse a helper; it is a dev-dependency only.
+`cargo xtask layers` enforces downward dependencies, including build and dev dependencies. Same-layer dependencies are forbidden. Applications stay thin; no package depends on an app or tool. GStreamer dependencies belong only in `x264`, `video`, `media` and apps.
 
-Do not create speculative modules, placeholder crates or frameworks. Each new package must justify a distinct dependency boundary or pure policy boundary, register in `xtask/src/layers.rs`, inherit workspace dependencies and lints (`[lints] workspace = true`), add its own `AGENTS.md` and add a line to the index in section 14.
+Video crates know nothing about drones. Drone integration uses the sender's frame hook and taps and the output's decoration. Pure decision functions receive time and observations; they do not read clocks or perform I/O.
 
-The video path is the core of the workspace. Its crates know nothing about drones: `video` depends on `video-core` and `x264`. Everything drone-specific builds on them (`policy`, `control`, `detect`, `detail`, `media`) and reaches the video through the sender's frame hook and taps and the output's decoration (`crates/video/AGENTS.md`). `cargo xtask layers` enforces downward dependencies. Packages of one layer do not depend on each other. Applications remain thin. Testkit has no workspace dependencies and is never imported by runtime code.
+`thinlink-testkit` is registered in `xtask/src/layers.rs` but has no package directory. Create it only when two crates share a test helper. It has no workspace dependencies and is a dev-dependency only. Tooling also has no workspace dependencies.
 
-## 4. Golden rules
+Each new package needs a distinct dependency or pure-policy boundary. Register it in `xtask/src/layers.rs`, inherit workspace dependencies and `[lints] workspace = true`, add local instructions and update this index. Do not add placeholder packages or generic plugin frameworks.
 
-### Never panic on input
+## Coding rules
 
-Network packets, MAVLink messages, files, configuration and requests are untrusted.
+- Return typed errors for invalid input. Libraries use `thiserror`; binaries add `anyhow::Context` at application boundaries.
+- No production `unwrap()`, input-dependent `expect()`, `panic!`, `unreachable!`, `todo!` or `unimplemented!`.
+- Check input-derived indexing and arithmetic. Validate finite numbers and conversions. Cap allocations before allocating.
+- Bound queues, retries and storage. Use synchronous threads and bounded `std::sync::mpsc::sync_channel` queues. An async runtime needs a demonstrated requirement.
+- Keep continuous commands latest-only; reconnect must not replay them. Recording and retrieval must not block live capture or control.
+- Use `std::time::Instant` for local deadlines. Cross-machine age needs a clock mapping and uncertainty. Keep unknown age explicit.
+- Report worker failure. Never present stale or unverifiably aged video as live.
+- Reuse protocol implementations. Never write a codec, RTP stack, MAVLink serializer or cryptography.
+- Prefer small functions and early returns. Do not nest `if` statements. Extract non-trivial domain decisions into named pure functions.
+- Reuse compound conditions and payload builders. Avoid traits with one implementation. Comments explain constraints, not execution steps.
+- Group imports: standard library, external crates, workspace crates, then local imports. Separate groups with blank lines.
+- Fix Clippy findings. Use narrow `#[expect(clippy::..., reason = "...")]` only with justification. Never suppress an input-bound violation.
 
-- Return typed errors for malformed, unsupported, missing or excessive input.
-- No production `unwrap()`, input-dependent `expect()`, `panic!`, `unreachable!`, `todo!` or `unimplemented!`. Tests may use them.
-- Use checked indexing (`get()`) and checked arithmetic for input-derived offsets, dimensions, counts and lengths.
-- Validate finite numeric values and conversions. Guard division and size calculations.
-- Cap allocations before allocating, including decoded dimensions and declared message lengths.
-- Handle worker/thread failure explicitly. Do not hide a failed worker behind a healthy status.
-- A regression test is required for a fixed input-triggered panic or limit violation.
+### Unsafe-code boundary
 
-### Regional video
+Workspace Rust uses `unsafe_code = "deny"`. Exceptions belong only in `crates/x264/src/encoder.rs` and generated module `sys` in `crates/x264/src/lib.rs`. `crates/x264/build.rs` generates bindings from the system header.
 
-- `RegionCell` (`thinlink-policy`) selects the regions for encoder quantiser offsets. The frame hook returns `regions()` as pixel rectangles, and the control loop sends `confirmed()` to the ground; never compute either selection anywhere else.
-- A region envelope never reaches the autopilot and never carries a MAVLink frame. The sender attaches the hook's regions as `GstVideoRegionOfInterestMeta` for `thinlinkx264enc`. Quantiser offsets leave pixels unchanged. Outlines are drawn before the stamp.
-- The detector never blocks the video: its branch is leaky and drops its own frames, and a model that does not load is shown in the metrics, not fatal. It is off unless the vehicle config asks for it. `[region] roi_qp_offset` defaults to 0 (off) and accepts -51 to 0. The pilot's box is kept only with a negative offset; detections are outlined even with offsets off.
-- No AGPL model or code (Ultralytics YOLO is excluded); weights and code Apache-2.0, MIT or BSD.
+Expose a safe API, isolate unsafe blocks and explain each with a `SAFETY:` comment. Further exceptions require explicit review of the named file boundary and verification plan. `just check` rejects `unsafe_code` mentions in Rust files under `crates`, `apps` and `xtask` outside `crates/x264`.
 
-### Bound work and preserve freshness
+## Build and verification
 
-- Bound queues by bytes/items and oldest-item age where relevant. Use bounded `std::sync::mpsc::sync_channel` queues and synchronous threads; no async runtime unless a task proves it necessary.
-- Bound retries, concurrent jobs, outstanding transfer bytes, recording pins and storage use.
-- Continuous commands use latest-only state. Reconnect must not replay old commands.
-- Drop obsolete raw frames before encoding. Respect compressed-frame dependencies and recover at a keyframe when needed.
-- Reliable transport is not permission to accumulate stale work.
-- Recording and detail retrieval must not block control or live capture.
+Use Rust 1.99.0 through rustup, pinned in `rust-toolchain.toml`. See `docs/testbed.md#toolchain` for PATH handling. Verify installed tools and record versions for measurements.
 
-### Time and evidence
+GStreamer-linked builds and Linux checks run in the build container. Pure crates also run natively without GStreamer or hardware. Do not install GStreamer on the host for workspace builds. Containers use Podman with a compose provider; `CONTAINER_ENGINE=docker` selects Docker. Other tools: `just`, `jq`, `gh`, Git and `rg`.
 
-- Use monotonic time (`std::time::Instant`) for local deadlines, leases, expiry and elapsed durations.
-- Pass time and observations into pure policy functions; policy does not read clocks.
-- Cross-machine frame age requires a clock mapping and uncertainty.
-- Unknown age is explicit. RTP timestamps alone are not capture wall time.
-- Count new source observations, not repeated display frames.
-- Report requested settings, applied settings and measured results separately.
-- Missing measurements or thresholds never count as passing. Lab exit codes: 0 pass, 1 fail, 2 incomplete or ungraded; never report 2 as a pass.
+| Command | Use |
+|---|---|
+| `just check-native` | Host gates for pure crates |
+| `just check` | Full container gates, including `testbed` feature checks |
+| `just fmt` | Format workspace |
+| `just image <target>` | Build `localhost/thinlink-runtime:dev` or `localhost/thinlink-build:dev` |
+| `just gate-fast <scenario> <profile>` | Rebuild changed inputs and run the affected scenario |
+| `cargo xtask fixtures` | Fetch and verify pinned fixtures |
+| `just lab-keys` | Generate testbed keys |
+| `just lab-up` | Build and start the testbed |
+| `just lab-check <scenario> <profile>` | Run a scenario |
+| `just lab-down` | Remove the thinlink topology |
 
-### Control and security
-
-- Never send commands to real actuators in the testbed, in tests or by default. Control reaches ArduPilot SITL, or a real flight controller only in `mode = "real"`, and the logging sink otherwise, decided in one place, `thinlink_control::identity::failures` (`control_target` is its wrapper). In SITL mode only an autopilot that has reported the SITL-only `SIM_WIND_SPD` parameter gets control frames; in real mode only one that has not, with signed envelopes' keys loaded, the required failsafe parameters read back and equal, and a fresh clock bound. Never bypass, default on or configure around these checks. `sitl_in_real_mode` and the `/real` and `/clock/inject` hooks exist only in builds with the `testbed` cargo feature (the testbed's images); a release build refuses a config that names `debug_hooks` or `sitl_in_real_mode`. Never build a release artifact with the feature. Never add a second decision.
-- Vehicle-side policy owns the control lease and command validation.
-- Every QGC command must traverse the ground adapter and vehicle gate.
-- Stale, frozen, disconnected or unverifiably aged video must never appear live.
-- Historical detail must remain labelled with source identity, capture time and uncertainty.
-- Use existing transport encryption and protocol implementations. Never write a codec, RTP stack, MAVLink serializer or crypto.
-- Authenticate peers and authorize each command or retained-object request.
-- Never put secrets in logs or URLs. Do not log sensitive payloads by default. Never commit `testbed/secrets/`.
-- Use opaque retained-object IDs, never client-selected filesystem paths.
-- Publish development ports on host loopback only.
-
-### Endpoint security
-
-Developer Macs may run endpoint protection (here Microsoft Defender for Endpoint) that kills the shell and the whole agent session when a host command line looks like a reverse shell. It has happened once already.
-
-- On the host, never type, write, heredoc, echo or search for reverse-shell idioms: the shell's built-in network pseudo-files (the tcp and udp device paths), read-write redirection of a numbered file descriptor to a socket, netcat or ncat with an execute option, named pipes combined with netcat, interactive shells redirected to sockets, socat exec or system addresses, Python pty spawning, or piping downloaded content into a shell. This includes files you create, such as scripts in `testbed/scripts/`.
-- For HTTP use `curl` (in the runtime image) or the `lab` CLI, never shell socket tricks.
-- Keep listeners, pings and packet tools inside containers (`podman compose -p thinlink -f testbed/compose.yml exec <service> ...`).
-- Prefer the file-editing tools over shell heredocs for writing files.
-
-### Unsafe code
-
-Workspace Rust code is under `unsafe_code = "deny"`. Only `thinlink-x264` may allow it, in `crates/x264/src/encoder.rs` (the FFI wrapper) and the generated bindings module `sys` in `crates/x264/src/lib.rs`. `just check` rejects any `.rs` file under `crates`, `apps` or `xtask` that mentions `unsafe_code` outside `crates/x264`. Safe bindings to native dependencies do not imply those dependencies contain no unsafe code.
-
-Direct bindings are needed because GStreamer's `x264enc` cannot force a whole IDR with intra refresh enabled or change its refresh period while playing. It also exposes no per-macroblock quantiser offsets. The published `x264-sys` crate bundles an old `x264.h` without `quant_offsets`; `crates/x264/build.rs` generates bindings from the system header with bindgen. The crate's tests assert NAL type 5 for a forced IDR, delta units at refresh-wave starts, and the new refresh period after a frame-rate change.
-
-Every exception must expose a safe API, isolate unsafe blocks, explain each block with a `SAFETY:` comment and keep all other code under the prohibition. Any further exception requires explicit review of the named crate/file boundary, why safe bindings are insufficient and the verification plan. Do not create an empty FFI crate in anticipation.
-
-## 5. Workflow and picking work
-
-1. Read the issue and the relevant docs.
-2. Plan non-trivial changes before implementation.
-3. Choose the next small vertical slice with a measurable outcome.
-4. Search for existing helpers before writing another utility or abstraction.
-5. Keep the tree building and inspect actual artifacts as the slice develops.
-6. If investigation diverges or assumptions fail, stop, reassess and revise the plan.
-
-Keep changes focused. Fix root causes and remove stale casts, branches, comments, documentation and assumptions invalidated by the change. Separate unrelated mechanical cleanup.
-
-Do not add traits with one implementation, generic plugin systems or configuration for values that never vary. Reuse GStreamer, MediaMTX, mavlink-router, WireGuard and ArduPilot SITL.
-
-## 6. Code style
-
-### Imports
-
-Use four groups separated by blank lines:
-
-1. Standard library.
-2. External crates.
-3. Workspace crates.
-4. Local `crate::` and `super::` imports.
-
-Use scoped imports for items genuinely local to one function.
-
-### Errors and types
-
-- Libraries use `thiserror` enums with useful typed errors.
-- Binaries use `anyhow` with `.context()` at the application boundary.
-- Prefer concrete types over unnecessary trait objects.
-- Use newtypes when identical representations have different meanings, such as session IDs, frame IDs, bytes and rates.
-- Use named fields for records that leave a function.
-- Use enums instead of boolean parameters with unclear meaning.
-- Add `Debug`, `Clone` and `Copy` only where appropriate.
-- Make ambiguous `.parse()`, `.into()` and long-chain result types explicit.
-
-### Readability
-
-- Prefer small focused functions and early returns.
-- Do not nest an `if` inside another `if`; use guards, named decisions or move bookkeeping to its state owner.
-- Name and reuse repeated compound conditions.
-- Extract non-trivial domain decisions into pure functions.
-- Build repeated records or payloads in one named builder.
-- Hoist fixed tables and constant arrays.
-- Split functions by the decisions they make.
-- Keep iterator chains readable; name intermediate steps when necessary.
-- Comments explain non-obvious reasons or constraints, not the code's narration.
-- Before deleting or gating behavior, check whether it also owns an unrelated responsibility.
-
-## 7. Clippy policy
-
-Every package opts into workspace lints (`[lints] workspace = true`). CI treats warnings as errors.
-
-The workspace uses pedantic linting with deliberate exceptions listed in the root `Cargo.toml`. `clippy.toml` permits `unwrap`, `expect`, `panic` and indexing in tests only. Fix findings first. When suppression is justified, use the narrowest `#[expect(clippy::..., reason = "...")]` rather than a blanket allow.
-
-Do not suppress a panic, unsafe operation or input-bound violation to make a check green.
-
-## 8. Build, test and lint
-
-Gates before reporting work done:
+Workspace gates:
 
 ```sh
 cargo fmt --all -- --check
@@ -203,150 +96,35 @@ cargo test --workspace --locked
 cargo xtask layers
 ```
 
-`just check` runs the full workspace gates in the build container; `just check-native` runs the pure-crate gates on the host. `just fmt` formats. `just image <target>` builds `localhost/thinlink-runtime:dev` or `localhost/thinlink-build:dev`. During iteration, run focused package tests first.
+- During iteration, run focused package tests. Before each commit, run native fmt, Clippy and tests for touched non-GStreamer crates.
+- Before reporting a change set, run `just check` once and the affected lab checks. Inspect `results/<run-id>/summary.json` and `timeseries.csv`.
+- Reserve `just gate-full` for shared behavior without targeted coverage or budget measurement. Do not repeat passing checks for confidence. For flaky checks, add a pure regression test and run the check about three times.
+- Tests protect product behavior and domain invariants through public inputs and observable outputs. Do not test declarative configuration, mocked return values or dependency behavior. Do not add UI tests.
+- Add a regression test for each fixed input-triggered panic or limit violation.
+- Scenario assertions belong in `lab check`, not recipe shell. Preserve the selected runtime and profile. Missing measurements or thresholds are not passes: exit 0 means pass, 1 fail, 2 incomplete or ungraded.
+- Keep requested settings, applied settings and measurements distinct. Label native QGC, headless decoder and optical evidence separately. Hardware claims require hardware measurements.
 
-Two tiers of gate, so a fix iteration takes minutes:
+Never build while the testbed or simulation is up. Run `just lab-down` first. Keep `BUILD_JOBS` and `BUILD_MEMORY` within VM resources; defaults are `1` and `1g`. Build one architecture at a time. Preserve simulation `mem_limit`. Simulation uses `just sim-up` and `just sim-check <profile>`; it is separate from default gates. New copter commands need a row in `docs/drone.md#command-gate`.
 
-- Per commit: host-native `cargo fmt`, `cargo clippy` and `cargo test` on the crates the commit touches that do not link GStreamer (seconds). `just check` does not run before every commit.
-- Per fix: `just gate-fast <scenario> <profile>` rebuilds what changed, brings the testbed up only if the images or build inputs changed, and runs the one check that failed or covers the change.
-- Per change set, once, before review or merge: `just check`, plus the lab checks that exercise what changed (`just gate-fast`, or runs already made on the same build). Run `just check` once before reporting a change set or fix round, not per commit.
+## Command security
 
-Keep verification proportional, then move on:
+Never construct reverse-shell syntax in commands, searches or files. Do not use shell network pseudo-files or command-executing network utility modes. Never connect shells to sockets through redirections, named pipes or pseudo-terminals. Never execute downloaded content through a shell pipeline. Use file-editing tools for writes. Use `curl` or `lab` for HTTP.
 
-- `just gate-full` (about 13 minutes) is not a default step. Run it only when a change touches shared behaviour that no targeted check covers, or to refresh budgets. A fix round runs only the checks that cover the code it touched, once.
-- Verification must not dwarf the work: a half-hour change does not get hours of gates.
-- Do not rerun a passing check for confidence, and do not ask for "N runs" or "N in a row". The exception is work on a flaky check: there, add a pure test that fails without the fix, then run the check about three times.
-- Budget derivation follows the house rule's run count in `perf/budgets.toml`; that is measurement, not a gate.
+Keep listeners and packet tools inside containers. Use `podman compose -p thinlink -f testbed/compose.yml exec <service> ...`. Never shape the host management connection. Publish development ports on loopback. Keep secrets out of logs and URLs.
 
-Never run a container build while the testbed is up: the Podman machine's 2 GiB can run out of memory. `just lab-up` and `just gate-fast` take it down first.
+Manage only resources in compose project `thinlink` or images tagged `localhost/thinlink-*`. Never restart or reconfigure the Podman machine.
 
-GStreamer-linked crates build only in the build container. Pure crates also build natively.
+## Collaboration and delivery
 
-Keep features small and compatible. If a real platform constraint requires a feature matrix, document and run it explicitly instead of silently omitting a target.
+Delegate bounded work with explicit file ownership. Give agents separate `CARGO_TARGET_DIR=target/agent-<name>` directories and coordinate shared files. Use isolated compose projects and ports for concurrent labs. Review every agent diff personally and report their findings. Remove only owned temporary resources; `just forget-checkout <folder>` removes a retired checkout's build output.
 
-Tests must protect product behavior, domain invariants or realistic regressions, and must fail without the code under test. Prefer public inputs and observable outputs. Use table-driven cases for genuinely parallel scenarios.
+Review the full diff before finishing. Report passed, failed and skipped checks. Keep changes focused; separate unrelated mechanical cleanup.
 
-Do not add UI tests, tests that restate configuration, tests of mocked return values, or tests of behavior already supplied by a dependency.
-
-## 9. Testbed commands
-
-The justfile owns compose wrappers. The Rust lab runner (`lab`) owns scenarios and impairment changes. Compose project name is `thinlink`, file `testbed/compose.yml`.
-
-```sh
-just lab-keys                       # generate WireGuard keys into testbed/secrets/ (gitignored)
-just lab-up                         # build images, keys, start the topology
-just lab-check <scenario> <profile> # e.g. boot lan; lab check in the checks container
-just lab-down                       # remove only the thinlink containers and networks
-```
-
-Scenario assertions belong in `lab check`, not in recipe shell. Use the documented Docker equivalent when applicable. Do not silently substitute another runtime or profile.
-
-`lab impair` applies a validated profile or scheduled transition through the router's local control path. Never shape the host's management connection.
-
-On a shared Podman machine, never stop, remove or prune containers, images, volumes or networks that do not belong to compose project `thinlink` or images tagged `localhost/thinlink-*`. Never restart or reconfigure the Podman machine.
-
-Fetch fixtures with `cargo xtask fixtures`. SHA-256 is verified before use. Missing required fixtures fail the check.
-
-`lab check` writes `results/<run-id>/summary.json` and `timeseries.csv`. Inspect them for measurements, effective configuration and captures. Calibration without thresholds is ungraded, not passed.
-
-QGC rendering, adapter-failure visibility and optional browser presentation need manual checks. Keep native QGC, headless decoder and optical glass-to-glass evidence separately labelled.
-
-## 10. Before finishing
-
-- Review the complete diff, including every subagent change.
-- Run the gates in section 8: `just check` once, and the lab checks that cover the change.
-- Run affected lab scenarios and inspect their artifacts.
-- Recheck error paths, bounded queues, expiry and reconnect behavior.
-- Confirm no input-derived panic path or command bypass was introduced.
-- Confirm new code uses existing helpers and avoids unnecessary nesting.
-- Update affected docs, CLI examples and package instructions, including the code layout in `docs/testbed.md#development-setup`. Docs describe the final state only: no task numbers, plans or roadmaps. README stays plain language for people and AGENTS.md files stay short rules for agents.
-- Record budget evidence without silently weakening thresholds.
-- State which checks passed, failed, were skipped or require hardware.
-- Append a terse local `log/devlog.md` entry (ignored by git): change, commands/results, remaining work.
-
-Never mark an unmeasured hardware or real-link claim complete because a container test passed.
-
-## 11. Commits
-
-Use Conventional Commits:
-
-`type(scope): imperative lowercase subject`
-
-Use `!` before the colon for a breaking change. No trailing period.
-
-- Commits are atomic: one logical change each.
-- Commit or push only when authorized in the current session or by an explicit repository standing rule.
-- Never commit to `main`; work on a feature branch.
-- Never force-push. Never amend or rebase pushed commits. Correct a remote branch with a follow-up commit.
-- Never add AI-generated footers or co-author trailers.
-- Keep PR descriptions short: problem, final changes, follow-ups and verification.
-- Rewrite descriptions when scope changes; describe the final branch state.
-- Do not use em dashes anywhere in committed files, commit messages or PR text.
-
-Before committing, run the per-commit gate in section 8 (host-native fmt, clippy and test on the touched non-GStreamer crates); `just check` runs once before reporting a change set or fix round. Do not bypass failing checks to conceal failures.
-
-## 12. Parallel agents
-
-Delegate bounded research or implementation when ownership is clear.
-
-- Give each agent explicit files and acceptance checks.
-- Use a separate `CARGO_TARGET_DIR=target/agent-<name>` per agent to avoid Cargo build locks.
-- Budget VM memory and disk space before concurrent builds; container builds use `BUILD_JOBS` cargo jobs under a `BUILD_MEMORY` cap (defaults 1 and `1g`, sized for a 2 GiB machine; raise both only on a larger machine).
-- Coordinate edits to manifests, lockfiles, the layer registry and shared docs.
-- Re-read shared files before editing. Do not overwrite another agent's work.
-- Keep manifests valid throughout edits.
-- Use isolated compose projects and ports for concurrent lab runs.
-- The primary agent personally reviews every code change before accepting, committing or pushing it.
-- Report which agents were used and what they found.
-- Clean up only owned temporary resources after coordinating with active work, and delete a retired worktree's build output. `just check` and the image builds each keep a cargo target directory per checkout, named after its folder; remove a retired worktree's with `just forget-checkout <folder>`.
-
-Subagent output is draft work until reviewed.
-
-## 13. Documentation and tracked state
-
-- GitHub issues: scope, decisions, acceptance, status and discussion.
-- `docs/`: authoritative architecture, setup, testbed and measurement behavior.
-- `perf/budgets.toml`: acceptance budgets, enforcement status and evidence references.
-- `fixtures/manifest.toml`: fixture provenance, immutable pins and checksums.
-- `results/`: ignored raw artifacts.
-- `log/devlog.md`: ignored local resume notes, never the sole record of a decision.
-
-Never commit plans, task lists, ledgers, devlogs or implementation notes. Do not add a roadmap file. Never commit `.superpowers/`, `results/`, `log/`, `.cache/` or `testbed/secrets/`.
-
-Update docs in the same change as behavior, commands, defaults, ownership or measurement changes. Keep proposed, implemented, measured and hardware-unverified states distinct. Do not invent readiness percentages.
-
-Do not commit recordings, downloaded clips, secrets or machine-specific state.
-
-### Deployment files
-
-- `deploy/` holds what a real deployment installs: provisioning scripts, the systemd unit, compose files, firewall and config templates for the vehicle (a Pi, native binary), the relay (a VPS) and the ground machine. `just deploy-keys`, `vehicle-release`, `relay-release` and `ground-release` package them into the gitignored `dist/`; `deploy/secrets/` holds keys and is never committed.
-- Provisioning scripts download nothing but distribution packages: binaries and images arrive by copy and are verified against `SHA256SUMS` before they are installed. Never pipe downloaded content into a shell, and never write the reverse-shell idioms in "Endpoint security" into a script.
-- Everything under `deploy/` and `docs/hardware.md` is unverified on hardware. Keep that said wherever a statement depends on a board, a camera, a flight controller or a real link; never claim a hardware result without a measurement.
-- A Pi config keeps the logging sink by default. Control reaches a real autopilot only with `mode = "real"` and every interlock in `docs/real-mode.md`; never add another path to it.
-- amd64 images are cross-built (`rustc` segfaults emulated on Apple Silicon); under the build cap, one architecture at a time.
-
-### Simulated flight
-
-- The simulation (`just sim-up`, `testbed/compose.sim.yml`) is opt-in. The default testbed and every default check stay as they are; `just sim-check <profile>` is its gate and is not in `gate-full`.
-- Gazebo peaks near 1 GB and settles near 650 MB in a 2 GiB machine. Never build, run `just check` or start another heavy container while it is up: `just lab-down` first. Keep its `mem_limit`; do not raise it.
-- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/drone.md#command-gate`. Mission upload and Auto are admitted only behind `allow_missions` (`crates/control/AGENTS.md`). Failsafe values live in `testbed/thinlink-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
-- The camera enters through the existing ingest, never a new source kind.
-
-## 14. Per-package instruction index
-
-- [xtask](xtask/AGENTS.md): layer registry, fixture verification and repeatable checks.
-- [thinlink-video-core](crates/video-core/AGENTS.md): the pure core of the video path: the in-picture stamp and the state stamp, video freshness, pacing, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token.
-- [thinlink-x264](crates/x264/AGENTS.md): the `thinlinkx264enc` GStreamer element, libx264 FFI boundary and encoder checks.
-- [thinlink-video](crates/video/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the sender's adaptation loop, metrics endpoint, and the frame hook, taps and decoration the drone plugs into.
-- [thinlink-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, outline drawing, sightings, landing, the predictive display, the detail inset, retention, retrieval.
-- [thinlink-media](crates/media/AGENTS.md): what the drone adds to the video: regional video, the detector, tracker and tag feeds, the aim ring and detail inset, retrieval's view of adaptation.
-- [thinlink-control](crates/control/AGENTS.md): MAVLink frames, the autopilot link (SITL TCP or serial) and SITL identification, the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge, controller and camera component, the control envelope.
-- [thinlink-detect](crates/detect/AGENTS.md): the detector, its model and output layout, and how it is fetched.
-- [thinlink-detail](crates/detail/AGENTS.md): the snapshot store, the job API (relay and vehicle sides) and its client, crop mapping and chunk assembly.
-- [thinlink-lab](crates/lab/AGENTS.md): impairment profiles, tc translation, router agent, budgets, checks.
-- [thinlink-vehicle](apps/vehicle/AGENTS.md): the vehicle executable (sender, adaptation, MAVLink bridge, `probe-camera`).
-- [thinlink-relay](apps/relay/AGENTS.md): the relay ingress and feedback executable.
-- [thinlink-ground](apps/ground/AGENTS.md): the ground adapter executable (MAVLink bridge, controller, camera, freshness output).
-- [thinlink-lab-cli](apps/lab/AGENTS.md): the `lab` executable.
-
-Each new package adds its own `AGENTS.md` focused on local invariants and commands, and one line here. Do not copy this root file into it.
+- Commit and push only with session authorization or an explicit standing rule. Never commit to `main`.
+- Use `type(scope): imperative lowercase subject` for commits and PR titles. Use `!` for breaking changes; no trailing period.
+- Never force-push, amend or rebase pushed commits. Use follow-up commits. Do not add AI footers or co-author trailers.
+- PR descriptions stay short: problem, final changes, follow-ups and verification. Rewrite them when scope changes.
+- Docs describe current code, without history, design-change narratives or safety claims. Omit legal and regulatory content. Use plain short sentences, tables and short lists. Avoid repetition, slogans, bold lead-ins, rhythmic triples and em dashes. Keep commands, config keys, metric names and paths exact.
+- `README.md` is for people. `AGENTS.md` files are contributor rules and pointers. Architecture and behavior belong in `docs/`; update affected documentation with behavior changes.
+- Keep plans and acceptance discussion in GitHub issues. Do not commit plans, task lists, ledgers or roadmaps. Local resume notes belong in ignored `log/devlog.md`.
+- Never commit `.superpowers/`, `results/`, `log/`, `.cache/`, `testbed/secrets/`, `deploy/secrets/`, recordings or machine-specific state.

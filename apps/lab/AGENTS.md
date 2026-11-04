@@ -1,15 +1,15 @@
 # AGENTS.md: apps/lab
 
-`thinlink-lab-cli` builds the `lab` executable (L4). It stays thin: argument parsing and wiring over `thinlink-lab`.
+`thinlink-lab-cli` (L4) builds `lab`. Keep argument parsing and wiring here. Scenario behavior belongs in `thinlink-lab`.
 
-- `lab router --listen <addr> --uplink-if <name|auto> --downlink-if <name|auto>` runs the router agent.
-- `lab impair --agent <url> --profile <path> [--start-timeline]` validates a profile locally, then applies it through the agent.
-- `lab check <boot|skeleton|mavlink|control-freshness|qgc-status|adaptation> --profile <name> [--agent <url>] [--git-rev <rev>]` reads `testbed/profiles/<name>.toml` and writes `results/<run-id>/`, both relative to the working directory. Exit 0 pass, 1 fail, 2 incomplete; a check that cannot run or record its results exits 2.
-- `mavlink` also reads `perf/budgets.toml` and takes `--duration-s` (as above), `--gcs-listen` (default `192.168.232.40:14552`), `--vehicle-metrics` and `--ground-metrics` (default `http://192.168.233.30:9100`).
-- `control-freshness` also reads `perf/budgets.toml` and `[control]` of `testbed/limits.toml`, and takes `--gcs-listen`, `--vehicle-metrics`, `--ground-metrics` (as for `mavlink`), `--observer-listen` (default `10.77.0.4:14553`), `--controller` (default `10.77.0.4:0`) and `--vehicle-control` (default `10.77.0.2:7700`). It prints `lab: kill ground` on stdout when the adapter should be killed; `just lab-check` does that.
-- `skeleton` also reads `perf/budgets.toml` and takes `--warmup-s` (0-600, default 5), `--duration-s` (1-3600, default 30), `--url` (default `rtsp://192.168.232.20:8554/live`), `--vehicle-metrics` and `--relay-metrics` (metrics base URLs on `ctl_net`).
-- `qgc-status` also reads `perf/budgets.toml` and `[freshness]` of `testbed/limits.toml`, and takes `--warmup-s`, `--duration-s` (the healthy window), `--gcs-listen`, `--vehicle-metrics`, `--ground-metrics` (as above) and `--output-listen` (default `192.168.232.40:5602`, where the adapter sends its video output).
+## Code and rules
 
-- `adaptation` also reads `perf/budgets.toml`, and takes `--warmup-s`, `--duration-s` (the observation under a profile without a timeline), `--url` and `--vehicle-metrics` (as for `skeleton`).
+- `src/main.rs` owns `Command`, `CheckArgs`, `Scenario`, token loading and scenario dispatch.
+- `run_check` reads `testbed/profiles/<name>.toml` and writes `results/<run-id>/`, relative to the working directory. Keep scenario names aligned with budget lookup and output labels.
+- `check` maps a failure to run or record results to `Verdict::Incomplete`. Preserve exit codes: 0 pass, 1 fail, 2 incomplete.
+- Keep router operations behind `thinlink-lab`'s agent. `impair` validates the profile before sending it.
+- Host actions belong in the justfile. Preserve the runner's stdout markers used by `just lab-check`.
 
-Use `anyhow` with `.context()`. Behaviour belongs in `thinlink-lab`. Documented in `docs/testbed.md`.
+## Checks
+
+This app links GStreamer through `thinlink-lab`; use the build container. Run `just check` and `just gate-fast <scenario> <profile>` for changed dispatch. Commands and scenario options are in `docs/testbed.md`.

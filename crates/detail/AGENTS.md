@@ -1,24 +1,36 @@
 # AGENTS.md: crates/detail
 
-`thinlink-detail` (L2) owns retained detail: the vehicle's store of periodic full-resolution JPEG snapshots, and the bounded HTTP job API that carries a snapshot, or a crop of one, to the ground at lower priority than live video and control. It depends on `thinlink-policy` (retention, when retrieval may send, the token bucket) and on no other workspace crate; GStreamer stays in `thinlink-video`, which hands the vehicle JPEG bytes. It builds natively. See the root `AGENTS.md`, `docs/drone.md#retained-detail` ("Retained detail") and `docs/testbed.md#retrieval-check`.
+`thinlink-detail` (L2) owns retained JPEG snapshots and their HTTP retrieval jobs. It depends on `thinlink-policy` and `thinlink-video-core`. It builds natively. GStreamer stays outside this crate; callers supply JPEG bytes. Follow the root `AGENTS.md`.
 
-## Modules
+## Main pieces
 
-- `store`: a directory of `<capture_ms>-<frame_id>.jpg`. A write is `.tmp`, `sync_data`, rename. `Store::open` deletes the `.tmp` files and the `.pos` files without a snapshot that a crash left, indexes the valid names, ignores every other name (left alone, counted) and applies `thinlink_policy::retention` with the volume's free bytes (`statvfs`). Paths are built from an entry's numbers only. `gaps()` lists consecutive snapshots further apart than `gap_after_ms`. A snapshot's `Tag` (its position, and whether it was taken while the ground was not heard) is a `<capture_ms>-<frame_id>.pos` JSON file written before the JPEG; without one the snapshot has no position and is not an outage snapshot, which is how stores from before positions read. `release` clears the outage mark and `outage_from` lists the marked ones; `[store]` takes `outage_share_percent` (0-100, default 50) and `outage_keep_s` (default 3600).
-- `wire`: the job API's types. `JobId` is 16 bytes from `/dev/urandom` as 32 lowercase hex digits and is the only thing a request names. `JobRequest::validate` bounds `max_bytes` (1 B to 1 MiB), `expires_in_ms` (1 s to 10 min) and the crop. `Kind::Sightings` asks for a `Listing` of the vehicle's sightings first seen from `at_capture_ms` on (at most `MAX_LISTED`, oldest first), each a `ListedSighting`: the `Sighting` and the snapshot nearest in capture time, or none. `Kind::is_listing` says which kinds are answered with a listing. `Kind::Outage` asks for a `Listing` of the outage snapshots since `at_capture_ms` (at most `MAX_LISTED`, 16, oldest first, each with its position) instead of a picture; `Meta` carries the position of a fetched frame, sent as `X-Position`.
-- `crop`: `pixel_rect` maps a normalised rectangle to pixels (edges rounded, never outside the picture; non-finite, out-of-range and empty rectangles refused), `cut` decodes with size and memory limits, crops and encodes at quality 80, or returns the stored JPEG whole.
-- `assemble`: one job's chunks. Index, size (1 B to 16 KiB), SHA-256 per chunk, byte limit, chunk count (`max_bytes / 512`), duplicates (same bytes are a retry, other bytes a conflict), then declared count, size and SHA-256 of the whole.
-- `jobs`: the relay's table. At most 4 jobs and 2 MiB of `max_bytes` between them, whatever their state; a job lives `expires_in_ms` from creation and is reaped, with its object. `complete` also checks the object is a JPEG of the size its metadata says; an `Outage` job is ended only by `listing`, any other only by `complete`.
-- `relay`: two `tiny_http` listeners over one table. The vehicle listener (the relay's overlay address) serves `GET /jobs/next` (long poll, 5 s, one poll at a time), `PUT /jobs/{id}/chunks/{n}` (hash in `X-Chunk-Sha256`), `POST /jobs/{id}/complete` `POST /jobs/{id}/listing` and `POST /jobs/{id}/fail`. The ground listener (the relay's `ground_net` address) serves `POST /jobs`, `GET /objects/{id}` (200 JPEG with `X-Capture-Ms`, `X-Frame-Id`, `X-Crop`, `X-Source-Size`; 202 while pending; 410 with the vehicle's reason when failed) and `DELETE /jobs/{id}`. Each answers only its own routes. Everything else is 404.
-- `vehicle`: the retrieval loop (`run` takes the bridge's sightings list; a `Sightings` job reads it and looks each sighting's snapshot up with `Store::nearest`, within 1.5 s, when it is listed). It asks `retrieval::permit` before polling and before every chunk, sends one chunk at a time paced by a `TokenBucket` at the allowance, retries a chunk 3 times, and stops at the next chunk when the relay no longer knows the job (cancelled or expired), the job's life is over, or the conditions go. A job that completes releases the snapshot it sent from its outage mark; an `Outage` job is answered from the store without a picture. It never trusts the relay's request: it validates it again, and a crop outside 0..1 or without area fails the job.
-- `client`: HTTP against the API, for the ground CLI and the lab.
+Paths are relative to this crate.
 
-## Invariants
+| File | Ownership |
+|---|---|
+| `src/store.rs` | `Store`, `Entry`, `Tag`, recovery and snapshot pins |
+| `src/wire.rs` | `JobId`, `JobRequest`, `Kind`, `Meta`, `Listing` |
+| `src/crop.rs` | `pixel_rect`, `cut`, bounded JPEG decoding |
+| `src/assemble.rs` | `Assembly`, chunk validation |
+| `src/jobs.rs` | `Jobs`, expiry and outstanding-byte limits |
+| `src/relay.rs` | `Relay`, separate vehicle and ground routes |
+| `src/vehicle.rs` | `run`, retrieval pacing and cancellation |
+| `src/client.rs` | `Client`, HTTP access for the ground and lab |
 
-- Every request needs the bearer token (`thinlink_video_core::token::admit`, checked before the route: 401 without or with a wrong token, a job API without a token does not start: the relay serves it only with `--token-file`) and the listeners are bound only where needed, never 0.0.0.0. `Client::with_token` sends it. Every request is checked as hostile once read: URL at most 200 bytes, JSON bodies at most 4 KiB, chunk bodies at most 16 KiB (a declared length over the limit is refused unread), unknown JSON fields refused, ids exactly 32 lowercase hex digits (a path with `..` or `%2e` is not one: 404). Not bounded: `tiny_http` 0.12 reads the request line and headers with no length or count limit (the 200-byte check runs after the line is read), starts a thread per connection, and has no read or write timeout, so a stalled head holds a connection thread and a stalled body or slow reader holds one of the 4 workers per listener. The API shares the relay process with the live ingress and RTSP publish, so a flood can exhaust that process. It must move to its own process or behind a size-limiting proxy before it faces an untrusted network (`docs/hardware.md#limits-of-a-deployment`).
-- Live video comes first. Retrieval is the only user of its allowance, never sends outside `permit`, and its chunk fits the bucket (`chunk_size`). The snapshot branch drops snapshots rather than block (`thinlink-video`); the store write is the vehicle's worker, never the pipeline.
-- No `unwrap`, `expect`, `panic` or indexing on input. Allocation is capped before it happens (chunks, bodies, decoded pictures).
-- A restart rescans the directory and carries on; a `.tmp` is never indexed.
+## Rules
+
+- Build store paths from validated entry numbers. Requests name opaque `JobId`s, never filesystem paths.
+- Preserve atomic snapshot writes: `.tmp`, `sync_data`, rename. Write `.pos` metadata before the JPEG. Recovery must ignore unrelated filenames, remove orphan metadata and never index a `.tmp` file.
+- Keep snapshots without `.pos` metadata readable. Snapshot pins use monotonic time; capture timestamps name objects. Delegate eviction to `thinlink_policy::retention`.
+- Store writes run on the vehicle worker, never the video pipeline. Retrieval yields to live video and control.
+- Revalidate relay requests on the vehicle. Check `retrieval::permit` before polling and before each chunk. Use `chunk_size` and the allowance's token bucket. Stop work when the job expires or is cancelled.
+- Bound jobs by both count and requested bytes, including completed jobs until expiry. Reap their objects with them.
+- Validate per-chunk hashes and whole-object hashes. An identical duplicate is a retry; a different duplicate is a conflict. Enforce allocation limits before decoding or collecting bodies.
+- Keep listing completion separate from JPEG completion through `Kind::is_listing`. JPEG metadata must match the decoded size.
+- Check the bearer token before routing. Keep vehicle and ground routes on their own listeners. Do not claim application body limits bound HTTP headers or connection lifetimes; see `docs/hardware.md#limits-of-a-deployment`.
+- Clear a snapshot's outage mark only after successful retrieval.
+
+Store and protocol details: `docs/drone.md#retained-detail`. Lab acceptance: `docs/testbed.md#retrieval-check`.
 
 ## Checks
 
@@ -26,4 +38,4 @@
 cargo test -p thinlink-detail --locked
 ```
 
-Tests: `store` (`nearest` takes either side and respects its reach, a snapshot's position and outage mark survive a restart, a snapshot without a `.pos` file stays readable, an orphan `.pos` is deleted, `release` clears the mark), `jobs` (an outage job ends only with a listing), `wire` (the position header reads back what was written and nothing else), `assemble` (out of order, duplicates, a conflicting duplicate, bad hash, empty and oversize chunks, an index beyond the job, more bytes than allowed, a missing chunk, wrong count, size and total hash), `crop` (edges, a sum that rounds above one, degenerate, out of range, not finite). Retention is tested in `thinlink-policy`. The HTTP wiring and the store are exercised by `lab check recording` and `lab check retrieval`.
+Cover store recovery, persisted tags, nearest-snapshot selection and outage release. Exercise assembly conflicts and byte limits, crop bounds and listing completion. Retention decisions are tested in `thinlink-policy`. Use `lab check recording` and `lab check retrieval` for HTTP wiring and store integration.
