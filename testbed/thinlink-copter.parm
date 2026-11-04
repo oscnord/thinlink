@@ -2,7 +2,7 @@
 # parameters (loaded last, so these win). Names, values and units are those of ArduPilot git
 # fb773567896014da007bca58358704d4a0d8516f: ArduCopter/Parameters.cpp, ArduCopter/events.cpp,
 # ArduCopter/radio.cpp, ArduCopter/AP_Arming_Copter.cpp, libraries/RC_Channel/RC_Channels_VarInfo.h.
-# docs/drone.md#copter-failsafes.
+# docs/drone.md#control-loss.
 #
 # The simulator has a radio the autopilot always sees, parked at roll, pitch and yaw 1500 us and
 # throttle 1000 us (read from RC_CHANNELS while nothing was sent). MANUAL_CONTROL overrides it and

@@ -80,7 +80,7 @@ vehicle <- report {probe_seq, echo_sent_mono_us, window_ms,
                        -> video-core::budget -> telemetry cap
 ```
 
-The vehicle probes every 250 ms inside WireGuard. The relay answers at once with ingress observations collected after its previous answer. Round trip uses the vehicle's monotonic clock, so feedback needs no shared clock. Malformed answers, answers over 512 bytes, answers from another address and answers to unknown or older probes change nothing. The relay's `lost_packets` is jitter-buffer loss minus late packets, so reordering is not counted as loss.
+The vehicle probes every 250 ms inside WireGuard. The relay answers at once with ingress observations collected between answers. Round trip uses the vehicle's monotonic clock, so feedback needs no shared clock. Malformed answers, answers over 512 bytes, answers from another address and answers to unknown or older probes change nothing. The relay's `lost_packets` is jitter-buffer loss minus late packets, so reordering is not counted as loss.
 
 Queue delay is the smaller of the last two round trips minus the smallest over the last 10 s. One late answer can be jitter; two in a row indicate a queue. The trend is the least-squares slope over the last second of probes sent after the last change.
 
@@ -183,7 +183,7 @@ At 15 fps a new frame normally follows within about 100 ms. GEO frames in the te
 
 The 500 ms frozen threshold is well beyond the normal frame interval. A repeated V4L2 buffer can trigger it; on other sources it catches a repeated stamp or a stall after stamping. Decoder concealment does not make an older picture current: the output does not send a picture older than the newest it has, or one with an unreadable stamp while the state is Live or LowRate.
 
-The 2 s disconnect threshold exceeds the waits seen while the source was running. Stale or Frozen can show before it. The 50 % readability threshold prevents an age claim when most arriving stamps cannot be read.
+The 2 s disconnect threshold exceeds measured waits with a running source. Stale or Frozen can show before it. The 50 % readability threshold prevents an age claim when most arriving stamps cannot be read.
 
 A source interval above 150 ms is labelled LowRate. At 2 fps on GEO, a current picture can age from about 330 to 830 ms between frames. The separate 1800 ms stale threshold avoids alternating Live and Stale at every slow-rung frame. At 1 fps it allows the 1000 ms frame interval plus arrival age and margin, while remaining below the disconnect threshold.
 
@@ -193,7 +193,7 @@ A new decoded frame is copied, labelled and sent to the encoder immediately. The
 
 The output uses x264 `tune=zerolatency speed-preset=ultrafast`, no B-frames and two slice threads. Its encoder input queue holds one frame and is leaky. Decode uses slice threads rather than frame threads. The overlay is white for Live, amber for LowRate and red otherwise; an unreadable state stamp says `NO STATE`.
 
-A frame labelled Live or LowRate carries the deadline when that state may change. If encoding or sending holds it past that deadline, the sender drops it, increments `late` and requests a keyframe. A stall causes a gap instead of sending old video labelled Live. The ground's labels describe its output; they do not measure QGroundControl's display delay.
+A frame labelled Live or LowRate carries the deadline when that state may change. If encoding or sending holds it past that deadline, the sender drops it, increments `late` and requests a keyframe. A stall causes an output gap. The ground's labels describe its output; they do not measure QGroundControl's display delay.
 
 ## Measurement method
 
@@ -230,7 +230,7 @@ At low rungs it can blur the stamp past reading, so normal ball-pattern video me
 
 ### Expected latency
 
-These container measurements use the noise source, x264 and a headless receiver on the development Mac. They are expectations for that workload, not guarantees for a Pi, a real link or QGroundControl on screen. Values are milliseconds, p50 / p95. Separate stage percentiles do not add up.
+These container measurements use the noise source, x264 and a headless receiver on the development Mac. They describe that workload. Pi, real-link and QGroundControl display latency need separate measurements. Values are milliseconds, p50 / p95.
 
 | Stage | `lan` | `geo` |
 |---|---|---|

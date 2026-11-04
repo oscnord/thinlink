@@ -105,7 +105,7 @@ just impair geo      # optional: pick the link
 just take-control    # then fly it in QGroundControl, with a gamepad or the virtual joystick
 ```
 
-If control stops, the drone brakes and holds; if the ground side goes away, it lands. It needs about 1.5 GB of memory in the Podman machine. `just lab-up` brings the rover back. The first time QGroundControl sees the quadcopter after the rover, fill in its first-run Preferences dialog once. Gamepad setup and flight modes per link: `docs/drone.md#simulated-flight`.
+If control stops, the drone brakes and holds; if the ground side goes away, it lands. It needs about 1.5 GB of memory in the Podman machine. `just lab-up` brings the rover back. The first time QGroundControl sees the quadcopter after the rover, fill in its first-run Preferences dialog once. Gamepad setup and flight modes: `docs/drone.md#simulated-flight`.
 
 ## Retained detail
 
