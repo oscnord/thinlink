@@ -516,7 +516,7 @@ fn land(
             .metrics
             .insert("land_s", from.elapsed().as_secs_f64());
     }
-    // The pause before the descent begins: with no tag in view ArduPilot holds first (docs/real-vehicle.md).
+    // With no tag in view ArduPilot holds first (docs/real-mode.md#landing-on-a-marker links the behavior).
     let started = hover_alt.and_then(|hover| {
         let sunk = parts
             .observer

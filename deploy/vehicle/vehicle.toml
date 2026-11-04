@@ -43,7 +43,7 @@ max_age_s = 3600
 min_free_bytes = 536870912
 gap_after_ms = 1500
 
-# Landing on a printed AprilTag (tag36h11), docs/real-vehicle.md, "Landing on a marker". Off by default.
+# Landing on a printed AprilTag (tag36h11), docs/real-mode.md, "Landing on a marker". Off by default.
 # With it on the vehicle tells the autopilot where the tag is, and only while the camera looks straight
 # down; it never moves the copter, the pilot chooses Land. It needs the picture's field of view, and
 # either a fixed camera's tilt (exactly -90, straight down) or, without `tilt_deg`, a gimbal whose attitude
@@ -57,8 +57,7 @@ gap_after_ms = 1500
 
 [mavlink]
 # SITL mode is the default and sends control nowhere on a real flight controller. Real mode sends it
-# only while its interlocks hold (docs/real-vehicle.md); the required parameters are the operator's
-# choice for the airframe, the list there is where to start:
+# only while its interlocks hold (docs/real-mode.md); `require` defines the parameters to check:
 # mode = "real"
 # require = [
 #     { name = "FS_GCS_ENABLE", type = "int8", value = 5 },
@@ -66,7 +65,7 @@ gap_after_ms = 1500
 # ]
 # Off by default. On, the lease holder may upload a waypoint mission and fly it in Auto, and a copter
 # that loses the link finishes it by its own failsafe; real mode then also needs FS_OPTIONS, FENCE_ENABLE,
-# FENCE_TYPE, FENCE_ALT_MAX, FENCE_ACTION and BATT_FS_LOW_ACT in `require` (docs/real-vehicle.md, "Missions flown out of reach").
+# FENCE_TYPE, FENCE_ALT_MAX, FENCE_ACTION and BATT_FS_LOW_ACT in `require` (docs/real-mode.md, "Missions flown out of reach").
 # allow_missions = true
 # A flight controller over USB, or the Pi's UART (/dev/serial0 at 921600 baud, the TELEM port with
 # SERIALn_PROTOCOL=2 on the flight controller). Control reaches it only once it reports the SITL
@@ -82,5 +81,5 @@ vehicle_id = "vehicle-1"
 # The only overlay addresses that may take the control lease: the ground adapter, with the public
 # key its envelopes must be signed with (`just deploy-keys`; provision.sh installs it).
 controllers = [{ address = "10.77.0.3", public_key = "/etc/thinlink/ctl-ground.pub" }]
-# The bound on this clock's error, from `chronyc tracking`, reported to the ground (docs/real-vehicle.md).
+# The bound on this clock's error, from `chronyc tracking`, reported to the ground (docs/real-mode.md).
 clock = "chrony"

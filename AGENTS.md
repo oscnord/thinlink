@@ -4,7 +4,7 @@ A hobby Rust bench prototype for adaptive video and test-only control over cellu
 
 QGroundControl is the primary ground station. The vehicle sends one H.264 RTP/UDP uplink inside WireGuard to a relay. Live video, retained recording and historical-detail retrieval have separate bounded work queues and share one network budget.
 
-No milestone in this repository authorizes commands to real actuators. Real mode (`docs/real-vehicle.md`) exists behind interlocks, has never flown and is never the default.
+Real mode (`docs/real-mode.md`) is off by default and routes control through interlocks.
 
 ## 1. Setup
 
@@ -104,7 +104,7 @@ Network packets, MAVLink messages, files, configuration and requests are untrust
 - Report requested settings, applied settings and measured results separately.
 - Missing measurements or thresholds never count as passing. Lab exit codes: 0 pass, 1 fail, 2 incomplete or ungraded; never report 2 as a pass.
 
-### Safety and security
+### Control and security
 
 - Never send commands to real actuators in the testbed, in tests or by default. Control reaches ArduPilot SITL, or a real flight controller only in `mode = "real"`, and the logging sink otherwise, decided in one place, `thinlink_control::identity::failures` (`control_target` is its wrapper). In SITL mode only an autopilot that has reported the SITL-only `SIM_WIND_SPD` parameter gets control frames; in real mode only one that has not, with signed envelopes' keys loaded, the required failsafe parameters read back and equal, and a fresh clock bound. Never bypass, default on or configure around these checks. `sitl_in_real_mode` and the `/real` and `/clock/inject` hooks exist only in builds with the `testbed` cargo feature (the testbed's images); a release build refuses a config that names `debug_hooks` or `sitl_in_real_mode`. Never build a release artifact with the feature. Never add a second decision.
 - Vehicle-side policy owns the control lease and command validation.
@@ -322,7 +322,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 - `deploy/` holds what a real deployment installs: provisioning scripts, the systemd unit, compose files, firewall and config templates for the vehicle (a Pi, native binary), the relay (a VPS) and the ground machine. `just deploy-keys`, `vehicle-release`, `relay-release` and `ground-release` package them into the gitignored `dist/`; `deploy/secrets/` holds keys and is never committed.
 - Provisioning scripts download nothing but distribution packages: binaries and images arrive by copy and are verified against `SHA256SUMS` before they are installed. Never pipe downloaded content into a shell, and never write the reverse-shell idioms in "Endpoint security" into a script.
 - Everything under `deploy/` and `docs/hardware.md` is unverified on hardware. Keep that said wherever a statement depends on a board, a camera, a flight controller or a real link; never claim a hardware result without a measurement.
-- A Pi config keeps the logging sink by default. Control reaches a real autopilot only with `mode = "real"` and every interlock in `docs/real-vehicle.md`; never add another path to it.
+- A Pi config keeps the logging sink by default. Control reaches a real autopilot only with `mode = "real"` and every interlock in `docs/real-mode.md`; never add another path to it.
 - amd64 images are cross-built (`rustc` segfaults emulated on Apple Silicon); under the build cap, one architecture at a time.
 
 ### Simulated flight

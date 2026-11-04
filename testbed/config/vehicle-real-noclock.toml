@@ -1,6 +1,6 @@
 # vehicle-real.toml with a clock that has no bound: no chronyd runs in the testbed, so the vehicle
 # never gets a fresh bound and must not start sending control. `lab check real-mode` starts
-# it for that one case (docs/real-vehicle.md). Test only, like the rest of the real-mode testbed.
+# it for that one case (docs/real-mode.md). Test only, like the rest of the real-mode testbed.
 
 # RTP/H.264 to the relay, inside WireGuard.
 destination = "10.77.0.1:5004"
@@ -61,7 +61,7 @@ controllers = [
 ]
 # The bound comes from chrony, which does not run here.
 clock = "chrony"
-# Real mode: control reaches the autopilot only while the interlocks hold (docs/real-vehicle.md).
+# Real mode: control reaches the autopilot only while the interlocks hold (docs/real-mode.md).
 mode = "real"
 sitl_in_real_mode = true
 # The failsafe parameters the autopilot must report, read back with PARAM_REQUEST_READ: the ones

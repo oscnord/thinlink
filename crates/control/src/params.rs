@@ -2,7 +2,8 @@
 //! one with `PARAM_REQUEST_READ`, keeps what comes back (with the system and component that said it,
 //! and the type it reported) and compares it with the type and value the config requires. A parameter that is missing, has not been read lately or differs refuses
 //! control: the autopilot's own failsafes are what stops the vehicle when the link goes, so they
-//! must be what the operator said they are. The list and its sources are in `docs/real-vehicle.md`.
+//! must be what the operator said they are. The requirements are in
+//! `docs/real-mode.md#required-autopilot-parameters`.
 
 use std::collections::BTreeMap;
 use std::time::Duration;

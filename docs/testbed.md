@@ -1,6 +1,6 @@
 # Testbed
 
-Build the workspace, run the container lab and interpret its checks here. The video path is in [video.md](video.md). Ground-station operation, control and simulated flight are in [drone.md](drone.md). Deployment is in [hardware.md](hardware.md). Real-vehicle interlocks remain in [real-vehicle.md](real-vehicle.md).
+Build the workspace, run the container lab and interpret its checks here. The video path is in [video.md](video.md). Ground-station operation, control and simulated flight are in [drone.md](drone.md). Deployment is in [hardware.md](hardware.md). Real-mode interlocks are in [real-mode.md](real-mode.md#interlocks).
 
 The lab controls SITL only. A container check is not hardware, real-link or QGroundControl rendering evidence.
 
@@ -396,7 +396,7 @@ The driving phase streams 20 % throttle at 25 Hz for at least 5 s, samples `last
 
 ### Real-mode check
 
-`just lab-check real-mode lan` runs the vehicle in real mode (`testbed/config/vehicle-real.toml`) against the ArduRover SITL, which real mode accepts only because of the test-only `sitl_in_real_mode` (testbed builds only; the loader refuses it unless `debug_hooks` is set, and refuses `debug_hooks` in real mode without it). `checks` asks the recipe to start the companion on that config (`lab: vehicle-config <file>` on stdout; the recipe runs `compose up -d --no-deps companion` with `VEHICLE_CONFIG` set), and starts it on `vehicle.toml` again at the end, so it expects the default testbed. Assertions ([real-vehicle.md](real-vehicle.md) explains each interlock):
+`just lab-check real-mode lan` runs the vehicle in real mode (`testbed/config/vehicle-real.toml`) against the ArduRover SITL, which real mode accepts only because of the test-only `sitl_in_real_mode` (testbed builds only; the loader refuses it unless `debug_hooks` is set, and refuses `debug_hooks` in real mode without it). `checks` asks the recipe to start the companion on that config (`lab: vehicle-config <file>` on stdout; the recipe runs `compose up -d --no-deps companion` with `VEHICLE_CONFIG` set), and starts it on `vehicle.toml` again at the end, so it expects the default testbed. Assertions ([real-mode.md](real-mode.md) explains each interlock):
 
 | Assertion | What it shows |
 |---|---|
