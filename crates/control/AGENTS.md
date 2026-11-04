@@ -2,7 +2,7 @@
 
 `thinlink-control` (L2) owns MAVLink between the autopilot and the ground stations: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, and the control envelope protocol between them. It depends on `mavlink` (default features off: `std` and `dialect-ardupilotmega`, which includes `common`; the vehicle is ArduPilot), `serde_json` `base64` (already in the lockfile through `ureq`) for the envelope and `ed25519-dalek` for its signature, and on `thinlink-policy` for the token bucket and the control lease, and on no other workspace crate. It builds natively (no GStreamer). See the root `AGENTS.md`, `docs/drone.md#control-protocol` ("Control protocol") and `docs/testbed.md`.
 
-## Bench safety
+## Control routing
 
 The vehicle bridge talks to one autopilot: `autopilot` of `[mavlink]` is `tcpout:<loopback ip>:<port>` (SITL, which runs in the vehicle's network namespace: `VehicleConfig::validate` refuses a TCP address off loopback) or `serial:<device>:<baud>` (a flight controller on `/dev/ttyACM0` or `/dev/serial0`; `Autopilot` parses it and `serialport` opens it).
 

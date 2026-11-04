@@ -26,7 +26,7 @@ drone:  probe every 250 ms --> relay: what it received --> drone: pick a rung
 - An aim ring, predicted from the autopilot's newest attitude, showing where the camera will point by the time a command sent now takes effect.
 - MAVLink telemetry to QGroundControl through mavlink-router, within a byte budget.
 - Control as Ed25519-signed JSON envelopes under a lease: one controller at a time, each command fresh and applied at most once. When commands stop, the drone stops.
-- Waypoint missions that continue on the autopilot's failsafe when the link is lost (off by default, `docs/real-vehicle.md`).
+- Waypoint missions that continue on the autopilot's failsafe when the link is lost (off by default, `docs/real-mode.md`).
 - A box drawn in QGroundControl is fetched as a full-resolution crop and shown as an inset. The drone can follow it with a correlation tracker. An on-board detector (NanoDet, ONNX through tract) marks people and vehicles and reports what it saw while out of reach (`just sightings` lists them).
 - Precision landing on a printed AprilTag through ArduPilot's `LANDING_TARGET` (off by default).
 
@@ -119,9 +119,9 @@ How it works: `docs/drone.md#retained-detail`.
 
 ## Real hardware
 
-`deploy/` has the files for a Raspberry Pi as the drone, a small public server as the relay and a laptop as the ground station. `docs/hardware.md` walks through the setup and a bench checklist (props off). A Pi 4 is recommended; a Pi Zero 2 W is the smallest target.
+`deploy/` has the files for a Raspberry Pi as the drone, a small public server as the relay and a laptop as the ground station. `docs/hardware.md` walks through the setup and a bench checklist. A Pi 4 is recommended; a Pi Zero 2 W is the smallest target.
 
-Control reaches a real flight controller only in real mode, which is off by default, and only while its checks hold: the flight controller is not a simulator, every command is signed by your ground computer's key, the failsafe and geofence parameters match what you listed, and the drone's clock is accurate. If a check fails, the drone refuses control and says which. `docs/real-vehicle.md` has the setup and a pre-flight checklist.
+Real mode is off by default. Its setup, interlocks and technical checks are in [docs/real-mode.md](docs/real-mode.md).
 
 ## Limitations
 
@@ -136,7 +136,7 @@ Control reaches a real flight controller only in real mode, which is off by defa
 - [docs/testbed.md](docs/testbed.md): toolchain, builds, lab setup, checks and metrics.
 - [docs/drone.md](docs/drone.md): drone features, QGroundControl, simulation and the Mac camera demo.
 - [docs/hardware.md](docs/hardware.md): the Pi, relay, ground machine and bench bring-up.
-- [docs/real-vehicle.md](docs/real-vehicle.md): safety interlocks and the pre-flight checklist.
+- [docs/real-mode.md](docs/real-mode.md): real-mode setup and interlocks.
 - [AGENTS.md](AGENTS.md): rules for contributors and coding agents.
 
 ## Licence

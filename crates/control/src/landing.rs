@@ -11,7 +11,7 @@
 //! autopilot needs a rangefinder); a measurement older than 1 s is dropped, and `AC_PrecLand` treats
 //! the target as lost after `LANDING_TARGET_TIMEOUT_MS` (2000). Nothing is sent without a sighting
 //! in the current frame window, so a lost marker ends the messages and the autopilot falls back to its
-//! own lost-target behaviour (`PLND_STRICT`, `docs/real-vehicle.md`).
+//! own lost-target behaviour (`PLND_STRICT`, `docs/real-mode.md#landing-on-a-marker`).
 
 use std::collections::BTreeMap;
 use std::mem::{Discriminant, discriminant};

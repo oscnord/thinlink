@@ -36,7 +36,7 @@ FS_GCS_ENABLE 5
 FS_GCS_TIMEOUT 2
 # Bits of what a failsafe leaves alone (Copter.h, FailsafeOption): 0 a mission in Auto, on the radio
 # failsafe, 1 a mission in Auto, on the GCS failsafe (a mission flown out of reach, allow_missions:
-# docs/real-vehicle.md), 2 a guided flight, 3 a landing, on the radio failsafe (so a guided takeoff or a
+# docs/real-mode.md), 2 a guided flight, 3 a landing, on the radio failsafe (so a guided takeoff or a
 # landing needs no stick; the GCS failsafe still lands them). The default, 16, would skip the GCS
 # failsafe in the pilot-controlled modes. 15 is bits 0 to 3; real mode with missions requires bits 0
 # and 1 set (a lost link stops the sticks too) and bit 4 clear. Nothing but Auto is affected: Guided,

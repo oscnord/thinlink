@@ -87,8 +87,8 @@ pub struct VehicleConfig {
     pub require: Vec<Required>,
     /// Off by default. On, the lease holder may upload a waypoint mission and fly it in Auto (a
     /// copter only), and a copter that loses the link finishes it by the autopilot's own failsafe
-    /// (`docs/real-vehicle.md`). In real mode `require` must then hold the failsafe and fence
-    /// values that make that safe.
+    /// (`docs/real-mode.md#missions-flown-out-of-reach`). In real mode `require` must then hold
+    /// the mission parameters checked by `params::validate_missions`.
     #[serde(default)]
     pub allow_missions: bool,
 }

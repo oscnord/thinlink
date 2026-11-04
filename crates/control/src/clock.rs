@@ -31,7 +31,7 @@ pub enum ClockSource {
     Chrony,
     /// The `chronyd` at this host, over its command port (UDP 323), which answers `tracking` to the
     /// addresses its `cmdallow` names without any privilege. A container reaches its host's
-    /// `chronyd` this way (`docs/real-vehicle.md`, "Clocks").
+    /// `chronyd` this way (`docs/real-mode.md#setup`).
     ChronyAt(String),
     /// One clock for every machine: the testbed.
     Shared,

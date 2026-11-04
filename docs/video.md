@@ -146,7 +146,7 @@ V4L2 uses the capture buffer's timestamp and driver sequence number before MJPEG
 
 All testbed containers share one kernel clock. Across machines, age needs a clock mapping with a stated uncertainty. The ground adds that bound to age before classifying it. Without a fresh bound it never labels a frame Live or LowRate.
 
-The clock policy derives each machine's bound from `chronyc -c tracking`: the larger absolute system or last offset, plus root dispersion and half root delay, rounded up. It grows by 500 ppm with age and expires after 15 s. Both bounds are added, with 10 ms of margin once. The vehicle reports its bound every 2 s. The testbed uses `clock = "shared"`. Deployment clock options and fixed-bound limitations are in [real-vehicle clocks](real-vehicle.md#clocks).
+The clock policy derives each machine's bound from `chronyc -c tracking`: the larger absolute system or last offset, plus root dispersion and half root delay, rounded up. It grows by 500 ppm with age and expires after 15 s. Both bounds are added, with 10 ms of margin once. The vehicle reports its bound every 2 s. The testbed uses `clock = "shared"`. Real-mode clock settings are in [setup](real-mode.md#setup); deployment details and fixed-bound limitations are in [clock sync](hardware.md#clock-sync).
 
 The receiver reads wall time once per decoded frame. Thereafter the newest frame's age grows by monotonic elapsed time, so a wall-clock step cannot make a held picture younger. Repeated display frames do not count as new observations. Lab age and cadence use readable stamps with plausible ages from 0 to 60 s and IDs not already seen in the window.
 

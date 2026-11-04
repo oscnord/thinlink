@@ -13,7 +13,7 @@ vehicle = "10.77.0.2:7700"
 # The vehicle's name, the `vehicle_id` of its vehicle.toml: every signed control message is made for it.
 vehicle_id = "vehicle-1"
 # This machine's clock bound; the vehicle reports its own and the picture is LIVE only within the sum
-# (docs/real-vehicle.md, "Clocks"). Without a fresh bound the picture reads AGE UNKNOWN, never LIVE.
+# (docs/real-mode.md#setup). Without a fresh bound the picture reads AGE UNKNOWN, never LIVE.
 # On a Linux machine with chrony, the container asks the host's chronyd over its command port; install
 # chrony-ground.conf on the host first. A container on a Mac runs in the Podman VM, which has no chrony
 # and whose clock stops while the laptop sleeps: measure your machine's bound and set it instead,

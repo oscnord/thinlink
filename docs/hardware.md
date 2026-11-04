@@ -2,7 +2,7 @@
 
 The vehicle runs natively on a Raspberry Pi. The relay runs on a public server, and the ground adapter runs beside QGroundControl on the operator's laptop.
 
-Deployment on hardware is unverified. The provisioning scripts, units, camera, serial link and modem have not run together on hardware. Follow the bring-up checklist in order and stop at the first failure. The vehicle defaults to the logging sink for a real autopilot; real control requires the interlocks in [real-vehicle.md](real-vehicle.md).
+Deployment on hardware is unverified. The provisioning scripts, units, camera, serial link and modem have not run together on hardware. Follow the bring-up checklist in order and stop at the first failure. The vehicle defaults to the logging sink for a real autopilot; real control requires the interlocks in [real-mode.md](real-mode.md).
 
 ## The machines
 
@@ -47,7 +47,7 @@ The recipes take the test setup down first (a build and the testbed do not fit t
 2. Copy `dist/relay/` to it (`scp -r`) and run `sudo ./provision.sh` there. It writes `/etc/docker/daemon.json` with Docker's iptables rules off (it stops and asks if the file exists with other content), installs Docker, WireGuard and nftables, checks and loads the image, checks the firewall file (`nft -c`) before it replaces the live rules, installs `wg0` and starts the three containers with `restart: unless-stopped`.
 3. Check: `sudo wg show` (a handshake appears once the vehicle and the ground are up), `docker compose -f /opt/thinlink/compose.yml ps` (three running), `curl -s -H "Authorization: Bearer $(sudo cat /opt/thinlink/job.token)" http://127.0.0.1:9100/metrics` (`rtp_packets` grows once the vehicle sends).
 
-The relay is the only machine with a public address, and its RTSP endpoint has no authentication of its own (the tunnel and the per-peer firewall are the boundary), and its job API needs the bearer token `job.token` ([retained detail](drone.md#retained-detail) and [control](drone.md#control-protocol)). The relay is trusted for video and telemetry. Signed control envelopes prevent it from forging commands or taking the lease; see [authentication limits](real-vehicle.md#what-is-authenticated-and-what-is-not).
+The relay is the only machine with a public address, and its RTSP endpoint has no authentication of its own (the tunnel and the per-peer firewall are the boundary), and its job API needs the bearer token `job.token` ([retained detail](drone.md#retained-detail) and [control](drone.md#control-protocol)). The relay is trusted for video and telemetry. Signed control envelopes prevent it from forging commands or taking the lease; see [authentication limits](real-mode.md#what-is-authenticated-and-what-is-not).
 
 ## Ground
 
@@ -69,7 +69,7 @@ podman compose exec ground thinlink-ground --token-file /secrets/ground.token st
 podman compose exec ground thinlink-ground --job-token-file /secrets/job.token detail request --ago-s 10 --relay http://10.77.0.1:8081
 ```
 
-Until the ground has a fresh clock bound of its own and the vehicle has reported its, the picture reads `AGE UNKNOWN`, never `LIVE`. That is the intended first state. On Linux with chrony, install `chrony-ground.conf` on the host (it lets the container read `chronyc tracking` over chronyd's command port) and keep `clock = { chrony_at = "host.containers.internal" }`. On a Mac, whose container runs in the Podman VM with no chrony and a clock that stops over sleep, set `clock = { fixed = <ms> }` from your own measurement and restart the ground container after every wake. The bridge addresses `chrony-ground.conf` assumes, restarting chrony on a rootful host and the limits of a Mac ground are in `docs/real-vehicle.md`, "Clocks".
+Until both machines have fresh clock bounds, the picture reads `AGE UNKNOWN`. Configure the ground's clock as described in [clock sync](#clock-sync); real-mode settings are in [setup](real-mode.md#setup).
 
 ## Boards
 
@@ -119,17 +119,21 @@ The `thinlink` user is in the `dialout` group, which owns both devices.
 
 ## What the Pi can control
 
-By default nothing: in `mode = "sitl"` control frames reach the autopilot only after it has identified itself as a simulator ([control](drone.md#control-protocol)). A normal flight controller build does not, so on a Pi the vehicle logs the control frames it admits, counts them as `sunk` under `mavlink.control` in the metrics and writes none of them. What does work on a real autopilot is the read-only traffic: QGroundControl loads parameters and missions, shows telemetry and video, and an arm or mode command is refused (QGroundControl shows it as denied, the lease stays) and stick commands are only logged. Real-vehicle control is a separate, explicit mode behind interlocks: `docs/real-vehicle.md`.
+By default nothing: in `mode = "sitl"` control frames reach the autopilot only after it has identified itself as a simulator ([control](drone.md#control-protocol)). A normal flight controller build does not, so on a Pi the vehicle logs the control frames it admits, counts them as `sunk` under `mavlink.control` in the metrics and writes none of them. What does work on a real autopilot is the read-only traffic: QGroundControl loads parameters and missions, shows telemetry and video, and an arm or mode command is refused (QGroundControl shows it as denied, the lease stays) and stick commands are only logged. Real-mode control is a separate, explicit mode behind interlocks: `docs/real-mode.md`.
 
 ## Clock sync
 
-`provision.sh` installs chrony with `makestep 1 3` (a Pi has no battery-backed clock) and four pool sources. With `clock = "chrony"` in `vehicle.toml` the vehicle runs `chronyc -c tracking` every 2 s and derives its bound from it, which is `none` while chrony is not synchronised; the derivation and how the ground adds it to its own are in [clock bounds](video.md#frame-age-and-clocks). In real mode the bound also gates the start of control (`docs/real-vehicle.md`).
+`provision.sh` installs chrony with `makestep 1 3` (a Pi has no battery-backed clock) and four pool sources. With `clock = "chrony"` in `vehicle.toml` the vehicle runs `chronyc -c tracking` every 2 s and derives its bound from it, which is `none` while chrony is not synchronised; the derivation and how the ground adds it to its own are in [clock bounds](video.md#frame-age-and-clocks). In real mode the bound also gates the start of control (`docs/real-mode.md`).
+
+On Linux, install `deploy/ground/chrony-ground.conf` on the host and set the ground's `clock = { chrony_at = "host.containers.internal" }`. The file assumes bridge address `10.88.0.1` and subnet `10.88.0.0/16`; adjust both for the container network. If chrony starts before the bridge exists, restart it after the first container starts. Without access to chrony, the label stays `AGE UNKNOWN`.
+
+On Mac, set `clock = { fixed = <ms> }` from a measured bound on the Podman VM's clock error. A clock step beyond that bound invalidates it until restart; a clock that remains wrong without stepping is not detected. After waking the laptop, wait for the VM clock to agree with the Mac, then restart the ground container.
 
 ## A stuck camera
 
 The [capture-time rules](video.md#frame-age-and-clocks) define which repeated V4L2 frames can be detected. `kind = "libcamera"`, the test pattern, the file and the ingest sources can still read `LIVE` with a stuck camera.
 
-What stays invisible: a driver that stamps a repeated image with a new timestamp and a new sequence number (some USB cameras do when their sensor stalls), and a camera whose lens is covered, which is a live camera of a dark scene. Only comparing images would catch those. The check has not run against a stalled camera (the testbed has no V4L2 device): the arithmetic is tested, the probe on `v4l2src` is not, and the first bench run should unplug the camera's sensor feed, or cover and uncover it, and watch the label (`docs/real-vehicle.md`, "Pre-flight checklist").
+What stays invisible: a driver that stamps a repeated image with a new timestamp and a new sequence number (some USB cameras do when their sensor stalls), and a camera whose lens is covered, which is a live camera of a dark scene. Only comparing images would catch those. The check has not run against a stalled camera (the testbed has no V4L2 device): the arithmetic is tested, the probe on `v4l2src` is not. Unplug the camera's sensor feed and watch the label; covering the lens alone should leave it live.
 
 ## Snapshot cost
 
@@ -137,7 +141,7 @@ The retained-snapshot branch encodes a full-size JPEG every second. Its CPU and 
 
 ## Bring-up checklist
 
-Run it on the bench, props off and the flight controller powered from USB or a bench supply, never a battery with props on. Write down each result. Stop at the first failure and fix it before going on.
+Write down each result. Stop at the first failure and fix it before going on.
 
 1. Link up.
    - `wg show` on the relay lists a recent handshake for both peers; from the vehicle `ping -c 3 10.77.0.1` and from the ground container the same.
@@ -162,7 +166,7 @@ Run it on the bench, props off and the flight controller powered from USB or a b
 
 ## What to measure first
 
-On the bench, with props off, before anything else ([the bring-up checklist](#bring-up-checklist)):
+After the [bring-up checklist](#bring-up-checklist), measure:
 
 1. Glass to glass. Film a stopwatch or a millisecond display beside the ground's picture with a phone at 120 or 240 frames per second; the difference between the stopwatch and its image on the ground screen is the real latency. The stamp and stage measurements have narrower boundaries; see [video age](video.md#measurement-method). The optical measurement includes the camera and the ground display.
 2. Encoder latency. The time between a frame passing the stamp and its first RTP packet leaving, with `v4l2h264enc` and with `thinlinkx264enc` at the same rung. Compare the ground's age with `encoder = "hardware"` and `encoder = "x264"`.

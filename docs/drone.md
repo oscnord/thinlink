@@ -2,7 +2,7 @@
 
 The drone adds MAVLink control, retained detail, regions, detections and landing targets to the [video path](video.md). QGroundControl is the ground station. The ground adapter is its only command endpoint. The vehicle owns the control lease and validates commands.
 
-The default testbed commands ArduRover or ArduCopter SITL only. Real mode is never the default, has never flown and requires the interlocks in [Real vehicle](real-vehicle.md). No test or demonstration authorizes commands to real actuators. Deployment and camera hardware are covered in [Hardware](hardware.md).
+The default testbed commands ArduRover or ArduCopter SITL only. [Real mode](real-mode.md) requires explicit configuration and interlocks. Deployment and camera hardware are covered in [Hardware](hardware.md).
 
 ## QGroundControl
 
@@ -86,7 +86,7 @@ Read from QGC 5.1.5's source: `Vehicle::setFlightMode`, `Vehicle::setArmed` and 
 
 ## Control protocol
 
-Default `mode = "sitl"` sends control only to identified ArduRover or ArduCopter SITL. Otherwise frames go to the logging sink. Explicit `mode = "real"` requires [separate interlocks](real-vehicle.md) and has never flown. `identity::failures`, wrapped by `identity::control_target`, is the one destination decision.
+Default `mode = "sitl"` sends control only to identified ArduRover or ArduCopter SITL. Otherwise frames go to the logging sink. Explicit `mode = "real"` requires [separate interlocks](real-mode.md#interlocks). `identity::failures`, wrapped by `identity::control_target`, is the one destination decision.
 
 SITL identification needs a vehicle-type heartbeat and `SIM_WIND_SPD` from that heartbeat's system and component. ArduPilot 4.7.2 registers the `SIM_` group under `AP_SIM_ENABLED`, enabled for SITL and ChibiOS builds linked with simulation. The bridge asks once a second until answered. A disconnect or different heartbeat address/type clears the identity.
 
@@ -351,19 +351,21 @@ Detector outlines use amber P for person, green B for bicycle, cyan C for car, m
 
 `[landing] target = true` enables AprilTag tag36h11 detection; it is off by default. The pilot chooses Land. Reporting the tag alone never commands motion. The leaky greyscale tap uses `tag_fps` and `tag_width` and drops its own frames if the detector is slow. The detector is made in its own thread because its C implementation is not `Send`. It accepts only `tag_id`, no bit errors or decimation, and ignores a frame containing that id twice.
 
-The bridge sends at most one `LANDING_TARGET` per fresh sighting. Lost, stale or badly oriented sightings produce no target. The first mount's attitude is requested every 5 s until fresh, then streamed every 200 ms. The fixed-camera/gimbal geometry, 500 ms age limits, height requirements, `MAV_FRAME_BODY_FRD`, distance and monotonic timestamp semantics are specified in [Landing on a marker](real-vehicle.md#landing-on-a-marker). Real mode permits targets only after its interlocks and only with a fixed camera. Hardware behavior is unmeasured.
+Set `[camera] hfov_deg` to the picture's horizontal field of view and `tilt_deg = -90` for a fixed camera, with the picture's top toward the nose. Without `tilt_deg`, the first gimbal mount must report both pointing down and picture orientation within 5 degrees, within 500 ms of the sighting. Its attitude is requested every 5 s until fresh, then streamed every 200 ms. [Real mode](real-mode.md#landing-on-a-marker) adds fixed-camera and parameter requirements.
+
+The bridge sends each sighting at most once, within 500 ms of its frame leaving the tee. `LANDING_TARGET` uses `MAV_FRAME_BODY_FRD`, `position_valid = 0`, and a monotonic sighting timestamp. Distance uses fresh positive height above home and assumes flat ground. Lost, stale or badly oriented sightings produce no target. `PLND_LAG` must match camera-to-message delay; thinlink does not measure or check it. Hardware behavior is unmeasured.
 
 In QGC, hover over the tag and choose Land in the mode list or Land button. ArduPilot steers the descent. If the camera is not down, QGC receives `Landing target off: camera N deg from straight down` once. The copter pauses about 7 s and lands where it is with `PrecLand: Failsafe Measures`. A lost tag produces `PrecLand: Target Lost`; ArduPilot retries over its last position, pauses and lands straight down. Change mode to take over. This has not been tried in QGC on screen; [the landing check](testbed.md#landing-check) acts as the station.
 
 ## Missions
 
-Off by default. With `allow_missions = true` in the vehicle's `[mavlink]` table ([Real vehicle](real-vehicle.md#missions-flown-out-of-reach)) and the lease taken (`just take-control`), the Plan view works against a copter as it does against any ArduPilot: build the mission, press Upload, then Start in the Fly view. QGC 5.1.5 sends `MISSION_COUNT`, answers each `MISSION_REQUEST_INT` with a `MISSION_ITEM_INT` (item 0 is the home placeholder it sends for ArduPilot), and waits for the autopilot's `MISSION_ACK`. To start a copter on the ground it sets Guided, arms and sends `MAV_CMD_MISSION_START`; in the air it sets Auto. Items it reached and the current item come back as telemetry, so the Fly view shows progress. All of these travel in signed envelopes, like arming.
+Off by default. With `allow_missions = true` in the vehicle's `[mavlink]` table ([real-mode requirements](real-mode.md#missions-flown-out-of-reach)) and the lease taken (`just take-control`), the Plan view works against a copter as it does against any ArduPilot: build the mission, press Upload, then Start in the Fly view. QGC 5.1.5 sends `MISSION_COUNT`, answers each `MISSION_REQUEST_INT` with a `MISSION_ITEM_INT` (item 0 is the home placeholder it sends for ArduPilot), and waits for the autopilot's `MISSION_ACK`. To start a copter on the ground it sets Guided, arms and sends `MAV_CMD_MISSION_START`; in the air it sets Auto. Items it reached and the current item come back as telemetry, so the Fly view shows progress. All of these travel in signed envelopes, like arming.
 
 Without the switch, or without the lease, the Plan view's upload fails at once with QGC's normal error for a refused upload ("Mission denied", from a `MISSION_ACK` the ground adapter answers in the vehicle's name), Start is denied like any command, and so is a change into Auto. Fence and rally uploads are always refused, and `MISSION_SET_CURRENT` (QGC sends it only to jump to an item) is dropped.
 
 QGC waits `1500 ms` for each next request or acknowledgement and sends `MISSION_COUNT` again, up to five times, only while the autopilot has not asked for an item (`PlanManager.h`, QGC 5.1.5). Over `geo`, with a round trip of about 0.6 s, an upload needs no repeat; a link with a round trip over 1.5 s would fail it. The [mission check](testbed.md#mission-check) exercises this path.
 
-Mission item, count, altitude and hold limits are defined in [Missions flown out of reach](real-vehicle.md#missions-flown-out-of-reach). The vehicle applies them in every mode; enabling uploads does not bypass the gate.
+Every mode limits uploads to 48 items: waypoint, takeoff, land, RTL, timed or counted loiter, speed change or delay. Locations must be relative to home, above 0 and at most 120 m; landing permits 0. Item 0 must be a waypoint but has no frame or altitude restriction. Waypoint holds, timed loiters and delays are capped at 300 s; counted loiters at 10 turns. Unlimited loiters, jumps and `current` values above 1 are refused.
 
 ## SITL
 
