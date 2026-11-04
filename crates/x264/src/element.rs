@@ -39,6 +39,7 @@ mod imp {
     use gstreamer_video as gst_video;
 
     use super::{Config, Encoder, Picture, Rate};
+    use crate::roi::{Rect, quant_offsets};
 
     static CAT: LazyLock<gst::DebugCategory> = LazyLock::new(|| {
         gst::DebugCategory::new(
@@ -55,11 +56,13 @@ mod imp {
     const DEFAULT_REFRESH_MS: u32 = 2000;
     const MIN_REFRESH_MS: u32 = 100;
     const MAX_REFRESH_MS: u32 = 60_000;
+    const MIN_ROI_QP_OFFSET: f32 = -51.0;
 
     #[derive(Debug, Clone, Copy)]
     struct Settings {
         rate: Rate,
         refresh_ms: u32,
+        roi_qp_offset: f32,
     }
 
     impl Default for Settings {
@@ -70,6 +73,7 @@ mod imp {
                     vbv_ms: DEFAULT_VBV_MS,
                 },
                 refresh_ms: DEFAULT_REFRESH_MS,
+                roi_qp_offset: 0.0,
             }
         }
     }
@@ -82,6 +86,8 @@ mod imp {
         rate: Rate,
         /// The next picture's presentation time to x264, in frames.
         next_pts: i64,
+        /// The quantiser offset inside regions of interest the encoder was opened with.
+        roi_qp_offset: f32,
     }
 
     #[derive(Default)]
@@ -128,6 +134,13 @@ mod imp {
                         .maximum(MAX_REFRESH_MS)
                         .default_value(DEFAULT_REFRESH_MS)
                         .build(),
+                    glib::ParamSpecFloat::builder("roi-qp-offset")
+                        .nick("Region quantiser offset")
+                        .blurb("Quantiser offset inside the regions of interest on a frame's buffer, negative for finer; 0 is off. Turns adaptive quantization on, which x264 needs to honour offsets; read again whenever the caps are set")
+                        .minimum(MIN_ROI_QP_OFFSET)
+                        .maximum(0.0)
+                        .default_value(0.0)
+                        .build(),
                     glib::ParamSpecUInt::builder("key-int-max")
                         .nick("Refresh period in frames")
                         .blurb("Frames in one refresh wave of the open encoder, 0 before the caps are set")
@@ -139,10 +152,14 @@ mod imp {
         }
 
         fn set_property(&self, _id: usize, value: &glib::Value, pspec: &glib::ParamSpec) {
+            let mut settings = lock(&self.settings);
+            if pspec.name() == "roi-qp-offset" {
+                settings.roi_qp_offset = value.get().unwrap_or_default();
+                return;
+            }
             let Ok(value) = value.get::<u32>() else {
                 return;
             };
-            let mut settings = lock(&self.settings);
             match pspec.name() {
                 "bitrate" => settings.rate.bitrate_kbit = value,
                 "vbv-buf-capacity" => settings.rate.vbv_ms = value,
@@ -157,6 +174,7 @@ mod imp {
                 "bitrate" => settings.rate.bitrate_kbit.to_value(),
                 "vbv-buf-capacity" => settings.rate.vbv_ms.to_value(),
                 "refresh-ms" => settings.refresh_ms.to_value(),
+                "roi-qp-offset" => settings.roi_qp_offset.to_value(),
                 "key-int-max" => lock(&self.state)
                     .as_ref()
                     .map_or(0, |state| state.encoder.key_int_max())
@@ -243,6 +261,7 @@ mod imp {
                 info,
                 rate: settings.rate,
                 next_pts: 0,
+                roi_qp_offset: settings.roi_qp_offset,
             });
 
             let caps = gst::Caps::builder("video/x-h264")
@@ -312,9 +331,16 @@ mod imp {
             };
             let pts = state.next_pts;
             state.next_pts += 1;
+            let offsets = (state.roi_qp_offset < 0.0)
+                .then(|| regions_of_interest(input))
+                .flatten()
+                .map(|regions| {
+                    let (width, height) = (state.info.width(), state.info.height());
+                    quant_offsets(width, height, &regions, state.roi_qp_offset)
+                });
             let encoded = state
                 .encoder
-                .encode(&picture, pts, idr)
+                .encode(&picture, pts, idr, offsets.as_deref())
                 .map_err(|e| self.fail(&e))?;
             Ok(encoded.map(|e| (e.data.to_vec(), e.idr)))
         }
@@ -334,7 +360,17 @@ mod imp {
             fps_d: u32::try_from(fps.denom()).ok()?,
             refresh_ms: settings.refresh_ms,
             rate: settings.rate,
+            roi_qp_offset: settings.roi_qp_offset,
         })
+    }
+
+    /// The regions of interest on the buffer, when there are any to apply.
+    fn regions_of_interest(buffer: &gst::BufferRef) -> Option<Vec<Rect>> {
+        let regions: Vec<Rect> = buffer
+            .iter_meta::<gst_video::VideoRegionOfInterestMeta>()
+            .map(|meta| meta.rect())
+            .collect();
+        (!regions.is_empty()).then_some(regions)
     }
 }
 
@@ -470,6 +506,70 @@ mod tests {
         assert!(
             nals.contains(&IDR),
             "a reopened encoder starts with an IDR frame"
+        );
+    }
+
+    /// The size of the first frame of a noisy picture, pushed through a leaky queue as the sender
+    /// does, with a region of interest over its left half or none. The rate is low enough that the quantiser
+    /// is not at its floor, where an offset changes nothing.
+    fn first_frame_bytes(roi: bool) -> usize {
+        const W: i32 = 320;
+        const H: i32 = 256;
+        gst::init().unwrap();
+        super::register().unwrap();
+        let caps = gst_video::VideoCapsBuilder::new()
+            .format(gst_video::VideoFormat::I420)
+            .width(W)
+            .height(H)
+            .framerate(gst::Fraction::new(10, 1))
+            .build();
+        let src = gst_app::AppSrc::builder()
+            .format(gst::Format::Time)
+            .caps(&caps)
+            .build();
+        let queue = gst::ElementFactory::make("queue")
+            .property_from_str("leaky", "downstream")
+            .build()
+            .unwrap();
+        let encoder = gst::ElementFactory::make(super::ELEMENT)
+            .property("bitrate", 200u32)
+            .property("vbv-buf-capacity", 10_000u32)
+            .property("roi-qp-offset", -12.0f32)
+            .build()
+            .unwrap();
+        let sink = gst_app::AppSink::builder().sync(false).build();
+        let pipeline = gst::Pipeline::new();
+        let chain = [src.upcast_ref(), &queue, &encoder, sink.upcast_ref()];
+        pipeline.add_many(chain).unwrap();
+        gst::Element::link_many(chain).unwrap();
+        pipeline.set_state(gst::State::Playing).unwrap();
+        let data: Vec<u8> = (0..u32::try_from(W * H * 3 / 2).unwrap())
+            .map(|i| {
+                u8::try_from(120 + (i.wrapping_mul(2_654_435_761) >> 24) % 2 + (i % 320) / 4)
+                    .unwrap()
+            })
+            .collect();
+        let mut buffer = gst::Buffer::from_mut_slice(data);
+        if roi {
+            let buffer = buffer.get_mut().unwrap();
+            gst_video::VideoRegionOfInterestMeta::add(buffer, "region", (0, 0, 160, 256));
+        }
+        src.push_buffer(buffer).unwrap();
+        let sample = sink
+            .try_pull_sample(gst::ClockTime::from_seconds(5))
+            .unwrap();
+        let size = sample.buffer().unwrap().size();
+        pipeline.set_state(gst::State::Null).unwrap();
+        size
+    }
+
+    #[test]
+    fn a_region_of_interest_gets_more_bits_through_the_leaky_queue() {
+        let plain = first_frame_bytes(false);
+        let with_region = first_frame_bytes(true);
+        assert!(
+            with_region > plain + plain / 5,
+            "{with_region} bytes with the region, {plain} without"
         );
     }
 }

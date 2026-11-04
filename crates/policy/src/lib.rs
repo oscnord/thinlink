@@ -1,5 +1,6 @@
 pub mod clock;
 pub mod control;
+pub mod draw;
 pub mod follow;
 pub mod inset;
 pub mod kind;
@@ -11,4 +12,3 @@ pub mod region;
 pub mod retention;
 pub mod retrieval;
 pub mod sighting;
-pub mod soften;

@@ -300,18 +300,20 @@ Sightings appear in QGC's Fly-view notification area under the vehicle, oldest f
 
 ## Regional video
 
-With softening enabled, the pilot's box and detector regions stay sharp while the rest is averaged before encoding. `RegionCell` alone decides the sharp regions and the pilot box confirmed to the ground. Boxes use picture fractions and keep their location across rung changes.
+Regional video gives the pilot's box and detector regions a negative quantiser offset in `satx264enc`. The offsets leave the picture's pixels unchanged. `RegionCell` alone selects the regions and the pilot box confirmed to the ground. Boxes use picture fractions and keep their location across rung changes.
 
 ```text
 QGC TRACK_RECTANGLE -> ground -> signed Region envelope -> vehicle RegionCell
-source tee -> scale/rate -> regional shaping -> stamp -> encoder
+source tee -> scale/rate -> region hook -> stamp -> ROI metadata -> encoder
            -> leaky RGB tap -> detector -> RegionCell detections
            -> leaky luma tap -> tracker -> RegionCell followed box
 ```
 
-The adapter sends the box every 500 ms. A region envelope has its own sequence and uses lease/challenge freshness. It carries no MAVLink; a frame in it gets `not_allowlisted`. Lease release, expiry or regrant clears the box. A box over `max_area_percent`, crowded out by detections, older than `pilot_ttl_ms`, or with softening off is not confirmed.
+The adapter sends the box every 500 ms. A region envelope has its own sequence and uses lease/challenge freshness. It carries no MAVLink; a frame in it gets `not_allowlisted`. Lease release, expiry or regrant clears the box. Without following, confirmation requires the box to be within `pilot_ttl_ms` and selected under the region limits.
 
-`[region] soften_factor` is 1 by default (off), or 2 to 4. Luma blocks of that size, half-sized on chroma, are replaced by their average outside the selected regions. The stamp is drawn afterwards and stays exact. At most `max_regions` regions are retained; if their coverage exceeds `max_area_percent`, nothing is softened. Softening adds no detail. It has no consistent quality gain on the lab test card; gain with the hardware encoder is unmeasured.
+`[region] roi_qp_offset` accepts -51 to 0 and defaults to 0 (off). The testbed's regional configs use -6. A pilot box is kept only with a negative offset. The frame hook returns the selected regions; the sender attaches them as `GstVideoRegionOfInterestMeta` for the encoder. Outlines are drawn before the stamp. At most `max_regions` regions are retained; if their coverage exceeds `max_area_percent`, none are selected.
+
+On the lab card with `PI=pi4`, `geo`, pilot only and offset -6, the box's SSIM gain is +0.018 at rung 0 and -0.026 at rung 2. At rung 0, outside SSIM is -0.041 against the rung below. These are one run each, with run-to-run spread about 0.02 and no measurable encode cost. They use emulated board limits, not Pi hardware.
 
 ### Detector
 
@@ -319,13 +321,13 @@ The detector is off without `[region] detector` in the vehicle config. NanoDet-P
 
 `just model` downloads `models/person.onnx` and verifies its pinned SHA-256. An existing file is checked without downloading it again.
 
-`detector.kinds` selects person, bicycle, car, motorcycle, bus, truck or boat (COCO 0, 1, 2, 3, 5, 7, 8), default `["person"]`. Unknown names fail configuration loading. Each cell takes its best-scoring wanted class; overlapping boxes retain the better score regardless of kind. Detections stay valid for `detection_ttl_ms` and are outlined even with softening off. Each outline uses its kind's colour (people amber), with a one-letter tag in a solid tab at the box's top-left: P, B, C, M, U for bus, T, S for boat. Outline and tab size scale with picture width; a box too small for the tab gets the outline alone.
+`detector.kinds` selects person, bicycle, car, motorcycle, bus, truck or boat (COCO 0, 1, 2, 3, 5, 7, 8), default `["person"]`. Unknown names fail configuration loading. Each cell takes its best-scoring wanted class; overlapping boxes retain the better score regardless of kind. Detections stay valid for `detection_ttl_ms` and are outlined even with offsets off. Each outline uses its kind's colour (people amber), with a one-letter tag in a solid tab at the box's top-left: P, B, C, M, U for bus, T, S for boat. Outline and tab size scale with picture width; a box too small for the tab gets the outline alone.
 
 ### Following a target
 
 `[region] follow = true` turns the drawn box into a starting selection. It snaps to a detection overlapped by more than half. A leaky 320x180 luma tap feeds the newest frame at `follow_fps` (10/s in the testbed). A slow tracker never holds live video.
 
-`sat_teleop_policy::follow` matches the starting pixels by normalised cross-correlation near the previous location. Brightness and contrast changes do not affect that score. A match of 0.7 or better moves the template slightly towards the new pixels; weaker matches never teach it. The followed box becomes the sharp region and the vehicle's confirmed box. Updates reach the lease holder at most four times a second; QGC's box and crop requests follow them.
+`sat_teleop_policy::follow` matches the starting pixels by normalised cross-correlation near the previous location. Brightness and contrast changes do not affect that score. A match of 0.7 or better moves the template slightly towards the new pixels; weaker matches never teach it. The followed box becomes the selected region and the vehicle's confirmed box. Updates reach the lease holder at most four times a second; QGC's box and crop requests follow them.
 
 Follow ends when the score stays below `follow_min_score` for `follow_lost_frames`, the target reaches an edge, or the initial box is too small or flat. The outline disappears. `ToGround::Lost { region_seq }` repeats on the 250 ms report tick for 3 s unless a new box is followed. The ground clears only a box whose first sent sequence is no newer than that loss, so a delayed loss cannot clear a new or unsent box. Nothing resumes until the pilot draws again. Following never moves the drone.
 
@@ -341,7 +343,7 @@ Take the lease with `just take-control`, then draw a rectangle in QGC's video. Q
 
 The newest crop appears in the top-right corner below the stamp rows, at most a third of the picture's width, in a 2 px frame. Its `DETAIL <age> s` label uses the live label's colour. The ground needs `--job-token-file`, as passed by the testbed compose file. A full link may deliver no crop; a narrow link may take seconds. A crop failure is logged and retried by a new request after 4 s.
 
-Tracking becomes active when a crop arrives, or while the vehicle confirms that softening keeps the box sharp. It becomes idle after STOP_TRACKING, after 30 s without a crop when no confirmation remains, or when follow reports loss. Confirmations expire after 3 s. With softening off, crops keep the red box active. With `follow = true`, the red box and crop requests move with the followed target. Nothing here moves the drone.
+Tracking becomes active when a crop arrives, or while the vehicle confirms the box is selected for a quantiser offset. It becomes idle after STOP_TRACKING, after 30 s without a crop when no confirmation remains, or when follow reports loss. Confirmations expire after 3 s. With offsets off, crops keep the red box active. With `follow = true`, the red box and crop requests move with the followed target. Nothing here moves the drone.
 
 Detector outlines use amber P for person, green B for bicycle, cyan C for car, magenta M for motorcycle, red U for bus, white T for truck and deep blue S for boat. A box too small for its tab has only an outline. The followed box is pink with an F tab. Regional behavior is exercised by the [regional check](testbed.md#regional-check) and [follow check](testbed.md#follow-check); its QGC rendering is not checked on screen.
 
@@ -436,7 +438,7 @@ ArduPilot requests uploaded items with `MISSION_REQUEST`; QGC handles that and `
 
 ### Regional simulation
 
-`just regional=1 sim-up` uses `testbed/config/vehicle-sim-regional.toml`: `kinds = ["person", "car"]`, `soften_factor = 2` and `follow = true`. It draws detected people and the car, keeps selected regions sharp and follows the box drawn in QGC. The world contains two standing people, 5 and 6.5 m ahead, a parked hatchback 9 m ahead and 5 m left, and a white H landing pad. From the runway the pad is a sliver near the horizon; it becomes visible in flight.
+`just regional=1 sim-up` uses `testbed/config/vehicle-sim-regional.toml`: `kinds = ["person", "car"]`, `roi_qp_offset = -6` and `follow = true`. It outlines detected people and the car. Selected regions get a quantiser offset, and the tracker follows the box drawn in QGC. The world contains two standing people, 5 and 6.5 m ahead, a parked hatchback 9 m ahead and 5 m left, and a white H landing pad. From the runway the pad is a sliver near the horizon; it becomes visible in flight.
 
 This config keeps 4 MiB of snapshots, compared with 512 KiB in the other configs. That retains more outage snapshots across the 30 s cut while respecting the store's newest-first outage share. Use [the follow check](testbed.md#follow-check) and [the sightings check](testbed.md#sightings-check) for automated exercises.
 
@@ -485,7 +487,7 @@ just demo-stop           # stop camera and testbed
 
 The recipe starts `vehicle-ingest.toml`, applies the profile, starts the camera and waits for its first frame. With built images this takes about a minute. Failure after capture starts stops the camera but leaves the testbed up; use `just lab-down` or `just demo-stop`. Otherwise capture continues until stopped. Another process holding Mac UDP 5700 prevents `lab-up` from publishing it. Plain `just lab-up` restores the test pattern.
 
-`just regional=1 demo geo` uses `vehicle-ingest-regional.toml`, enabling person detection and `soften_factor = 2`. Detected people stay sharp and are outlined amber. The rest softens when a region or person is selected. Use `just take-control`, then [draw a box](#drawing-a-box).
+`just regional=1 demo geo` uses `vehicle-ingest-regional.toml`, enabling person detection and `roi_qp_offset = -6`. Selected regions get a quantiser offset. Detected people are outlined amber. Use `just take-control`, then [draw a box](#drawing-a-box).
 
 ### Camera permission on macOS
 

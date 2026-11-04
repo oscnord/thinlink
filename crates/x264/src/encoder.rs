@@ -25,6 +25,8 @@ pub enum Error {
     Encode,
     #[error("{0} plane is too small for the frame")]
     Plane(&'static str),
+    #[error("the quantiser offsets do not cover the frame's macroblocks")]
+    Offsets,
 }
 
 /// The settings that change while the encoder runs.
@@ -51,6 +53,9 @@ pub struct Config {
     /// One intra refresh wave takes this long.
     pub refresh_ms: u32,
     pub rate: Rate,
+    /// Quantiser offset inside a region of interest, 0 for none. x264 honours offsets only with
+    /// adaptive quantization on, so a nonzero value turns it on.
+    pub roi_qp_offset: f32,
 }
 
 impl Config {
@@ -82,6 +87,10 @@ pub struct Encoder {
     key_int_max: u32,
 }
 
+/// Adaptive quantization is only on for the region offsets: x264 clears `i_aq_mode` when the
+/// strength is 0 (`encoder.c`, `x264_validate_parameters`), so this is the weakest that keeps it.
+const ROI_AQ_STRENGTH: f32 = 0.01;
+
 // SAFETY: the handle is used from one thread at a time, as `&mut self` requires, and x264 keeps
 // no thread-local state between calls.
 unsafe impl Send for Encoder {}
@@ -112,6 +121,10 @@ impl Encoder {
         param.i_log_level = sys::X264_LOG_WARNING;
         param.rc.i_rc_method = sys::X264_RC_ABR;
         set_rate(&mut param, config.rate);
+        if config.roi_qp_offset < 0.0 {
+            param.rc.i_aq_mode = sys::X264_AQ_VARIANCE;
+            param.rc.f_aq_strength = ROI_AQ_STRENGTH;
+        }
         // SAFETY: `param` is a fully initialised parameter set.
         let handle = unsafe { sys::x264_encoder_open(&raw mut param) };
         Ok(Self {
@@ -125,6 +138,11 @@ impl Encoder {
 
     pub fn key_int_max(&self) -> u32 {
         self.key_int_max
+    }
+
+    /// The picture's size in macroblocks: width, height.
+    pub fn macroblocks(&self) -> (usize, usize) {
+        (self.width.div_ceil(16), self.height.div_ceil(16))
     }
 
     /// Takes effect at the next frame.
@@ -142,12 +160,14 @@ impl Encoder {
 
     /// Encodes one picture. `idr` makes it a whole IDR frame, which x264 allows with intra
     /// refresh on (a forced type becomes the frame's type; the refresh wave restarts after it).
-    /// `None` when x264 produced no output for the picture.
+    /// `offsets` are added to the quantiser of each macroblock in raster order (`macroblocks`);
+    /// x264 copies them during the call. `None` when x264 produced no output for the picture.
     pub fn encode(
         &mut self,
         picture: &Picture<'_>,
         pts: i64,
         idr: bool,
+        offsets: Option<&[f32]>,
     ) -> Result<Option<Encoded<'_>>, Error> {
         let [luma, blue, red] = picture.planes;
         let [luma_stride, blue_stride, red_stride] = picture.strides;
@@ -155,6 +175,10 @@ impl Encoder {
         check_plane("luma", luma, luma_stride, (self.width, self.height))?;
         check_plane("blue chroma", blue, blue_stride, chroma)?;
         check_plane("red chroma", red, red_stride, chroma)?;
+        let (mb_width, mb_height) = self.macroblocks();
+        if offsets.is_some_and(|o| o.len() != mb_width * mb_height) {
+            return Err(Error::Offsets);
+        }
         let stride = |bytes| i32::try_from(bytes).map_err(|_| Error::Encode);
         let mut pic_in = MaybeUninit::<sys::x264_picture_t>::uninit();
         // SAFETY: `x264_picture_init` initialises the whole picture.
@@ -176,6 +200,11 @@ impl Encoder {
             red.as_ptr().cast_mut(),
             std::ptr::null_mut(),
         ];
+        if let Some(offsets) = offsets {
+            // x264 only reads the offsets, and only inside `x264_encoder_encode` (it copies them
+            // into the frame, then calls `quant_offsets_free`, which stays null).
+            pic_in.prop.quant_offsets = offsets.as_ptr().cast_mut();
+        }
         pic_in.i_pts = pts;
         pic_in.i_type = if idr {
             sys::X264_TYPE_IDR
@@ -190,8 +219,8 @@ impl Encoder {
         let mut pic_out = unsafe { pic_out.assume_init() };
         let mut nal: *mut sys::x264_nal_t = std::ptr::null_mut();
         let mut nal_count = 0;
-        // SAFETY: the handle is open, the input planes were checked against the frame size above
-        // and outlive the call, and x264 fills `nal` and `nal_count`.
+        // SAFETY: the handle is open, the input planes and the offsets were checked against the
+        // frame size above and outlive the call, and x264 fills `nal` and `nal_count`.
         let size = unsafe {
             sys::x264_encoder_encode(
                 self.handle.as_ptr(),

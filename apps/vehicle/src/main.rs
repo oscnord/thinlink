@@ -21,7 +21,7 @@ use sat_teleop_detail::vehicle::{
 use sat_teleop_detect::{Detection, Detector};
 use sat_teleop_media::hooks::sender_hooks;
 use sat_teleop_media::region::{
-    RegionSettings, Regional, RegionalSnapshot, validate_soften_factor,
+    RegionSettings, Regional, RegionalSnapshot, validate_roi_qp_offset,
 };
 use sat_teleop_media::retrieval as media_retrieval;
 use sat_teleop_media::tags::TagFeed;
@@ -107,8 +107,8 @@ struct Config {
     detail: Option<String>,
     /// The person detector; without it nobody is outlined.
     detector: Option<DetectorConfig>,
-    /// Block size of the softened area outside the pilot's box and the people found; 1 is off.
-    soften_factor: u8,
+    /// Quantiser offset inside the pilot's box and the people found; 0 is off.
+    roi_qp_offset: f32,
     /// The landing target switch, when it is on.
     landing: Option<landing::On>,
     /// Whether the pilot's box is followed from frame to frame.
@@ -120,8 +120,9 @@ struct Config {
 #[serde(deny_unknown_fields)]
 struct RegionConfig {
     detector: Option<DetectorConfig>,
-    /// 1 (the default) is off: the pilot's box is not kept and nothing is softened. 2 to 4 soften.
-    soften_factor: Option<u8>,
+    /// Quantiser offset (-51 to 0) the encoder applies inside the pilot's box and the people found;
+    /// absent or 0 is off and the pilot's box is not kept.
+    roi_qp_offset: Option<f32>,
     /// Follow the pilot's box from frame to frame (off by default).
     #[serde(default)]
     follow: bool,
@@ -309,7 +310,7 @@ fn run(
         store,
         detail,
         detector,
-        soften_factor,
+        roi_qp_offset,
         landing: landing_on,
         follow,
     } = load(config)?;
@@ -399,7 +400,7 @@ fn run(
         limits.region,
         bridge.control.region.clone(),
         input,
-        soften_factor,
+        roi_qp_offset,
         follow,
     );
     if follow {
@@ -728,7 +729,7 @@ fn load(path: &Path) -> Result<Config> {
             .validate()
             .with_context(|| format!("{} has an invalid [region] table", path.display()))?;
     }
-    let soften_factor = validate_soften_factor(region.soften_factor.unwrap_or(1))
+    let roi_qp_offset = validate_roi_qp_offset(region.roi_qp_offset.unwrap_or(0.0))
         .with_context(|| format!("{} has an invalid [region] table", path.display()))?;
     let camera: landing::CameraConfig = table
         .remove("camera")
@@ -760,7 +761,7 @@ fn load(path: &Path) -> Result<Config> {
         detail,
         detector: region.detector,
         follow: region.follow,
-        soften_factor,
+        roi_qp_offset,
         landing,
     })
 }
@@ -999,18 +1000,18 @@ mod tests {
     }
 
     #[test]
-    fn soften_factor_is_off_by_default_and_refused_above_4() {
+    fn roi_qp_offset_is_off_by_default_and_refused_outside_minus_51_to_0() {
         let base = config("deploy/vehicle/vehicle.toml");
         for (table, accepted) in [
             ("", true),
-            ("soften_factor = 2", true),
-            ("soften_factor = 5", false),
-            ("soften_factor = 0", false),
+            ("roi_qp_offset = -6", true),
+            ("roi_qp_offset = 3", false),
+            ("roi_qp_offset = -52", false),
         ] {
             let text = format!("{base}\n[region]\n{table}\n");
             assert_eq!(load_text(&text).is_ok(), accepted, "{table}");
         }
-        assert_eq!(load_text(&base).unwrap().soften_factor, 1);
+        assert_eq!(load_text(&base).unwrap().roi_qp_offset, 0.0);
     }
 
     #[test]

@@ -106,7 +106,7 @@ pub struct Region {
     pub x1: usize,
     pub y1: usize,
     pub rows: (usize, usize),
-    /// Windows this close to the box are in neither group: the encoder and the softening blur
+    /// Windows this close to the box are in neither group: the encoder's blur
     /// across its edge.
     pub margin: usize,
     /// Windows touching this pixel rectangle are in neither group: the ground draws its detail
@@ -189,7 +189,7 @@ mod tests {
             .collect()
     }
 
-    /// Replaces every block outside the box with its average, as the sender softens.
+    /// Replaces every block outside the box with its average, as a softened picture has it.
     fn softened_outside(plane: &[u8], region: &Region) -> Vec<u8> {
         let mut out = plane.to_vec();
         for by in (0..SIDE).step_by(BLOCK) {

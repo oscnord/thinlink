@@ -48,8 +48,8 @@ Packages that exist today:
 | L0 | `sat-teleop-video-core` | `crates/video-core` | The core of the workspace, pure: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token check |
 | L0 | `sat-teleop-x264` | `crates/x264` | The `satx264enc` GStreamer element and safe libx264 wrapper; GPL-2.0-or-later |
 | L1 | `sat-teleop-video` | `crates/video` | The core of the workspace, GStreamer: sender with live rung changes, its snapshot branch, its frame hook and taps, relay ingress and its feedback, the sender's adaptation loop, headless receiver and the ground's freshness output with its decoration, `GET /metrics` endpoint. Knows nothing about drones |
-| L1 | `sat-teleop-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, softening, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
-| L2 | `sat-teleop-media` | `crates/media` | What the drone adds to the video: regional softening and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
+| L1 | `sat-teleop-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, outline drawing, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
+| L2 | `sat-teleop-media` | `crates/media` | What the drone adds to the video: regional encoding and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
 | L2 | `sat-teleop-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
 | L2 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
 | L2 | `sat-teleop-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
@@ -81,9 +81,9 @@ Network packets, MAVLink messages, files, configuration and requests are untrust
 
 ### Regional video
 
-- `RegionCell` (`sat-teleop-policy`) is the one place that says which regions are kept sharp. The sender softens from `regions()` and the control loop confirms `pilot_in_use()` to the ground; never compute either anywhere else.
-- A region envelope never reaches the autopilot and never carries a MAVLink frame. Softening happens before the stamp is drawn, never after.
-- The detector never blocks the video: its branch is leaky and drops its own frames, and a model that does not load is shown in the metrics, not fatal. It is off unless the vehicle config asks for it. Softening is off too (`soften_factor` in `[region]` of the vehicle config); with it off the pilot's box is neither kept nor confirmed, and detections are still outlined.
+- `RegionCell` (`sat-teleop-policy`) selects the regions for encoder quantiser offsets. The frame hook returns `regions()` as pixel rectangles, and the control loop sends `confirmed()` to the ground; never compute either selection anywhere else.
+- A region envelope never reaches the autopilot and never carries a MAVLink frame. The sender attaches the hook's regions as `GstVideoRegionOfInterestMeta` for `satx264enc`. Quantiser offsets leave pixels unchanged. Outlines are drawn before the stamp.
+- The detector never blocks the video: its branch is leaky and drops its own frames, and a model that does not load is shown in the metrics, not fatal. It is off unless the vehicle config asks for it. `[region] roi_qp_offset` defaults to 0 (off) and accepts -51 to 0. The pilot's box is kept only with a negative offset; detections are outlined even with offsets off.
 - No AGPL model or code (Ultralytics YOLO is excluded); weights and code Apache-2.0, MIT or BSD.
 
 ### Bound work and preserve freshness
@@ -339,7 +339,7 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 - [sat-teleop-video-core](crates/video-core/AGENTS.md): the pure core of the video path: the in-picture stamp and the state stamp, video freshness, pacing, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token.
 - [sat-teleop-x264](crates/x264/AGENTS.md): the `satx264enc` GStreamer element, libx264 FFI boundary and encoder checks.
 - [sat-teleop-video](crates/video/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the sender's adaptation loop, metrics endpoint, and the frame hook, taps and decoration the drone plugs into.
-- [sat-teleop-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, softening, sightings, landing, the predictive display, the detail inset, retention, retrieval.
+- [sat-teleop-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, outline drawing, sightings, landing, the predictive display, the detail inset, retention, retrieval.
 - [sat-teleop-media](crates/media/AGENTS.md): what the drone adds to the video: regional video, the detector, tracker and tag feeds, the aim ring and detail inset, retrieval's view of adaptation.
 - [sat-teleop-control](crates/control/AGENTS.md): MAVLink frames, the autopilot link (SITL TCP or serial) and SITL identification, the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge, controller and camera component, the control envelope.
 - [sat-teleop-detect](crates/detect/AGENTS.md): the detector, its model and output layout, and how it is fetched.

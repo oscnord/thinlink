@@ -168,7 +168,7 @@ On the bench, with props off, before anything else ([the bring-up checklist](#br
 2. Encoder latency. The time between a frame passing the stamp and its first RTP packet leaving, with `v4l2h264enc` and with `satx264enc` at the same rung. Compare the ground's age with `encoder = "hardware"` and `encoder = "x264"`.
 3. Uplink rate. The vehicle's `adapt.uplink_bytes_per_s` and `rtp_bytes` on the real link, against what the modem and the plan deliver, and the rung the adaptation settles at.
 4. CPU and memory of the vehicle per rung (`top`, or `systemctl show -p MemoryCurrent sat-teleop-vehicle`), on the board that will fly.
-5. Regional video's cost. With `[region] detector` on, the tee's detector branch copies a source frame in the streaming thread `detector_fps` times a second (as the snapshot branch does) and the detector runs next to the encoder. Compare the vehicle's CPU and the frame age with the detector off and on, and read `detector.ms` and `region.soften` in the metrics; the testbed's figures are emulated limits, not a Pi ([the regional check](testbed.md#regional-check)).
+5. Regional video's cost. With `[region] detector` on, the tee's detector branch copies a source frame in the streaming thread `detector_fps` times a second (as the snapshot branch does) and the detector runs next to the encoder. Compare the vehicle's CPU and the frame age with the detector off and on, and read `detector.ms` and `stages.encode` in the metrics; the testbed's figures are emulated limits, not a Pi ([the regional check](testbed.md#regional-check)).
 
 Then measure the relay's CPU and memory with video running and the ground adapter's CPU per output resolution. Hardware capacity is unmeasured.
 

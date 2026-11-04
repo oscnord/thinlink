@@ -13,5 +13,6 @@ pub fn sender_hooks(regional: &Arc<Regional>, tags: Option<&Arc<TagFeed>>) -> Ho
     Hooks {
         frame: Some(regional.frame_hook()),
         taps,
+        roi_qp_offset: regional.roi_qp_offset(),
     }
 }

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 const FUNCTIONS: &str = "x264_(param_default_preset|picture_init|encoder_open_[0-9]+|encoder_encode|encoder_close|encoder_reconfig)";
 const TYPES: &str = "x264_(t|param_t|picture_t|nal_t)";
-const VARS: &str = "X264_(CSP_I420|TYPE_.*|RC_ABR|LOG_.*)";
+const VARS: &str = "X264_(CSP_I420|TYPE_.*|RC_ABR|AQ_VARIANCE|LOG_.*)";
 
 fn main() -> Result<(), Box<dyn Error>> {
     let library = pkg_config::Config::new()

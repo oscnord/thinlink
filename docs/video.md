@@ -16,7 +16,7 @@ These crates know nothing about drones. Applications wire the video to `media`, 
 
 GStreamer through `gstreamer-rs` supplies capture, encoding, RTP and decoding. Rust owns coordination and policy. Workers use synchronous threads and bounded `sync_channel` queues; there is no async runtime.
 
-The sender offers a raw-frame hook before the stamp, and leaky frame taps off its tee. The output offers a per-frame decoration after the state stamp and before the labels. The caller owns the drone-specific work. A slow tap drops its own frames; it never holds the live path. The raw-frame hook runs in the streaming thread and must remain cheap.
+The sender offers a raw-frame hook before the stamp, and leaky frame taps off its tee. The hook returns regions in pixel coordinates. After drawing the stamp, the sender attaches them to the frame's buffer as `GstVideoRegionOfInterestMeta`. The output offers a per-frame decoration after the state stamp and before the labels. The caller owns the drone-specific work. A slow tap drops its own frames; it never holds the live path. The raw-frame hook runs in the streaming thread and must remain cheap.
 
 Video produces bounded snapshots. Detail owns their store and transfer, policy owns retention, and applications connect them. [Retained detail](drone.md#retained-detail) has its own queue and yields to live video and control.
 
@@ -63,6 +63,8 @@ The ladder is [testbed/ladder.toml](../testbed/ladder.toml), best first. `start 
 The rung bitrate is the video allowance for any one second, including refresh bursts. x264 gets the rung bitrate times `1000 / (1000 + frame_period_ms)`, with a one-frame VBV buffer. That is about 94 % at 15 fps, two thirds at 2 fps and half at 1 fps. Headers come on top: each RTP packet costs another 122 bytes of RTP, UDP, IPv4, WireGuard and Ethernet headers. The source may send less than the allowance.
 
 The sender uses `satx264enc`, a GStreamer `VideoEncoder` registered from Rust at startup, with no plugin file. It drives libx264 with preset `ultrafast` and tune `zerolatency`: no lookahead or B-frames, with sliced threads. Rate control uses average bitrate under the one-frame VBV. Parameter sets repeat. Intra refresh sweeps the picture over `refresh-ms`, set from `keyframe_interval_ms = 2000`. There are no periodic IDRs.
+
+`roi-qp-offset` accepts -51 to 0, with 0 off, and is read when caps are set. `satx264enc` maps each buffer's ROI metadata to x264 quantiser offsets on every 16x16 macroblock a region touches. Overlaps do not add up. A negative offset enables variance adaptive quantization at strength 0.01; otherwise it is off. x264 honours offsets only with adaptive quantization enabled and clears it at strength 0. The offsets leave the input pixels unchanged. The hardware encoder does not use this property.
 
 A size or frame-rate change needs only new caps. The element reopens libx264 for those caps and starts with an IDR. It computes `i_keyint_max` from their frame rate and the refresh period. `bitrate` and `vbv-buf-capacity` changes apply in place at the next frame. A forced key unit from upstream or downstream makes the next picture a whole IDR. Only IDRs are sync points; all other frames, including refresh-wave starts, are delta units. Time-based forced keyframes apply only to V4L2. Metrics keep `requested` and `applied` separate, including the first stamped frame in the new shape.
 

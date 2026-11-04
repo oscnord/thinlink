@@ -1,5 +1,5 @@
-//! Regional video on the vehicle: the `[region]` limits, what the sender needs to soften the
-//! picture outside the regions and outline the people and vehicles found, and the detector's counters. The
+//! Regional video on the vehicle: the `[region]` limits, what the sender needs to give the encoder
+//! the regions to spend more on and outline the people and vehicles found, and the detector's counters. The
 //! detector itself (`sat-teleop-detect`) is in a sibling crate, so the application runs it: the
 //! sender offers it the newest scaled frame (`DetectorFrame`) and it publishes what it finds to the cell.
 
@@ -12,12 +12,12 @@ use gstreamer_video as gst_video;
 use gstreamer_video::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use sat_teleop_policy::draw::{outline, tag};
 use sat_teleop_policy::follow::{self, Lost};
 use sat_teleop_policy::kind::Kind;
-use sat_teleop_policy::region::{NormRect, RegionCell, RegionLimits};
-use sat_teleop_policy::soften::{outline, soften_i420_plane, tag};
+use sat_teleop_policy::region::{NormRect, PixelRect, RegionCell, RegionLimits};
 
-use sat_teleop_video::sender::{FrameHook, Tap, TapFormat, TapSpec};
+use sat_teleop_video::sender::{FrameHook, Roi, Tap, TapFormat, TapSpec};
 use sat_teleop_video::stages::{Stage, StageSnapshot};
 use sat_teleop_video::{MediaError, plane_geometry};
 
@@ -31,7 +31,7 @@ fn follow_side(pixels: usize) -> u32 {
     u32::try_from(pixels).unwrap_or(u32::MAX)
 }
 
-const MAX_SOFTEN_FACTOR: u8 = 4;
+const MIN_ROI_QP_OFFSET: f32 = -51.0;
 const MAX_REGIONS: usize = 16;
 const MAX_DETECTOR_FPS: u16 = 10;
 const MAX_TTL_MS: u64 = 60_000;
@@ -43,13 +43,15 @@ const TAG_INK: [u8; 3] = [16, 128, 128];
 const OUTLINE_PX: usize = 2;
 const OUTLINE_REFERENCE_WIDTH: usize = 640;
 
-/// The block size of the softened area from `[region]` of the vehicle config: 1 (the default) is
-/// off, 2 to 4 soften.
-pub fn validate_soften_factor(factor: u8) -> Result<u8, MediaError> {
-    if (1..=MAX_SOFTEN_FACTOR).contains(&factor) {
-        return Ok(factor);
+/// The quantiser offset inside the regions from `[region]` of the vehicle config: 0 (the default) is
+/// off, down to -51 is finer.
+pub fn validate_roi_qp_offset(offset: f32) -> Result<f32, MediaError> {
+    if (MIN_ROI_QP_OFFSET..=0.0).contains(&offset) {
+        return Ok(offset);
     }
-    Err(MediaError::Config("soften_factor must be 1-4".to_owned()))
+    Err(MediaError::Config(
+        "roi_qp_offset must be -51 to 0".to_owned(),
+    ))
 }
 
 /// `[region]` of `testbed/limits.toml`. The ground reads `pilot_refresh_ms` from the same table.
@@ -127,15 +129,12 @@ impl RegionSettings {
         }
     }
 
-    /// What `active` is given. With softening off the pilot's box does nothing, so it has no
-    /// lifetime and is never confirmed to the ground; detections still count, to be outlined.
-    fn limits(self, soften_factor: u8) -> RegionLimits {
+    /// What `active` is given. With region offsets off the pilot's box does
+    /// nothing, so it has no lifetime and is never confirmed to the ground; detections still
+    /// count, to be outlined.
+    fn limits(self, shaping: bool) -> RegionLimits {
         RegionLimits {
-            pilot_ttl_ms: if soften_factor > 1 {
-                self.pilot_ttl_ms
-            } else {
-                0
-            },
+            pilot_ttl_ms: if shaping { self.pilot_ttl_ms } else { 0 },
             detection_ttl_ms: self.detection_ttl_ms,
             max_regions: self.max_regions,
             max_area_percent: self.max_area_percent,
@@ -167,16 +166,14 @@ pub struct FollowFrame {
 pub struct Regional {
     pub cell: RegionCell,
     settings: RegionSettings,
-    /// Block size of the softened area; 1 is off.
-    soften_factor: u8,
+    /// Quantiser offset the encoder applies inside the regions (negative); 0 is off.
+    roi_qp_offset: f32,
     /// Whether the pilot's box is followed (the sender then feeds the tracker).
     follow: bool,
     detector_tap: Option<Arc<Tap>>,
     follow_tap: Option<Arc<Tap>>,
     active: AtomicU64,
-    softened_frames: AtomicU64,
     shape_failures: AtomicU64,
-    soften: Stage,
     detector: Detector,
     tracker: Tracker,
 }
@@ -221,12 +218,10 @@ pub struct FollowSnapshot {
 
 #[derive(Debug, Serialize)]
 pub struct RegionCounts {
-    /// Regions kept sharp in the last frame.
+    /// Regions given to the encoder in the last frame.
     pub active: u64,
-    pub softened_frames: u64,
-    /// Frames that could not be softened or outlined; they went on with their stamp.
+    /// Frames that could not be shaped or outlined; they went on with their stamp.
     pub shape_failures: u64,
-    pub soften: StageSnapshot,
 }
 
 #[derive(Debug, Serialize)]
@@ -243,23 +238,23 @@ pub struct DetectorSnapshot {
 impl Regional {
     /// Regional video with `settings` (already validated) around `cell`, which the control loop
     /// shares. `detector_input` is the model's input size when a detector runs: the sender then
-    /// feeds it. `soften_factor` is the block size of the softened area (1 is off). With `follow`
+    /// feeds it. `roi_qp_offset` is the encoder's quantiser offset inside the regions (0 is off). With `follow`
     /// the pilot's box starts a follow and the sender feeds the tracker.
     pub fn new(
         settings: RegionSettings,
         cell: RegionCell,
         detector_input: Option<u32>,
-        soften_factor: u8,
+        roi_qp_offset: f32,
         follow: bool,
     ) -> Arc<Self> {
-        cell.configure(settings.limits(soften_factor));
+        cell.configure(settings.limits(roi_qp_offset < 0.0));
         if follow {
             cell.enable_follow();
         }
         let regional = Self {
             cell,
             settings,
-            soften_factor,
+            roi_qp_offset,
             follow,
             detector_tap: detector_input.map(|side| {
                 Tap::new(TapSpec {
@@ -278,9 +273,7 @@ impl Regional {
                 })
             }),
             active: AtomicU64::new(0),
-            softened_frames: AtomicU64::new(0),
             shape_failures: AtomicU64::new(0),
-            soften: Stage::new(),
             detector: Detector {
                 state: Mutex::new("off".to_owned()),
                 runs: AtomicU64::new(0),
@@ -399,9 +392,7 @@ impl Regional {
         RegionalSnapshot {
             region: RegionCounts {
                 active: self.active.load(Ordering::Relaxed),
-                softened_frames: self.softened_frames.load(Ordering::Relaxed),
                 shape_failures: self.shape_failures.load(Ordering::Relaxed),
-                soften: self.soften.snapshot(),
             },
             detector: DetectorSnapshot {
                 state: self
@@ -462,40 +453,44 @@ impl Regional {
     pub fn frame_hook(self: &Arc<Self>) -> FrameHook {
         let regional = Arc::clone(self);
         Arc::new(move |frame| {
-            if regional.shape(frame).is_err() {
+            regional.shape(frame).unwrap_or_else(|_| {
                 regional.shape_failed();
-            }
+                Vec::new()
+            })
         })
     }
 
-    /// Softens the picture outside the regions and outlines what was found. Runs before the
-    /// stamp is drawn, so the stamp stays exact.
+    /// The encoder's quantiser offset inside the regions, for the sender's hooks.
+    pub fn roi_qp_offset(&self) -> f32 {
+        self.roi_qp_offset
+    }
+
+    /// Outlines what was found and returns the regions the encoder should spend more on. Runs
+    /// before the stamp is drawn, so the stamp stays exact.
     pub(crate) fn shape(
         &self,
         frame: &mut gst_video::VideoFrameRef<&mut gst::BufferRef>,
-    ) -> Result<(), MediaError> {
-        let started = Instant::now();
-        let regions = self.cell.regions();
-        let outlines = self.outlines();
-        let softening = self.soften_factor > 1 && !regions.is_empty();
-        self.active.store(
-            if softening { regions.len() as u64 } else { 0 },
-            Ordering::Relaxed,
-        );
-        if !softening && outlines.is_empty() {
-            return Ok(());
-        }
-        let factor = if softening {
-            usize::from(self.soften_factor)
+    ) -> Result<Vec<Roi>, MediaError> {
+        let regions = if self.roi_qp_offset < 0.0 {
+            self.cell.regions()
         } else {
-            1
+            Vec::new()
         };
+        self.active.store(regions.len() as u64, Ordering::Relaxed);
         let width = usize::try_from(frame.width()).unwrap_or(0);
+        let height = usize::try_from(frame.height()).unwrap_or(0);
+        let rois = regions
+            .iter()
+            .map(|r| roi(r.pixels(width, height)))
+            .collect();
+        let outlines = self.outlines();
+        if outlines.is_empty() {
+            return Ok(rois);
+        }
         for (plane, ink) in (0..3u32).zip(TAG_INK) {
             let geometry = plane_geometry(frame, plane)?;
             let index = plane as usize;
             let data = frame.plane_data_mut(plane)?;
-            soften_i420_plane(index, data, geometry, &regions, factor);
             let thickness = outline_thickness(index, width);
             for (yuv, glyph, rect) in &outlines {
                 let pixels = rect.pixels(geometry.width, geometry.height);
@@ -504,12 +499,18 @@ impl Regional {
                 tag(data, geometry, pixels, *glyph, thickness, colour, ink);
             }
         }
-        if softening {
-            self.softened_frames.fetch_add(1, Ordering::Relaxed);
-            self.soften.record(started.elapsed());
-        }
-        Ok(())
+        Ok(rois)
     }
+}
+
+fn roi(rect: PixelRect) -> Roi {
+    let side = |from: usize, to: usize| u32::try_from(to - from).unwrap_or(u32::MAX);
+    (
+        u32::try_from(rect.x0).unwrap_or(u32::MAX),
+        u32::try_from(rect.y0).unwrap_or(u32::MAX),
+        side(rect.x0, rect.x1),
+        side(rect.y0, rect.y1),
+    )
 }
 
 fn corners(rect: NormRect) -> [f32; 4] {
@@ -540,19 +541,19 @@ mod tests {
     };
 
     #[test]
-    fn config_refuses_a_soften_factor_over_4() {
-        for factor in [1, 2, 4] {
-            assert_eq!(validate_soften_factor(factor).unwrap(), factor);
+    fn config_refuses_an_offset_outside_minus_51_to_0() {
+        for offset in [0.0, -6.0, -51.0] {
+            assert_eq!(validate_roi_qp_offset(offset).unwrap(), offset);
         }
-        for factor in [0, 5] {
-            assert!(validate_soften_factor(factor).is_err(), "factor {factor}");
+        for offset in [1.0, -52.0, f32::NAN] {
+            assert!(validate_roi_qp_offset(offset).is_err(), "offset {offset}");
         }
     }
 
     #[test]
-    fn with_softening_off_detections_count_and_the_pilot_box_does_not() {
+    fn with_offsets_off_detections_count_and_the_pilot_box_does_not() {
         let cell = RegionCell::default();
-        let _regional = Regional::new(SETTINGS, cell.clone(), Some(320), 1, false);
+        let _regional = Regional::new(SETTINGS, cell.clone(), Some(320), 0.0, false);
         let pilot = NormRect::new(0.1, 0.1, 0.3, 0.3).unwrap();
         let person = (Kind::Person, NormRect::new(0.5, 0.5, 0.6, 0.8).unwrap());
         cell.set(sat_teleop_policy::region::Timed {
@@ -565,12 +566,10 @@ mod tests {
     }
 
     #[test]
-    fn frames_are_softened_outside_the_region_only() {
-        use gstreamer_video::VideoFrameExt;
-
+    fn the_hook_returns_the_pilot_box_in_pixels_when_offsets_are_on() {
         sat_teleop_video::init().unwrap();
         let cell = RegionCell::default();
-        let regional = Regional::new(SETTINGS, cell.clone(), None, 2, false);
+        let regional = Regional::new(SETTINGS, cell.clone(), None, -6.0, false);
         // The bottom left quarter of the picture.
         let rect = NormRect::new(0.0, 0.5, 0.5, 1.0).unwrap();
         cell.set(sat_teleop_policy::region::Timed {
@@ -584,28 +583,8 @@ mod tests {
         let mut frame =
             gst_video::VideoFrameRef::from_buffer_ref_writable(buffer.get_mut().unwrap(), &video)
                 .unwrap();
-        let stride = usize::try_from(frame.plane_stride()[0]).unwrap();
-        for (y, row) in frame
-            .plane_data_mut(0)
-            .unwrap()
-            .chunks_mut(stride)
-            .enumerate()
-        {
-            for (x, pixel) in row.iter_mut().enumerate() {
-                *pixel = if (x + y) % 2 == 0 { 0 } else { 200 };
-            }
-        }
 
-        regional.frame_hook()(&mut frame);
-
-        let luma = frame.plane_data(0).unwrap();
-        let at = |x: usize, y: usize| luma[y * stride + x];
-        assert_eq!(
-            at(101, 300),
-            200,
-            "inside the region the picture is untouched"
-        );
-        assert_eq!(at(401, 300), 100, "outside it each block is its average");
-        assert_eq!(at(400, 300), 100);
+        assert_eq!(regional.frame_hook()(&mut frame), vec![(0, 180, 320, 180)]);
+        assert!(cell.pilot_in_use().is_some(), "the box is kept");
     }
 }

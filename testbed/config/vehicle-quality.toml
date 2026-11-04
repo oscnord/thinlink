@@ -41,12 +41,12 @@ gap_after_ms = 1500
 
 # Regional video, off unless set. `detector` boxes what a small model finds: `kinds` (person, bicycle, car, motorcycle, bus,
 # truck, boat; default just person) picks which (`just model`
-# fetches it, the runtime image carries it at this path). `soften_factor` 2 to 4 also keeps the pilot's
-# box from QGroundControl sharp and softens the rest in blocks of that many pixels; 1 (the default)
-# softens nothing and the pilot's box is not kept. The limits (how long a region lasts, the
+# fetches it, the runtime image carries it at this path). `roi_qp_offset` (-51 to 0) also keeps the pilot's
+# box from QGroundControl and has the encoder quantise that many steps finer inside it; 0 (the default)
+# changes nothing and the pilot's box is not kept. The limits (how long a region lasts, the
 # detector's rate and score) are [region] of limits.toml.
 # [region]
-# soften_factor = 2
+# roi_qp_offset = -6
 # detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320, kinds = ["person"] }
 
 # MAVLink bridge (docs/drone.md#mavlink-path): SITL's serial 0 in this network namespace (a TCP autopilot must

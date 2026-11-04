@@ -26,11 +26,11 @@ max_age_s = 120
 min_free_bytes = 4194304
 gap_after_ms = 1500
 
-# Regional video: the picture outside the pilot's box and the people found is softened in blocks of
-# this many pixels on a side (2 to 4); without it (1) nothing is softened and the pilot's box is not
-# kept. The limits (how long a region lasts, the detector's rate and score) are [region] of limits.toml.
+# Regional video: the encoder quantises this many steps finer inside the pilot's box and the people
+# found (-51 to 0); without it (0) the pilot's box is not kept. The limits (how long a region lasts,
+# the detector's rate and score) are [region] of limits.toml.
 [region]
-soften_factor = 2
+roi_qp_offset = -6
 detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
 
 [mavlink]

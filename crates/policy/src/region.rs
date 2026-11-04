@@ -104,7 +104,7 @@ fn scale(fraction: f32, side: usize, round: fn(f32) -> f32) -> usize {
 /// The pilot's region and the people the detector found, shared between the vehicle's control loop,
 /// its detector and its sender. Clones share all of it and the clock: `Timed::at_ms` and `now_ms`
 /// count from the cell's creation, so every side of `active` reads the same monotonic time. The
-/// regions the sender keeps sharp and the pilot's box the control loop confirms both come from
+/// regions the sender favours and the pilot's box the control loop confirms both come from
 /// here, so they cannot disagree.
 #[derive(Debug, Clone)]
 pub struct RegionCell {
@@ -117,7 +117,7 @@ pub struct RegionCell {
 
 /// The follow of the pilot's box: the box that began it, where the target is now and how follows
 /// have ended. Off unless `RegionCell::enable_follow` was called, and then the pilot's box is
-/// only where the follow starts: what is kept sharp and confirmed is where the target is now.
+/// only where the follow starts: what is favoured and confirmed is where the target is now.
 #[derive(Debug, Default)]
 struct Follow {
     enabled: bool,
@@ -232,7 +232,7 @@ impl RegionCell {
     }
 
     /// The box the vehicle confirms to the ground: where the target is now when following, else
-    /// the pilot's box the sender keeps sharp.
+    /// the pilot's box the sender favours.
     pub fn confirmed(&self) -> Option<NormRect> {
         if locked(&self.follow).enabled {
             return self.followed();
@@ -256,7 +256,7 @@ impl RegionCell {
             .collect();
     }
 
-    /// The regions to keep sharp now (see [`active`]).
+    /// The regions to favour now (see [`active`]).
     pub fn regions(&self) -> Vec<NormRect> {
         self.active_with(self.pilot_box())
     }
@@ -298,10 +298,10 @@ impl RegionCell {
     }
 }
 
-/// The regions to keep sharp: the pilot's first while it is at most `pilot_ttl_ms` old (a TTL of 0
+/// The regions to favour: the pilot's first while it is at most `pilot_ttl_ms` old (a TTL of 0
 /// means there is no pilot box), then the
 /// detections at most `detection_ttl_ms` old, largest first, `max_regions` in all. Empty when
-/// together they cover more than `max_area_percent` of the picture, since softening the rest then
+/// together they cover more than `max_area_percent` of the picture, since favouring them then
 /// gains nothing.
 pub fn active(
     pilot: Option<Timed>,

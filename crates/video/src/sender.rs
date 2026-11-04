@@ -54,14 +54,23 @@ pub type Frame<'a> = gst_video::VideoFrameRef<&'a mut gst::BufferRef>;
 const STAMP_PROBE: gst::PadProbeType =
     gst::PadProbeType::BUFFER.union(gst::PadProbeType::EVENT_DOWNSTREAM);
 
-/// Called with each raw frame before the stamp is drawn into it, in the streaming thread.
-pub type FrameHook = Arc<dyn Fn(&mut Frame) + Send + Sync>;
+/// A region of a frame in pixels: x, y, width, height.
+pub type Roi = (u32, u32, u32, u32);
+
+type HookFn = dyn Fn(&mut Frame) -> Vec<Roi> + Send + Sync;
+
+/// Called with each raw frame before the stamp is drawn into it, in the streaming thread. The
+/// regions it returns go on the frame's buffer as `GstVideoRegionOfInterestMeta`, for the encoder.
+pub type FrameHook = Arc<HookFn>;
 
 /// What the caller adds to the sender: a hook on every raw frame and taps off the tee.
 #[derive(Clone, Default)]
 pub struct Hooks {
     pub frame: Option<FrameHook>,
     pub taps: Vec<Arc<Tap>>,
+    /// How much finer than elsewhere the encoder quantises inside the hook's regions, as a
+    /// negative quantiser offset; 0 is off. Only `satx264enc` reads it.
+    pub roi_qp_offset: f32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -702,7 +711,7 @@ fn build(
     if config.encoder == EncoderWish::Hardware && kind == Encoder::X264 {
         eprintln!("no v4l2h264enc on this board: encoding with x264");
     }
-    let encoder = make_encoder(kind, rung, stats)?;
+    let encoder = make_encoder(kind, rung, hooks.roi_qp_offset, stats)?;
     let sink = pacer::sink(config.destination, stats)?;
     chain.extend([
         gst::ElementFactory::make("videoscale").build()?,
@@ -769,6 +778,7 @@ fn build(
 fn make_encoder(
     kind: Encoder,
     rung: Rung,
+    roi_qp_offset: f32,
     stats: &Arc<SenderStats>,
 ) -> Result<gst::Element, MediaError> {
     let encoder = match kind {
@@ -779,6 +789,7 @@ fn make_encoder(
                 .property("bitrate", rung.encoder_kbit())
                 .property("vbv-buf-capacity", rung.vbv_ms())
                 .property("refresh-ms", rung.keyframe_interval_ms)
+                .property("roi-qp-offset", roi_qp_offset)
                 .build()?
         }
         Encoder::V4l2 => gst::ElementFactory::make("v4l2h264enc")
@@ -1032,7 +1043,7 @@ fn stamp_next(
     buffer: &mut gst::Buffer,
     format: &Mutex<Option<gst_video::VideoInfo>>,
     stats: &SenderStats,
-    hook: Option<&(dyn Fn(&mut Frame) + Send + Sync)>,
+    hook: Option<&HookFn>,
     capture: Option<&CaptureClock>,
 ) {
     let frame_id = FrameId(stats.next_frame_id.fetch_add(1, Ordering::Relaxed));
@@ -1058,7 +1069,7 @@ fn repeat_frozen(
     frozen: &mut Option<gst::Buffer>,
     format: &Mutex<Option<gst_video::VideoInfo>>,
     stats: &SenderStats,
-    hook: Option<&(dyn Fn(&mut Frame) + Send + Sync)>,
+    hook: Option<&HookFn>,
     capture: Option<&CaptureClock>,
 ) {
     let Some(held) = frozen.as_ref() else {
@@ -1093,18 +1104,20 @@ fn stamp_buffer(
     video: &gst_video::VideoInfo,
     frame_id: FrameId,
     capture_ms: u64,
-    hook: Option<&(dyn Fn(&mut Frame) + Send + Sync)>,
+    hook: Option<&HookFn>,
 ) -> Result<(), MediaError> {
     let mut frame = gst_video::VideoFrameRef::from_buffer_ref_writable(buffer.make_mut(), video)?;
-    if let Some(hook) = hook {
-        hook(&mut frame);
-    }
+    let regions = hook.map(|hook| hook(&mut frame)).unwrap_or_default();
     let geometry = luma_geometry(&frame)?;
     let stamp = Stamp {
         frame_id,
         capture_ms: CaptureMs::from_unix_ms(capture_ms),
     };
     stamp::draw(frame.plane_data_mut(0)?, geometry, stamp)?;
+    drop(frame);
+    for region in regions {
+        gst_video::VideoRegionOfInterestMeta::add(buffer.make_mut(), "region", region);
+    }
     Ok(())
 }
 
@@ -1351,7 +1364,10 @@ mod tests {
             .unwrap();
         let mut buffer = gst::Buffer::with_size(video.size()).unwrap();
         // A hook that paints the whole luma plane, the stamp's rows included.
-        let paint = |frame: &mut Frame| frame.plane_data_mut(0).unwrap().fill(200);
+        let paint = |frame: &mut Frame| {
+            frame.plane_data_mut(0).unwrap().fill(200);
+            vec![(1, 2, 3, 4)]
+        };
         stamp_buffer(&mut buffer, &video, FrameId(5), 1_234_567, Some(&paint)).unwrap();
 
         let frame =
@@ -1362,6 +1378,14 @@ mod tests {
         let stamp = stamp::read(luma, geometry).expect("the stamp survives the hook");
         assert_eq!(stamp.frame_id, FrameId(5));
         assert_eq!(stamp.capture_ms, CaptureMs::from_unix_ms(1_234_567));
+        let region = buffer
+            .meta::<gst_video::VideoRegionOfInterestMeta>()
+            .unwrap();
+        assert_eq!(
+            region.rect(),
+            (1, 2, 3, 4),
+            "the hook's region is on the buffer"
+        );
     }
 
     #[test]

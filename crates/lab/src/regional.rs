@@ -7,7 +7,7 @@
 //!
 //! 1. a box is tracked the way `QGroundControl` asks for it (`CAMERA_TRACK_RECTANGLE` to the
 //!    adapter's camera component, after `SET_MESSAGE_INTERVAL` for the tracking status), and the
-//!    vehicle softens everything outside it;
+//!    encoder spends more bits inside it;
 //! 2. tracking is stopped: the plain picture at the same rung;
 //! 3. the plain picture one rung down (the vehicle's test hook `POST /video/rung/1`).
 //!
@@ -525,7 +525,7 @@ impl Run<'_> {
         self.camera_command(MavCmd::MAV_CMD_CAMERA_TRACK_RECTANGLE, [x0, y0, x1, y1]);
         let active = self.wait_status(true);
         let detail = if active {
-            "the status went active once the vehicle confirmed the box it keeps sharp"
+            "the status went active once the vehicle confirmed the box it favours"
         } else {
             "the status never went active: the vehicle did not confirm the box"
         };
@@ -665,8 +665,8 @@ impl Run<'_> {
                 .metrics
                 .insert("vehicle_rss_mb", rss_kb / 1024.0);
         }
-        if let Some(ms) = reading(after, "/region/soften/p95_ms") {
-            self.results.metrics.insert("soften_ms_p95", ms);
+        if let Some(ms) = reading(after, "/stages/encode/p95_ms") {
+            self.results.metrics.insert("encode_ms_p95", ms);
         }
         let ran = reading(after, "/detector/runs").unwrap_or(0.0) > 0.0;
         if let (true, Some(ms)) = (ran, reading(after, "/detector/ms/p95_ms")) {
