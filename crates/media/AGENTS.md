@@ -1,36 +1,42 @@
 # AGENTS.md: crates/media
 
-`thinlink-media` (L2) is what the drone adds to the video path. It builds on `thinlink-video` (which knows nothing of drones) through its two extension points, the sender's frame hook and taps and the output's decoration, and on `thinlink-policy` for the regions, kinds, drawing, aim ring and inset logic. It owns regional encoding and outlines with the detector and tracker frames, the landing tag feed, the predictive display and the detail inset the ground draws, and what retrieval asks of adaptation. The apps wire it to the video pipelines. The name stays: it is still the drone's use of the picture, and renaming would touch every app and lab import for no gain. See the root `AGENTS.md`, `crates/video/AGENTS.md`, `docs/testbed.md` and `docs/drone.md#regional-video`.
+`thinlink-media` (L2) owns the drone's use of video frames. It connects `thinlink-policy` decisions to the hooks and taps in `thinlink-video`. Apps wire the pipelines and run detector workers.
 
-## Wiring
+Read the root `AGENTS.md`, `crates/video/AGENTS.md`, `docs/testbed.md` and `docs/drone.md#regional-video`.
 
-- `hooks::sender_hooks(regional, tags)` builds the sender's `Hooks`: the `Regional` frame hook and `roi_qp_offset` plus the taps of the detector, the tracker (when they run) and the tag feed.
-- The ground builds a `Decoration` around `decorate::draw` and `decorate::NOTE`, and serves `InsetCount` next to the output's counters as `video.inset_frames`.
-- `retrieval::conditions` reads the vehicle's adaptation (`AdaptStats`) into the `Conditions` retrieval asks (`thinlink_policy::retrieval::permit`); the video crate only reserves a flow (`reserved` in the budget and the controller) and does not know what uses it.
+## Code map
 
-## Pipelines
-
-- `sender` regional video (`region.rs`; limits in `[region]` of `testbed/limits.toml`, validated by `RegionSettings::validate`; `roi_qp_offset` is in `[region]` of the vehicle config, -51 to 0, absent or 0 is off and `validate_roi_qp_offset` refuses the rest. With it off the pilot's box has a ttl of 0 (never kept or confirmed) and detections are still outlined):
-  - Order in the stamp probe: read `capture_ms`, then `Regional::shape` returns `RegionCell::regions()` as pixel rectangles when the offset is negative. It outlines detections in their kind's colour (`Kind::yuv`; 2 px at 640 wide, scaled with the width) and tags each with its kind's letter at the top-left corner (`policy::draw`, pixel size the outline's thickness). The sender draws the stamp and attaches the rectangles as `GstVideoRegionOfInterestMeta`. Region offsets leave the picture's pixels unchanged. The pilot's box is not drawn; QGroundControl draws it.
-  - The regions come from `RegionCell`, which the vehicle's control loop shares: the pilot's box, the detections and the limits. The control loop sends `RegionCell::confirmed()` to the ground. Without following, this uses `pilot_in_use()` to check the box against the active regions. Never compute the regions anywhere else.
-  - Detector branch (only when `[region] detector` is in the vehicle config and its model loaded: the vehicle loads it before the sender starts, and builds no branch otherwise): the tee's third branch, `queue leaky=downstream max-size-buffers=1` with `copy_frames` thinning to `detector_fps` and copying, `videoscale` -> `videoconvert` -> RGB `input` x `input` capsfilter -> `appsink max-buffers=1 drop=true sync=false`. The callback copies the frame into a `DetectorFrame` and `offer`s it, replacing the one still waiting: a busy detector skips to the newest frame and never holds the live video. The detector runs in `thinlink-vehicle` (`thinlink-detect` is a sibling crate that media cannot depend on); it publishes with `Regional::detected`. A model that does not load sets `detector.state` to `failed: <cause>` and the video goes on.
-  - Follow branch (only with `Regional::new(.., follow: true)`, `[region] follow` of the vehicle config): the tee's fourth branch, `queue leaky=downstream max-size-buffers=1` with `copy_frames` thinning to `follow_fps`, `videoscale` -> `videoconvert` -> `GRAY8` at `follow::WIDTH` x `follow::HEIGHT` -> `appsink max-buffers=1 drop=true sync=false`. The callback offers the luma (`FollowFrame`, only if it is exactly one picture) to `Regional::next_follow_frame`, the same newest-wins `Handoff` the detector has, so a slow tracker skips frames and never holds the live video. The tracker runs in `thinlink-vehicle`. The followed box (`RegionCell::followed`) is outlined last, in `follow::YUV` with an F tab, a colour no kind has. `[region]` of the limits file adds `follow_fps` (1-30, default 10), `follow_min_score` (above 0, at most 1, default 0.6) and `follow_lost_frames` (1-60, default 3), validated by `RegionSettings::validate`.
-  - Tag branch (only when `[landing] target` is on, `tags::TagFeed` passed to `sender::run`): a tee branch of its own, `queue leaky=downstream max-size-buffers=1` with `copy_frames` thinning to `tag_fps`, `videoscale` -> `videoconvert` -> GRAY8 capsfilter of width `tag_width` (the height keeps the picture's shape) -> `appsink max-buffers=1 drop=true sync=false`. The callback packs the rows without padding into a `TagFrame` (with `Instant::now()` as its capture time: the frame has just left the tee) and `offer`s it, replacing the one still waiting, so a busy tag thread skips to the newest frame and the live video never waits. The tag thread is in `thinlink-vehicle`.
-  - Metrics: `region` (`active`, the number of regions given to the encoder in the last frame; `shape_failures`, frames whose hook failed and returned no regions, which went on with their stamp), `detector` (`boxes`, the active detections with their kind; `state`: `off`, `running` or `failed: <cause>`, `runs`, `found` (people and vehicles), `ms` stage percentiles) and `follow` (`state`: `off`, `idle` or `following`; `frames`, `score` of the last match, `lost` and `last_lost` (`score`, `edge` or `flat`), `target` as x0, y0, x1, y1, `ms` stage percentiles).
-
-- Taps: the detector, tracker and tag taps are `sender::Tap`s that `Regional` and `TagFeed` own (`taps()`, `tap()`); their consumers turn a `TapFrame` into a `DetectorFrame`, `FollowFrame` or `TagFrame` (`at_ms` is the cell's time minus how long ago the frame left the tee). `next_follow_frame` skips a buffer that is not exactly the picture the tracker works on, `TagFeed::next_frame` removes row padding.
-- `decorate` (the ground): With `[camera] hfov_deg` (`CameraConfig`) and a `Predictive` the output also draws `thinlink_policy::predict::mark` into each current frame (aim ring and horizon, `mark::draw`) right after the state stamp and before the overlay, so the label is drawn over it; the inputs are read per frame and any missing input draws nothing. The detail inset (`inset`: `Image`, a retained crop decoded with limits and scaled once to `thinlink_policy::inset::fit`'s size as I420, and `DetailCell`, the newest `Image` with the age it arrived with, aged by the time held) is drawn by `Pipeline::push` after the ring: `inset::place` decides from the frame's state and the crop's age, so only a `Live` or `LowRate` frame and a crop under 30 s old get it, and the crop's age rides in the buffer's offset (`NO_INSET` otherwise) to a probe that sets a second `textoverlay`, top right, silent without an inset, to `DETAIL <age> s` in the live label's colour, in the same streaming thread as the live label; `inset_frames` counts the frames that had it. Never draw it into another state, over the stamp rows or without its label.
-- `retrieval::conditions` is the vehicle's adaptation as retrieval needs it to decide; `AdaptSnapshot::reserve_fits` (a flow of the allowance fits beside a normal rung) comes from `Controller::reserve_fits`.
+| File | Main pieces |
+|---|---|
+| `src/hooks.rs` | `sender_hooks`, builds sender `Hooks` |
+| `src/region.rs` | `Regional`, `RegionSettings`, `DetectorFrame`, `FollowFrame` |
+| `src/tags.rs` | `TagFeed`, `TagFrame`, row-padding removal |
+| `src/decorate.rs` | `draw`, `NOTE`, `Predictive`, `InsetCount` |
+| `src/inset.rs` | `Image`, `DetailCell`, bounded crop decoding |
+| `src/retrieval.rs` | `conditions`, adaptation inputs for retrieval policy |
 
 ## Invariants
 
-- Everything drawn into a frame is drawn before the stamp (the hook) or after the state stamp and before the labels (the decoration); never over the stamp rows.
-- No tap or hook may make the live video wait; a slow reader skips to the newest frame.
+- Keep detection and tracking workers in `thinlink-vehicle`. Do not depend on sibling `thinlink-detect` from this crate.
+- `RegionCell` owns region selection. `Regional` converts `regions()` to encoder rectangles; the control loop sends `confirmed()`. Never duplicate that selection here.
+- Validate `[region] roi_qp_offset` with `validate_roi_qp_offset`. Zero disables encoder offsets and pilot-box retention; detection outlines still draw. Keep pixel drawing separate from quantiser offsets.
+- Draw hook content before the stamp. Draw ground decoration after the state stamp and before labels. Never draw over stamp rows.
+- Keep frame hooks cheap and taps nonblocking. Slow consumers skip to the newest frame. Hook failures count and return no regions without stopping video.
+- Honour tap stride. `TagFeed::next_frame` removes row padding; `next_follow_frame` rejects a buffer with the wrong picture size. Preserve the tee time when deriving frame age.
+- A detector model load failure must leave video running. Build its tap only when the model loads.
+- `inset::Image` checks decode limits before allocation. `DetailCell` ages the retained image by monotonic elapsed time.
+- Use `thinlink_policy::inset::place` for inset eligibility. Draw an inset only on `Live` or `LowRate` frames, outside stamp rows and with its age label.
+- Keep the decoration note tied to its frame. `decorate::NOTE` supplies label text; `thinlink-video` owns the overlay element.
+- `retrieval::conditions` adapts `AdaptStats` into policy inputs. Keep retrieval-specific decisions out of the video crate.
 
 ## Checks
+
+Run in the build container:
 
 ```sh
 just check
 just lab-up && just lab-check skeleton lan
 just regional=1 sim-up && just lab-check follow lan
 ```
+
+Follow the root resource rules between lab and simulation runs. Test region geometry and frame-layout rejection through observable outputs.

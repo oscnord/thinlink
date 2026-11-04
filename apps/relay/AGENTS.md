@@ -1,11 +1,17 @@
 # AGENTS.md: apps/relay
 
-`thinlink-relay` (L4) is the relay's entry point. It stays thin: config loading and wiring over `thinlink-video`.
+`thinlink-relay` (L4) wires ingress and feedback from `thinlink-video` with the job API from `thinlink-detail`. Keep their behavior in those crates.
 
-- `thinlink-relay run --config <toml> --metrics-addr <addr>` runs the ingress and the feedback endpoint under `thinlink_video::supervise` on threads and serves `GET /metrics` on the main thread. If the metrics endpoint cannot bind, the process exits.
-- Config: `testbed/config/relay.toml` (`listen` on the overlay address, `publish` RTSP URL of the local MediaMTX, and `[feedback]`: `listen`, the overlay address and port probes arrive on, and `vehicle`, the only address whose probes are answered; and `[detail]`: `vehicle`, the overlay address the vehicle polls and uploads on, and `ground`, the `ground_net` address the ground asks and fetches on); unknown keys are rejected. In the testbed, metrics listen on `192.168.233.20:9100`.
-- The ingress binds `udpsrc` to the overlay address only, so RTP cannot arrive outside WireGuard, and so does the feedback endpoint. Until `wg0` is up the binds fail and each restarts every second.
-- The job API (`thinlink_detail::relay`, `docs/drone.md#retained-detail`) binds exactly those two addresses, never every address, on threads restarted every second until they bind (the overlay address is not up at start). Every request, and `GET /metrics`, needs the bearer token of `--token-file` (without one the metrics endpoint listens on 127.0.0.1 only and the job API does not start); the vehicle's listener answers only the vehicle's routes and the ground's only the ground's.
-- Metrics JSON: `rtp_packets`, `rtp_bytes` (received, before the jitter buffer), jitter buffer `pushed`, `lost`, `late`, `duplicates` (totals across restarts), `avg_jitter_us`, pipeline health (`runs`, `running`, `last_error`), and `feedback`: `answered`, `refused` (not a probe, or not from the vehicle), `send_failed` and its health; `detail`: the job API's `requests`, `rejected` (status 400 and up), `created`, `completed`, `failed`, `cancelled`, `chunks`, `chunk_bytes` and the jobs held by state.
+## Code and rules
 
-Use `anyhow` with `.context()`. Pipelines belong in `thinlink-video`. Documented in `docs/testbed.md`.
+- `src/main.rs` owns `Config`, `Metrics`, `load` and worker startup. Config comes from `testbed/config/relay.toml`.
+- Run ingress and feedback under `thinlink_video::supervise`. Overlay binds may fail until `wg0` is available; preserve retry behavior and health reporting.
+- Keep ingress and feedback on their configured overlay addresses. The job API uses separate vehicle and ground listeners, each with its own routes.
+- Start the job API only with `--token-file`. Pass that token to the API and metrics service. Retry a stopped API using the same shared `Relay`.
+- A metrics bind failure exits the process. Reject unknown config keys.
+
+## Checks
+
+Use the build container for this GStreamer-linked app. Run `just check` and the affected `skeleton`, `adaptation` or `retrieval` lab check under the root verification rules. Config tests live in `src/main.rs`.
+
+See `docs/testbed.md` and `docs/drone.md#retained-detail`.

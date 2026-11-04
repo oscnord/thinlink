@@ -1,67 +1,46 @@
 # AGENTS.md: crates/video-core
 
-`thinlink-video-core` (L0) holds the pure logic of the video path and knows nothing about drones: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission (`pace`), the byte-rate token bucket (`rate`), the uplink budget (`budget`), the adaptation ladder and its controller (`adapt`) and the bearer token check (`token`). It is the core of the workspace with `crates/video`, and what builds on it (`crates/policy`, `crates/control`, `crates/detail`, `crates/media`) is the drone. It depends only on `std`, `thiserror` and `subtle` (the token comparison): no I/O, no clock reads (time arrives as an argument), no GStreamer, MAVLink, HTTP, filesystem or sockets. The uplink budget and the controller reserve bandwidth for one secondary flow ahead of the video (`reserved`) without knowing what uses it. See the root `AGENTS.md`.
+`thinlink-video-core` (L0) owns pure video decisions. It depends on `std`, `thiserror` and `subtle`. Read the root `AGENTS.md`.
 
-## In-picture stamp (`stamp`)
+## Code map
 
-The stamp puts frame identity and capture time into the video itself, so the lab can measure frame age and new-frame cadence end to end.
+| File | Main pieces |
+|---|---|
+| `src/stamp.rs` | `Stamp`, `StateStamp`, `FrameId`, `CaptureMs`, `PlaneGeometry`, drawing and reading |
+| `src/freshness.rs` | `classify`, `cadence_ms`, `next_change_ms`, `LabelDeadline` |
+| `src/pace.rs` | `Admission`, `rate`, whole-frame admission |
+| `src/rate.rs` | `TokenBucket`, `Priority` |
+| `src/budget.rs` | `Budget`, `Usage`, wire-rate accounting |
+| `src/adapt.rs` | `Ladder`, `Controller`, `Feedback`, `Decision` |
+| `src/token.rs` | `Token`, `admit`, `listen_address`, `exposed` |
 
-- Payload, 9 bytes: `frame_id: u32` big endian, `capture_ms: u32` (UNIX epoch milliseconds modulo 2^32) big endian, then `crc8` over the first 8 bytes: CRC-8/I-432-1 (polynomial 0x07, init 0x00, xorout 0x55), so an all-zero or all-0xFF payload, a uniform stamp area, never validates. 72 bits, MSB first.
-- Drawn into the luma plane of I420 frames: 24 columns x 3 rows of square blocks at the top-left, row-major, one bit per block. Block side is `width / 24` (integer division), minimum 8 px. Bit 1 is luma 235, bit 0 is luma 16.
-- `draw` rejects frames narrower than 192 px or shorter than 3 blocks, a stride below the width, overflowing geometry and buffers shorter than `stride * height`, all as `StampError`.
-- `read` samples the centred half-size square of each block (mean above 128 is 1) and returns `None` on a CRC mismatch or bad geometry.
-- `check_size` tells whether a frame size can carry the stamp; `CaptureMs::from_unix_ms` reduces UNIX milliseconds to the stamp's 32-bit clock.
-- An 8-bit CRC still passes about 1 in 256 corrupt reads, for example of concealed frames after packet loss. Readers must bound the age they accept: `plausible_age` returns the age only within 0 to `MAX_PLAUSIBLE_AGE_MS` (60 s).
-- `age_ms(receiver_ms, stamp)` is `receiver_ms.wrapping_sub(capture_ms)`. It is only valid when both sides share a clock (all testbed containers do); across machines a clock mapping with uncertainty is required (`docs/video.md#frame-age-and-clocks`).
+| Read | Subject |
+|---|---|
+| `docs/video.md#frame-age-and-clocks` | Stamp age and clock uncertainty |
+| `docs/video.md#freshness-thresholds` | `[freshness]` in `testbed/limits.toml` |
+| `docs/video.md#adaptation-thresholds` | `[adapt]` in `testbed/limits.toml` |
 
-## State stamp (`stamp`)
+## Invariants
 
-The ground's freshness output draws what it shows into each frame, so the lab can read the state from the video itself.
-
-- `StateStamp { state, age_10ms }`: 24 bits, MSB first, as one more row of 24 blocks right below the stamp (same block side and luma levels; the stamp stays as it is): 4 bits the state's code (`freshness::State::code`, 1-6), 16 bits the newest frame's age in 10 ms units, clamped (all ones also when unknown), 4 bits CRC-4/INTERLAKEN (polynomial 0x3, initial value and final xor 0xF) over the first 20. Codes 0 and 7-15 are unused, so a uniform black or white row never reads as a state.
-- `draw_state` and `read_state` reuse the block grid; they need 4 rows of blocks (`check_state_size`). A CRC-4 lets about 1 in 16 corrupt rows through, and any picture's row below the stamp reads as a state now and then, so a state stamp means something only in the ground output's video.
-
-## Freshness (`freshness`)
-
-`classify(Thresholds, Observed) -> State` decides what the ground's video output shows: `Live`, `LowRate`, `Stale`, `Frozen`, `Disconnected` or `AgeUnknown`. The ground passes in elapsed milliseconds and counts, never a clock.
-
-- In order: `Disconnected` when the source pipeline is down or no frame at all arrived for `disconnected_after_ms`; `AgeUnknown` when fewer than `min_readable_percent` of the recent frames had a readable stamp; `Frozen` when frames keep arriving (one within `frozen_after_ms`, at a low rate plus the frame interval) but none was new for longer than that; `AgeUnknown` without a clock bound; `Stale` when the newest new frame's age plus the clock bound exceeds the stale threshold; `LowRate` when the source's frame interval exceeds `low_rate_interval_ms`; otherwise `Live`. At a low rate the stale threshold is `low_rate_stale_after_ms`: such a picture ages by a whole frame interval between frames, which against `stale_after_ms` would flicker between Live and Stale, and it is never called Live. So only video provably younger than its stale threshold is Live or LowRate, and a blackout (nothing arrives) shows Stale, then Disconnected, never Frozen.
-- The frame interval is `cadence_ms` of the new frames' ids and capture times: the lower median of the capture time per frame id between consecutive frames (a pair whose id does not advance is skipped, so unreadable frames between two readable ones do not slow the source) whose later frame was captured within a second of the newest. One gap at full rate (a lost frame) leaves it at the full rate's interval, so a stream that then stops reads Stale at `stale_after_ms`, not at the low-rate threshold; after a slowdown it reads slow within two slow frames.
-- `next_change_ms(Thresholds, Observed)` says how soon `classify` may give another state if no frame arrives: the earliest of the newest frame's age plus the clock bound passing the stale threshold, the time since the newest new frame passing the frozen threshold and the time since the last frame passing `disconnected_after_ms` (`None` when none lies ahead). The output repeats its last frame no later than that.
-- `LabelDeadline` is the check at the other end: a current frame's state holds until the moment `next_change_ms` gave when it was decided, and a frame whose first packet is sent after that moment is late in all its packets (the output drops it). Times are on one clock, in any unit.
-- The thresholds come from `[freshness]` of `testbed/limits.toml`, validated by `thinlink-video` (`docs/video.md#freshness-thresholds` explains them).
-
-## Byte-rate budget (`rate`)
-
-`TokenBucket` limits a byte rate and keeps headroom for important traffic: it refills at `bytes_per_s` up to one second of budget; `Priority::Preferred` may spend it down to empty, `Priority::Bulk` only down to half. Over budget, bulk is refused first while preferred traffic still fits. `take(now, bytes, priority)` takes time as an `Instant` argument and never reads a clock; time going backwards refills nothing. `set_rate` changes the rate from then on. The vehicle's telemetry budget (`thinlink-control`) uses it.
-
-## Uplink budget (`budget`)
-
-`Budget::split(total, usage, reserved_wanted)` divides an uplink rate, in bytes per second on the wire, in order: control (the larger of the reserve, the probes and challenges at their largest, and what the vehicle measured of its probes and every control reply), telemetry (`telemetry_percent` of the MAVLink frame bytes the autopilot offers, the cap until that is measured, between `telemetry_floor` and `telemetry_cap`, plus the headers of the datagrams the vehicle measured it sending), retrieval (what it asks for, zero while idle) and video (the rest). Each takes at most what is left, so the shares never add up to more than the total, and at a small total video gets nothing. `Budget::telemetry_cap(total, usage)` is the cap for the telemetry bucket in frame bytes: the telemetry share of a measured uplink, the configured cap while there is none, and never below the floor, so the vehicle's state keeps flowing however short the uplink.
-
-- `wire_bytes(payload)`: a datagram on the wire, Ethernet (14), outer IPv4 (20) and UDP (8), `WireGuard`'s data header (16) and tag (16) around the inner IPv4 (20) and UDP (8) headers and the payload, padded to 16 bytes. `DATAGRAM_OVERHEAD` (110) is the same for a datagram of unknown size, its padding taken at the mean (7.5 bytes, rounded up). `video_bytes_per_s` adds RTP's 12-byte header and those headers per packet to a bitrate.
-
-## Adaptation (`adapt`)
-
-A `Ladder` of `Rung`s (size, frame rate, bitrate, `Group`: normal, constrained, awareness only), best first, each sending less than the one above. `Controller::observe(feedback, now_ms) -> Decision` walks it from the relay's answers; the caller also calls it without one at least every probe interval, so silence is noticed. Latency first: it keeps the uplink queue empty and only then raises picture quality. The thresholds are `[adapt]` of `testbed/limits.toml`, validated by `thinlink-video` (`docs/video.md#adaptation-thresholds` explains them).
-
-- Queue delay is the smaller round trip of the newest two answers minus the smallest of the `min_rtt_window_ms` window: one late answer is jitter, two in a row are a queue. Its trend, the least-squares slope over `trend_window_ms` of probes sent since the last change (leaving out the first, whose filter partner came before the change), rises, drains or stands (`trend_ms_per_s`), and a standing one may still fall.
-- Above `queue_delay_high_ms`, rising: the uplink carries less than is sent, so the uplink measured with that answer (`Feedback::uplink_bytes_per_s`) is what it carries. Cut to the best rung that fits `capacity_fit_percent` of it after the reserve (`budget`), at least one rung, so the rest drains the queue, and remember that capacity for `capacity_hold_ms` (with nothing measured yet, cut one rung). Standing and not falling at all: cut one rung. Not falling at all after a queue cut: the cut changed nothing, so the path's base delay grew (a route change); take the cut back (`BaseShift`) and count round trips only from then on, at most once per base window. Falling, however slowly, or draining: hold.
-- Deep: one answer to a probe sent since the last change more than twice `queue_delay_high_ms` late (jitter never comes close), unless that change was a queue cut. It is cut as rising at once, also within the change interval, since it already shows the last change. Any answer at least `drain_above_ms` late is a `Drain`, with a cut when one is due and otherwise at the rung it has (within the change interval, or while a cut drains the queue slowly), except after a drain that drained nothing until the rung changes or the delay falls under the threshold (the base grew): no video until an answer to a probe sent since shows the queue at the base (`Resume`), or until the queue delay is not draining over the trend window (no queue then: the base grew, and the base-shift rule takes the cut back with the video running). Answers to probes sent before the drain come back through the queue that held them, so they measure the uplink again (the lower measurement counts: at a deep cut the relay's windows may reach back to before the queue; a probe sent during the pause measures nothing, since only the little the vehicle sent meanwhile got through just ahead of it), and the video resumes at the best rung that fits, a `Step` when that is lower. Silence ends a drain too: the floor, with video.
-- Loss in GCC's bands (draft-ietf-rmcat-gcc-02, section 6), over `loss_window_ms` and at least `loss_min_packets` video packets since the last change: below `loss_low_percent` a rung up may come, above `loss_high_percent` one rung down, in between hold. Fewer packets say nothing, which is what keeps random loss from pinning the ladder.
-- One rung up after `dwell_ms` of healthy answers (queue delay at most `queue_delay_base_ms`, loss low or unknown) to probes sent since the last change, unless the capacity measured cannot carry the rung and that rung's hold has not run out. Each rung's hold starts at `capacity_hold_ms` and doubles, counted from that cut, up to `capacity_hold_max_ms`, whenever a climb to it is cut within a dwell; a later cut that measures at least 10 % more uplink than at the failure resets it (less is within a measurement's noise, about 7 %).
-- A climb into a rung that costs more than `PROBE_PERCENT` (110 %) of the uplink measured at the last cut is paced: the rung starts at 110 % of the uplink, and every `min_change_interval_ms` of healthy answers the ceiling goes up by the same factor (`Reason::Probe`, `Controller::ceiling_kbit`; not a rung change) until it reaches the rung's own bitrate. A queue builds for about a round trip before the controller sees it, so it peaks at about the round trip times the excess over the uplink. A cut that follows a climb or a raise within `dwell_ms` fails the rung, whether it measured the uplink or not. The capacity is kept until a later cut measures it again or a base shift clears it, however old: with none (the start, or after a base shift) the climb is not paced.
-- No answer for `stale_after_ms`, once one came: the floor at once (before the first answer the start rung stands). Unless the last answer showed a deep queue, the silence is an outage: the rung before it and the capacity are kept, the first answer after the fall is `LinkBack` (the sender's next frame is a keyframe), and `outage_recovery_ms` of healthy answers after it bring that rung back (`Recovered`), or the best below it that the capacity carries; like a climb, a jump back cut within a dwell doubles that rung's hold. Otherwise at most one change per `min_change_interval_ms`, a deep queue aside; every signal counts only answers to probes sent since the last change, so nothing changes again before the last change shows in the feedback.
-- `Controller::pace_bytes_per_s` is what the sender's pacer holds the video to (`pace::rate`): between the wire cost of the bitrate allowed the current rung (its ceiling while a climb is paced) and 120 % of it, and within that 110 % of the uplink believed (the capacity at the last cut, or the most tested since: `proven`, set by each raise and cleared at a cut). Never below the allowance: a pace under what the encoder is told to send drops frames the relay reads as loss. `pace::Admission` decides which frames the pacer's backlog takes. `Status` gives the rung, round trips, queue delay, loss and capacity for metrics.
-
-## Bearer token (`token`)
-
-With a `Token` configured (at least 16 bytes; a secret file readable by its group or others is refused: `exposed`) every request to a management endpoint must present it, compared in constant time (`admit`). Without one, an endpoint listens on loopback only (`listen_address`), so an endpoint on a network address is never open by omission.
+- No I/O or clock reads. Callers supply time and observations. Keep GStreamer and drone concepts outside this crate.
+- Keep `reserved` an unnamed secondary flow. The budget and controller must not know its consumer.
+- Reuse stamp geometry validation for drawing and reading. Reject overflowing dimensions and short planes before indexing.
+- A valid CRC does not establish a plausible capture time. Readers must apply `plausible_age`; cross-machine age needs a clock mapping and uncertainty.
+- Interpret `StateStamp` only on the ground output. Arbitrary image rows can pass its CRC.
+- Freshness distinguishes arriving duplicates from missing frames. Derive cadence from advancing source identities, not display repeats or receive counts.
+- Keep `classify` and `next_change_ms` consistent. `LabelDeadline` must reject every packet of a frame whose first packet misses its deadline.
+- Pass time into `TokenBucket`. Backward time must not refill it.
+- Keep wire-byte rates distinct from encoded bitrate and telemetry frame-byte rates. Budget allocations must not exceed the available total.
+- Call `Controller::observe` without feedback as well as with it, so silence affects the decision. Feedback from before a rung change must not trigger another change before that change is observed.
+- Pacing must not fall below the encoder's allowance. `Admission` drops whole frames and waits for a sync point after a drop.
+- Preserve constant-time token comparison. An endpoint without a token is bound to loopback by `listen_address`.
 
 ## Checks
+
+Run natively; no GStreamer is required.
 
 ```sh
 cargo test -p thinlink-video-core --locked
 ```
 
-Tests are pure and table-driven; keep new ones to behaviour (round trip, rejection, wrap-around).
+Use table-driven tests for domain outcomes. Cover stamp rejection and wrap-around, freshness deadlines, bounded allocations and adaptation under changing observations. Avoid tests that only restate thresholds.
