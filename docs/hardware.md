@@ -2,7 +2,7 @@
 
 The vehicle runs natively on a Raspberry Pi. The relay runs on a public server, and the ground adapter runs beside QGroundControl on the operator's laptop.
 
-Deployment on hardware is unverified. The provisioning scripts, units, camera, serial link and modem have not run together on hardware. Follow the bring-up checklist in order and stop at the first failure. The vehicle defaults to the logging sink for a real autopilot; real control requires the interlocks in [real-mode.md](real-mode.md).
+Deployment on hardware is unverified. The provisioning scripts, units, camera, serial link and modem need measurements on the target machines. The vehicle defaults to the logging sink for a real autopilot. Control routing and configuration are in [real-mode.md](real-mode.md).
 
 ## The machines
 
@@ -24,11 +24,13 @@ The vehicle and the ground machine dial out to the relay over WireGuard (UDP 518
 | TCP 8554 | ground | RTSP from MediaMTX |
 | UDP 7700 on the vehicle, 7701 on the ground | each other | Control envelopes, direct between the two |
 
-The relay's firewall (`deploy/relay/nftables.conf`) opens SSH and UDP 51820 to the Internet and lets each peer reach only its own ports through the tunnel. The relay also forwards the control envelopes between the vehicle and the ground (IP forwarding on, and the firewall's forward rules pass only those two UDP ports), so the vehicle's control endpoint is reached through it. The relay's Docker runs with its own iptables rules off (`provision.sh` writes `/etc/docker/daemon.json`), because every container uses host networking and Docker's default FORWARD drop would block that forwarding. The forwarding has never run on a real relay server: the testbed's relay has its own rules. Bring-up step 5 proves it. On a server where Docker already ran with its iptables management on, the FORWARD drop it set stays after the option is turned off: check with `sudo iptables -S FORWARD` (a `-P FORWARD DROP` line, or a `DOCKER-USER` jump) and clear it with `sudo iptables -P FORWARD ACCEPT` or a reboot.
+The relay's firewall (`deploy/relay/nftables.conf`) opens SSH and UDP 51820 to the Internet. Each tunnel peer can reach only its listed ports. IP forwarding passes control envelopes between the vehicle and ground on UDP 7700 and 7701. Every relay container uses host networking. `provision.sh` writes `/etc/docker/daemon.json` with Docker's iptables rules off.
+
+Verify forwarding with bring-up step 5. If envelopes do not cross the relay, inspect `sudo iptables -S FORWARD` for `-P FORWARD DROP` or a `DOCKER-USER` jump. A drop policy blocks the envelopes even when Docker's iptables management is off. `sudo iptables -P FORWARD ACCEPT` clears that policy; the nftables forward rules still restrict the ports.
 
 ## Images and binaries
 
-The release recipes build locally. The runtime image carries all four programs; the vehicle's binary is taken out of the arm64 one, so `just vehicle-release` needs an arm64 build host (Apple Silicon or arm64 Linux) and stops if the binary it packs is not aarch64. All four programs link libx264, so their binaries are distributed under the GPL.
+The release recipes build locally. The runtime image carries all four programs. `just vehicle-release` extracts the vehicle binary from the arm64 image. It needs an arm64 build host (Apple Silicon or arm64 Linux) and stops if the packaged binary is not aarch64.
 
 ```sh
 just deploy-keys 203.0.113.7:51820   # your relay's public address; keys and configs in deploy/secrets/
@@ -37,7 +39,15 @@ just relay-release                   # dist/relay: the amd64 image as a tar, its
 just ground-release                  # dist/ground: compose file and configs, for the image built here
 ```
 
-The recipes take the test setup down first (a build and the testbed do not fit the Podman machine together). `deploy/secrets/` and `dist/` are gitignored: they hold private keys, the WireGuard keys, the ground adapter's control signing key (`ctl-ground.key`, which only the ground release carries; the vehicle gets the public half and refuses every control message not signed with it) and three bearer tokens, one per service (`vehicle.token`, `ground.token`, `job.token`): the vehicle release carries `vehicle.token` and `job.token`, the ground release `ground.token` and `job.token`, the relay release only `job.token`. The Pi checks the binary and the server the image against `SHA256SUMS` before installing them; nothing is piped from the network into a shell.
+The recipes take the test setup down before building. A build and the testbed exceed the Podman machine's memory together. `deploy/secrets/` and `dist/` are gitignored. They hold the WireGuard keys and each release's credentials:
+
+| Release | Control key | Bearer tokens |
+|---|---|---|
+| Vehicle | Public half of the ground signing key | `vehicle.token`, `job.token` |
+| Ground | `ctl-ground.key` | `ground.token`, `job.token` |
+| Relay | None | `job.token` |
+
+The vehicle accepts control messages signed with the ground key. Installation checks the Pi binary and relay image against `SHA256SUMS`.
 
 `just image-for arm64|amd64` builds one architecture alone. The release recipes build without the vehicle's `testbed` cargo feature, so their binaries have no test hooks and refuse a config that names `debug_hooks` or `sitl_in_real_mode`; only `just image runtime` (the testbed's image) builds with it. `ground-release` builds the release image for this machine's architecture and writes it to `dist/ground/.env`. Builds run with one cargo job under a 1 GiB memory cap ([build limits](testbed.md#builds-and-gates)). An amd64 image is cross-built for `x86_64-unknown-linux-gnu` on the native architecture with the Debian cross toolchain and amd64 GStreamer headers. Only the runtime stage runs emulated. The amd64 image has not run on an amd64 machine.
 
@@ -106,7 +116,16 @@ Camera Module through libcamera, `kind = "libcamera"`: `libcamerasrc` from the `
 
 `encoder = "hardware"` asks for `v4l2h264enc`. GStreamer registers that element only on a board with the encoder, so its presence is the check; without it the vehicle uses `thinlinkx264enc` and logs `no v4l2h264enc on this board`. The vehicle gives the encoder, as `extra-controls`, `video_bitrate` (the same reduced bitrate target as `thinlinkx264enc`), `repeat_sequence_header=1` and `h264_i_frame_period` (the rung's keyframe distance), and constrains its output to `video/x-h264,profile=main,level=4` with a capsfilter after it, so the level and profile are negotiated at stream startup. Raspberry Pi's own example passes `extra-controls` the same way.
 
-Unverified, and the likeliest to need a change on first contact: that the hardware encoder keeps to that bitrate (V4L2's controls here set no VBV buffer size, so its own rate control decides how far one second can exceed it; compare the relay's measured uplink rate with the rung's on a narrow link), that these control names and the caps are accepted by the Pi's driver, that a changed bitrate takes effect while playing (the vehicle sets `extra-controls` again on every rung change), that a size change renegotiates, and that a forced keyframe is honoured. The code that sets them is `make_encoder` and `set_bitrate` in `crates/video/src/sender.rs`.
+The hardware encoder needs these measurements on the Pi:
+
+| Check | Observation |
+|---|---|
+| Bitrate | Compare the relay's measured uplink rate with the rung on a narrow link. These V4L2 controls set no VBV buffer size. The encoder decides the one-second peak. |
+| Startup | Confirm that the driver accepts the control names and negotiated caps. |
+| Rung changes | Confirm bitrate changes while playing and size renegotiation. The vehicle sets `extra-controls` on each rung change. |
+| Keyframe request | Inspect whether the encoder produces the requested keyframe. |
+
+`make_encoder` and `set_bitrate` in `crates/video/src/sender.rs` set these controls. Their behavior on hardware is unverified.
 
 ## Flight controller
 
@@ -119,7 +138,7 @@ The `thinlink` user is in the `dialout` group, which owns both devices.
 
 ## What the Pi can control
 
-By default nothing: in `mode = "sitl"` control frames reach the autopilot only after it has identified itself as a simulator ([control](drone.md#control-protocol)). A normal flight controller build does not, so on a Pi the vehicle logs the control frames it admits, counts them as `sunk` under `mavlink.control` in the metrics and writes none of them. What does work on a real autopilot is the read-only traffic: QGroundControl loads parameters and missions, shows telemetry and video, and an arm or mode command is refused (QGroundControl shows it as denied, the lease stays) and stick commands are only logged. Real-mode control is a separate, explicit mode behind interlocks: `docs/real-mode.md`.
+In the default `mode = "sitl"`, control frames reach an autopilot only when it identifies itself as a simulator ([control](drone.md#control-protocol)). A normal flight controller uses the logging sink. The vehicle counts admitted frames as `sunk` under `mavlink.control` and writes none to the controller. QGroundControl can load parameters and missions and show telemetry and video. Arm and mode commands return denied while the lease stays held. Stick commands are logged. For `mode = "real"`, see `docs/real-mode.md`.
 
 ## Clock sync
 
@@ -141,7 +160,7 @@ The retained-snapshot branch encodes a full-size JPEG every second. Its CPU and 
 
 ## Bring-up checklist
 
-Write down each result. Stop at the first failure and fix it before going on.
+Record the result of each step, including failed checks and missing measurements.
 
 1. Link up.
    - `wg show` on the relay lists a recent handshake for both peers; from the vehicle `ping -c 3 10.77.0.1` and from the ground container the same.
@@ -155,9 +174,9 @@ Write down each result. Stop at the first failure and fix it before going on.
 5. A lease and a refused command.
    - Control reaches the vehicle through the relay. `take-control` returns and `status` shows the lease held and a `challenge_age_ms` under 1000: the request, the grant and the challenges crossed the relay's forward rules in both directions. On the vehicle `mavlink.control.grants` is at least 1 and `challenges` grows. If `take-control` times out while `wg show` has handshakes, the relay is not forwarding: on the relay check `sudo nft list ruleset` for a `drop` policy in another table's forward chain (`sudo iptables -S FORWARD`) and that `/etc/docker/daemon.json` has both keys off and Docker was restarted.
    - Without the lease, try to arm in QGroundControl: it shows "command denied" at once.
-   - `take-control`; `status` shows the lease held. Arm in QGroundControl: it reports the command as denied, nothing happens on the flight controller, the vehicle's `mavlink.control.target` reads `logging_sink`, `sunk` grows and the journal says `went to the logging sink`. A flight controller that arms here means the interlock failed: stop.
-   - The flight controller's own GCS failsafe sees no ground-station heartbeat, because the vehicle does not forward one to a real autopilot. Expect it to trigger on its own if `FS_GCS_ENABLE` is on; that is a property of the flight controller's settings, not of this software.
-6. Failsafes on the bench.
+   - `take-control`; `status` shows the lease held. Arm in QGroundControl: it reports the command as denied. The vehicle's `mavlink.control.target` reads `logging_sink`, `sunk` grows and the journal says `went to the logging sink`. The flight controller receives no arm command.
+   - The vehicle does not forward a ground-station heartbeat to a real autopilot in the default mode. The flight controller's `FS_GCS_ENABLE` setting determines its response to that absence.
+6. Disconnects and restarts.
    - `sudo systemctl stop thinlink-vehicle`: QGroundControl shows "Comms Lost" within about 7 s and the picture goes `STALE`, then `NO VIDEO`. Start it again; both come back.
    - Cut the modem's uplink (or the relay's WireGuard port) for 10 s: the label goes `STALE` then `NO VIDEO`, and recovers by itself after the link returns, without anyone touching the vehicle.
    - Throttle the uplink on the modem or with the carrier's plan (or `tc` on the Pi's WAN interface): the vehicle's `adapt.rung` steps down and the picture stays current at a lower size or rate.
@@ -178,7 +197,7 @@ Then measure the relay's CPU and memory with video running and the ground adapte
 
 ## Limits of a deployment
 
-- Video age is only as good as the [clock bound](#clock-sync).
-- On a narrow link such as satellite, the vehicle paces its video to the uplink it measured, so control is rarely refused. It can still be in the first seconds of a rung selected before the uplink is measured (at the start, or after a route change) and when the uplink drops suddenly: video delays the vehicle's challenges past their lifetime and the vehicle refuses the commands that carry an old one ([control under a filled uplink](drone.md#a-filled-uplink-under-geo)). Expect refused commands and a label of `LOW RATE` or `AGE UNKNOWN` for a second or two then, and plan which flight modes you use on such a link.
-- A stuck camera is detected only on V4L2, and the check has not met a real stalled one ([camera stalls](#a-stuck-camera)).
-- The relay's job API reads requests with no limit on a header's length or count and starts a thread per connection ([retained detail](drone.md#retained-detail)). Keep it behind the tunnel and the firewall.
+- Video age includes uncertainty from the [clock bound](#clock-sync).
+- The vehicle paces video using its measured uplink capacity. At startup, after a route change or during a sudden capacity drop, queued video can delay challenges past their lifetime. The vehicle refuses commands carrying expired challenges. The display can show `LOW RATE` or `AGE UNKNOWN` during recovery ([control under a filled uplink](drone.md#a-filled-uplink-under-geo)).
+- Capture-stall detection applies only to V4L2. Its behavior on a stalled camera is unverified ([camera stalls](#a-stuck-camera)).
+- The relay's job API reads requests with no limit on a header's length or count and starts a thread per connection ([retained detail](drone.md#retained-detail)). Its deployed listeners are on the tunnel addresses.
