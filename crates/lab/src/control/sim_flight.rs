@@ -20,9 +20,9 @@ use mavlink::dialects::ardupilotmega::{
 };
 use serde_json::{Value, json};
 
-use sat_teleop_control::envelope::ControlLimits;
-use sat_teleop_video::receiver::Source;
-use sat_teleop_video::unix_ms;
+use thinlink_control::envelope::ControlLimits;
+use thinlink_video::receiver::Source;
+use thinlink_video::unix_ms;
 
 use super::sim_evidence::{Commanded, Phase, PhaseRun, record_phases, record_run, video_json};
 use super::sim_probe::Probe;
@@ -72,7 +72,7 @@ const ON_GROUND_M: f32 = 0.5;
 /// Land's fastest descent is `WP_SPD_DN`, 1.5 m/s: `LAND_SPD_HIGH_MS` is 0, which means `WP_SPD_DN`
 /// is used (`ArduCopter/mode.cpp`, `land_run_vertical_control`), and neither parameter is set in
 /// the pinned `copter.parm`, `gazebo-iris.parm`, `gazebo-iris-gimbal.parm` or
-/// `testbed/sat-teleop-copter.parm`, so the 4.7.2 default holds (`AC_WPNav.cpp`,
+/// `testbed/thinlink-copter.parm`, so the 4.7.2 default holds (`AC_WPNav.cpp`,
 /// `WP_SPD_DOWN_DEFAULT`); `LAND_SPD_MS`, the final stage, is slower (0.5 m/s, `config.h`). With 25 %
 /// to spare, in m/s; a copter that falls once Land has begun exceeds it within a second.
 const LAND_DESCENT_MAX_M_S: f64 = 1.5 * 1.25;
@@ -207,7 +207,7 @@ fn max_descent_m_s(points: &[Point]) -> f64 {
     points.iter().filter_map(over).fold(0.0, f64::max)
 }
 
-/// The copter's `RC_OVERRIDE_TIME` (s) in `testbed/sat-teleop-copter.parm`: a stream that stops is
+/// The copter's `RC_OVERRIDE_TIME` (s) in `testbed/thinlink-copter.parm`: a stream that stops is
 /// noticed this long after its last setpoint, so no Brake the stop caused comes sooner.
 const RC_OVERRIDE_MS: u64 = 500;
 
@@ -445,7 +445,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("telemetry_received", Verdict::Incomplete, e.to_string());
         return results;
     }

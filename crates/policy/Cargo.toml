@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-policy"
+name = "thinlink-policy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,6 +10,6 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-sat-teleop-video-core = { path = "../video-core" }
+thinlink-video-core = { path = "../video-core" }
 serde.workspace = true
 thiserror.workspace = true

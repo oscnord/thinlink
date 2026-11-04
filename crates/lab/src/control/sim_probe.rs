@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_video::unix_ms;
+use thinlink_video::unix_ms;
 
 use crate::check::{self, Sample, float};
 use crate::client::AgentClient;

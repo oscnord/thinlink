@@ -14,14 +14,14 @@ use mavlink::dialects::ardupilotmega::{
     HEARTBEAT_DATA, MavAutopilot, MavCmd, MavMessage, MavState, MavType,
 };
 
-use sat_teleop_control::auth::{Signer, VehicleId};
-use sat_teleop_control::envelope::{
+use thinlink_control::auth::{Signer, VehicleId};
+use thinlink_control::envelope::{
     self, ControlLimits, Envelope, Kind, MAX_ENVELOPE, Outcome, Refusal, ToGround, ToVehicle,
     encode_frame,
 };
-use sat_teleop_control::frame::{Frame, MAX_DATAGRAM, datagram_frames};
-use sat_teleop_control::unix_ms;
-use sat_teleop_policy::region::NormRect;
+use thinlink_control::frame::{Frame, MAX_DATAGRAM, datagram_frames};
+use thinlink_control::unix_ms;
+use thinlink_policy::region::NormRect;
 
 use super::throttle;
 use crate::mavlink::command;

@@ -5,7 +5,7 @@
      No shadows, no GUI services and few models: the software renderer's memory is what limits the
      simulation in the Podman machine (docs/drone.md#simulation-resources). -->
 <sdf version="1.9">
-  <world name="sat_teleop">
+  <world name="thinlink">
     <physics name="1ms" type="ignore">
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1.25</real_time_factor>

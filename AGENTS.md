@@ -1,4 +1,4 @@
-# AGENTS.md: sat-teleop
+# AGENTS.md: thinlink
 
 A hobby Rust bench prototype for adaptive video and test-only control over cellular and GEO-like IP links.
 
@@ -29,7 +29,6 @@ Use Chrome Canary with an isolated profile for optional browser testing and debu
 | Read | Purpose |
 |---|---|
 | `README.md` | Plain-language overview for people: what it does, quickstart, limitations (no implementation detail) |
-| Issue [#2](https://github.com/oscnord/sat-teleop/issues/2) | The plan and current status (spec of record) |
 | `docs/video.md` | Video ownership, data paths, adaptation and age measurement |
 | `docs/testbed.md` | Toolchain, builds, gates, code layout, fixtures and lab checks |
 | Relevant per-package `AGENTS.md` | Local invariants, dependencies and checks |
@@ -45,21 +44,21 @@ Packages that exist today:
 
 | Layer | Package | Dir | Responsibility |
 |---|---|---|---|
-| L0 | `sat-teleop-video-core` | `crates/video-core` | The core of the workspace, pure: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token check |
-| L0 | `sat-teleop-x264` | `crates/x264` | The `satx264enc` GStreamer element and safe libx264 wrapper; GPL-2.0-or-later |
-| L1 | `sat-teleop-video` | `crates/video` | The core of the workspace, GStreamer: sender with live rung changes, its snapshot branch, its frame hook and taps, relay ingress and its feedback, the sender's adaptation loop, headless receiver and the ground's freshness output with its decoration, `GET /metrics` endpoint. Knows nothing about drones |
-| L1 | `sat-teleop-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, outline drawing, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
-| L2 | `sat-teleop-media` | `crates/media` | What the drone adds to the video: regional encoding and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
-| L2 | `sat-teleop-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
-| L2 | `sat-teleop-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
-| L2 | `sat-teleop-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
-| L3 | `sat-teleop-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
-| L4 | `sat-teleop-vehicle`, `sat-teleop-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |
-| L4 | `sat-teleop-ground` | `apps/ground` | The ground adapter: MAVLink between mavlink-router and the ground stations, their command endpoint, the camera component, the video freshness output, the lease CLI and the detail request and fetch CLI |
-| L4 | `sat-teleop-lab-cli` | `apps/lab` | The `lab` executable (`router`, `impair`, `check`) |
-| Tooling | `sat-teleop-xtask` | `xtask` | Layers check and pinned fixtures |
+| L0 | `thinlink-video-core` | `crates/video-core` | The core of the workspace, pure: the in-picture stamp and the state stamp, video freshness, the sender's pacing admission, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token check |
+| L0 | `thinlink-x264` | `crates/x264` | The `thinlinkx264enc` GStreamer element and safe libx264 wrapper; GPL-2.0-or-later |
+| L1 | `thinlink-video` | `crates/video` | The core of the workspace, GStreamer: sender with live rung changes, its snapshot branch, its frame hook and taps, relay ingress and its feedback, the sender's adaptation loop, headless receiver and the ground's freshness output with its decoration, `GET /metrics` endpoint. Knows nothing about drones |
+| L1 | `thinlink-policy` | `crates/policy` | What builds on the core, pure: the control lease, regions and following, outline drawing, kinds, sightings, the landing target decision, the predictive display, the detail inset's placement, snapshot retention and when retrieval may send |
+| L2 | `thinlink-media` | `crates/media` | What the drone adds to the video: regional encoding and outlines, the detector, tracker and tag frame feeds, the aim ring and detail inset the ground draws, what retrieval asks of adaptation |
+| L2 | `thinlink-control` | `crates/control` | MAVLink: the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge with its controller and camera component, the control envelope |
+| L2 | `thinlink-detect` | `crates/detect` | The detector: loads an ONNX model with `tract-onnx` and returns the people and vehicles (the configured kinds) in a frame as regions in picture fractions, and finds one AprilTag in a luma frame |
+| L2 | `thinlink-detail` | `crates/detail` | The vehicle's snapshot store, the relay's bounded job API and the vehicle's lower-priority retrieval of a snapshot or a crop |
+| L3 | `thinlink-lab` | `crates/lab` | Impairment profiles, `tc` translation, router agent, budgets, `lab check` results and the boot, skeleton, mavlink, control-freshness, qgc-status, adaptation, recording and retrieval scenarios |
+| L4 | `thinlink-vehicle`, `thinlink-relay` | `apps/vehicle`, `apps/relay` | Run the sender, its adaptation, the MAVLink bridge, the snapshot store and retrieval, and the relay ingress with its feedback and job API |
+| L4 | `thinlink-ground` | `apps/ground` | The ground adapter: MAVLink between mavlink-router and the ground stations, their command endpoint, the camera component, the video freshness output, the lease CLI and the detail request and fetch CLI |
+| L4 | `thinlink-lab-cli` | `apps/lab` | The `lab` executable (`router`, `impair`, `check`) |
+| Tooling | `thinlink-xtask` | `xtask` | Layers check and pinned fixtures |
 
-`sat-teleop-testkit` (test support, `crates/testkit`) is registered in `xtask/src/layers.rs` and created only when two crates reuse a helper; it is a dev-dependency only.
+`thinlink-testkit` (test support, `crates/testkit`) is registered in `xtask/src/layers.rs` and created only when two crates reuse a helper; it is a dev-dependency only.
 
 Do not create speculative modules, placeholder crates or frameworks. Each new package must justify a distinct dependency boundary or pure policy boundary, register in `xtask/src/layers.rs`, inherit workspace dependencies and lints (`[lints] workspace = true`), add its own `AGENTS.md` and add a line to the index in section 14.
 
@@ -81,8 +80,8 @@ Network packets, MAVLink messages, files, configuration and requests are untrust
 
 ### Regional video
 
-- `RegionCell` (`sat-teleop-policy`) selects the regions for encoder quantiser offsets. The frame hook returns `regions()` as pixel rectangles, and the control loop sends `confirmed()` to the ground; never compute either selection anywhere else.
-- A region envelope never reaches the autopilot and never carries a MAVLink frame. The sender attaches the hook's regions as `GstVideoRegionOfInterestMeta` for `satx264enc`. Quantiser offsets leave pixels unchanged. Outlines are drawn before the stamp.
+- `RegionCell` (`thinlink-policy`) selects the regions for encoder quantiser offsets. The frame hook returns `regions()` as pixel rectangles, and the control loop sends `confirmed()` to the ground; never compute either selection anywhere else.
+- A region envelope never reaches the autopilot and never carries a MAVLink frame. The sender attaches the hook's regions as `GstVideoRegionOfInterestMeta` for `thinlinkx264enc`. Quantiser offsets leave pixels unchanged. Outlines are drawn before the stamp.
 - The detector never blocks the video: its branch is leaky and drops its own frames, and a model that does not load is shown in the metrics, not fatal. It is off unless the vehicle config asks for it. `[region] roi_qp_offset` defaults to 0 (off) and accepts -51 to 0. The pilot's box is kept only with a negative offset; detections are outlined even with offsets off.
 - No AGPL model or code (Ultralytics YOLO is excluded); weights and code Apache-2.0, MIT or BSD.
 
@@ -107,7 +106,7 @@ Network packets, MAVLink messages, files, configuration and requests are untrust
 
 ### Safety and security
 
-- Never send commands to real actuators in the testbed, in tests or by default. Control reaches ArduPilot SITL, or a real flight controller only in `mode = "real"`, and the logging sink otherwise, decided in one place, `sat_teleop_control::identity::failures` (`control_target` is its wrapper). In SITL mode only an autopilot that has reported the SITL-only `SIM_WIND_SPD` parameter gets control frames; in real mode only one that has not, with signed envelopes' keys loaded, the required failsafe parameters read back and equal, and a fresh clock bound. Never bypass, default on or configure around these checks. `sitl_in_real_mode` and the `/real` and `/clock/inject` hooks exist only in builds with the `testbed` cargo feature (the testbed's images); a release build refuses a config that names `debug_hooks` or `sitl_in_real_mode`. Never build a release artifact with the feature. Never add a second decision.
+- Never send commands to real actuators in the testbed, in tests or by default. Control reaches ArduPilot SITL, or a real flight controller only in `mode = "real"`, and the logging sink otherwise, decided in one place, `thinlink_control::identity::failures` (`control_target` is its wrapper). In SITL mode only an autopilot that has reported the SITL-only `SIM_WIND_SPD` parameter gets control frames; in real mode only one that has not, with signed envelopes' keys loaded, the required failsafe parameters read back and equal, and a fresh clock bound. Never bypass, default on or configure around these checks. `sitl_in_real_mode` and the `/real` and `/clock/inject` hooks exist only in builds with the `testbed` cargo feature (the testbed's images); a release build refuses a config that names `debug_hooks` or `sitl_in_real_mode`. Never build a release artifact with the feature. Never add a second decision.
 - Vehicle-side policy owns the control lease and command validation.
 - Every QGC command must traverse the ground adapter and vehicle gate.
 - Stale, frozen, disconnected or unverifiably aged video must never appear live.
@@ -124,12 +123,12 @@ Developer Macs may run endpoint protection (here Microsoft Defender for Endpoint
 
 - On the host, never type, write, heredoc, echo or search for reverse-shell idioms: the shell's built-in network pseudo-files (the tcp and udp device paths), read-write redirection of a numbered file descriptor to a socket, netcat or ncat with an execute option, named pipes combined with netcat, interactive shells redirected to sockets, socat exec or system addresses, Python pty spawning, or piping downloaded content into a shell. This includes files you create, such as scripts in `testbed/scripts/`.
 - For HTTP use `curl` (in the runtime image) or the `lab` CLI, never shell socket tricks.
-- Keep listeners, pings and packet tools inside containers (`podman compose -p sat-teleop -f testbed/compose.yml exec <service> ...`).
+- Keep listeners, pings and packet tools inside containers (`podman compose -p thinlink -f testbed/compose.yml exec <service> ...`).
 - Prefer the file-editing tools over shell heredocs for writing files.
 
 ### Unsafe code
 
-Workspace Rust code is under `unsafe_code = "deny"`. Only `sat-teleop-x264` may allow it, in `crates/x264/src/encoder.rs` (the FFI wrapper) and the generated bindings module `sys` in `crates/x264/src/lib.rs`. `just check` rejects any `.rs` file under `crates`, `apps` or `xtask` that mentions `unsafe_code` outside `crates/x264`. Safe bindings to native dependencies do not imply those dependencies contain no unsafe code.
+Workspace Rust code is under `unsafe_code = "deny"`. Only `thinlink-x264` may allow it, in `crates/x264/src/encoder.rs` (the FFI wrapper) and the generated bindings module `sys` in `crates/x264/src/lib.rs`. `just check` rejects any `.rs` file under `crates`, `apps` or `xtask` that mentions `unsafe_code` outside `crates/x264`. Safe bindings to native dependencies do not imply those dependencies contain no unsafe code.
 
 Direct bindings are needed because GStreamer's `x264enc` cannot force a whole IDR with intra refresh enabled or change its refresh period while playing. It also exposes no per-macroblock quantiser offsets. The published `x264-sys` crate bundles an old `x264.h` without `quant_offsets`; `crates/x264/build.rs` generates bindings from the system header with bindgen. The crate's tests assert NAL type 5 for a forced IDR, delta units at refresh-wave starts, and the new refresh period after a frame-rate change.
 
@@ -137,7 +136,7 @@ Every exception must expose a safe API, isolate unsafe blocks, explain each bloc
 
 ## 5. Workflow and picking work
 
-1. Read issue #2 and the relevant docs.
+1. Read the issue and the relevant docs.
 2. Plan non-trivial changes before implementation.
 3. Choose the next small vertical slice with a measurable outcome.
 4. Search for existing helpers before writing another utility or abstraction.
@@ -204,7 +203,7 @@ cargo test --workspace --locked
 cargo xtask layers
 ```
 
-`just check` runs the full workspace gates in the build container; `just check-native` runs the pure-crate gates on the host. `just fmt` formats. `just image <target>` builds `localhost/sat-teleop-runtime:dev` or `localhost/sat-teleop-build:dev`. During iteration, run focused package tests first.
+`just check` runs the full workspace gates in the build container; `just check-native` runs the pure-crate gates on the host. `just fmt` formats. `just image <target>` builds `localhost/thinlink-runtime:dev` or `localhost/thinlink-build:dev`. During iteration, run focused package tests first.
 
 Two tiers of gate, so a fix iteration takes minutes:
 
@@ -231,20 +230,20 @@ Do not add UI tests, tests that restate configuration, tests of mocked return va
 
 ## 9. Testbed commands
 
-The justfile owns compose wrappers. The Rust lab runner (`lab`) owns scenarios and impairment changes. Compose project name is `sat-teleop`, file `testbed/compose.yml`.
+The justfile owns compose wrappers. The Rust lab runner (`lab`) owns scenarios and impairment changes. Compose project name is `thinlink`, file `testbed/compose.yml`.
 
 ```sh
 just lab-keys                       # generate WireGuard keys into testbed/secrets/ (gitignored)
 just lab-up                         # build images, keys, start the topology
 just lab-check <scenario> <profile> # e.g. boot lan; lab check in the checks container
-just lab-down                       # remove only the sat-teleop containers and networks
+just lab-down                       # remove only the thinlink containers and networks
 ```
 
 Scenario assertions belong in `lab check`, not in recipe shell. Use the documented Docker equivalent when applicable. Do not silently substitute another runtime or profile.
 
 `lab impair` applies a validated profile or scheduled transition through the router's local control path. Never shape the host's management connection.
 
-On a shared Podman machine, never stop, remove or prune containers, images, volumes or networks that do not belong to compose project `sat-teleop` or images tagged `localhost/sat-teleop-*`. Never restart or reconfigure the Podman machine.
+On a shared Podman machine, never stop, remove or prune containers, images, volumes or networks that do not belong to compose project `thinlink` or images tagged `localhost/thinlink-*`. Never restart or reconfigure the Podman machine.
 
 Fetch fixtures with `cargo xtask fixtures`. SHA-256 is verified before use. Missing required fixtures fail the check.
 
@@ -305,7 +304,7 @@ Subagent output is draft work until reviewed.
 
 ## 13. Documentation and tracked state
 
-- GitHub issues: scope, decisions, acceptance, status and discussion. Issue #2 is the plan and status.
+- GitHub issues: scope, decisions, acceptance, status and discussion.
 - `docs/`: authoritative architecture, setup, testbed and measurement behavior.
 - `perf/budgets.toml`: acceptance budgets, enforcement status and evidence references.
 - `fixtures/manifest.toml`: fixture provenance, immutable pins and checksums.
@@ -330,24 +329,24 @@ Do not commit recordings, downloaded clips, secrets or machine-specific state.
 
 - The simulation (`just sim-up`, `testbed/compose.sim.yml`) is opt-in. The default testbed and every default check stay as they are; `just sim-check <profile>` is its gate and is not in `gate-full`.
 - Gazebo peaks near 1 GB and settles near 650 MB in a 2 GiB machine. Never build, run `just check` or start another heavy container while it is up: `just lab-down` first. Keep its `mem_limit`; do not raise it.
-- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/drone.md#command-gate`. Mission upload and Auto are admitted only behind `allow_missions` (`crates/control/AGENTS.md`). Failsafe values live in `testbed/sat-teleop-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
+- Control reaches SITL only. A new copter command needs a gate table row and a reason in `docs/drone.md#command-gate`. Mission upload and Auto are admitted only behind `allow_missions` (`crates/control/AGENTS.md`). Failsafe values live in `testbed/thinlink-copter.parm` with their ArduPilot source. The `sim-flight` bounds (Brake and Land times, sag, time to the ground, Live share) are measured and live in `perf/budgets.toml` under `[sim-flight.<profile>]`; only the descent limit after Land begins comes from ArduPilot's parameter defaults (`land_verdict`).
 - The camera enters through the existing ingest, never a new source kind.
 
 ## 14. Per-package instruction index
 
 - [xtask](xtask/AGENTS.md): layer registry, fixture verification and repeatable checks.
-- [sat-teleop-video-core](crates/video-core/AGENTS.md): the pure core of the video path: the in-picture stamp and the state stamp, video freshness, pacing, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token.
-- [sat-teleop-x264](crates/x264/AGENTS.md): the `satx264enc` GStreamer element, libx264 FFI boundary and encoder checks.
-- [sat-teleop-video](crates/video/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the sender's adaptation loop, metrics endpoint, and the frame hook, taps and decoration the drone plugs into.
-- [sat-teleop-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, outline drawing, sightings, landing, the predictive display, the detail inset, retention, retrieval.
-- [sat-teleop-media](crates/media/AGENTS.md): what the drone adds to the video: regional video, the detector, tracker and tag feeds, the aim ring and detail inset, retrieval's view of adaptation.
-- [sat-teleop-control](crates/control/AGENTS.md): MAVLink frames, the autopilot link (SITL TCP or serial) and SITL identification, the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge, controller and camera component, the control envelope.
-- [sat-teleop-detect](crates/detect/AGENTS.md): the detector, its model and output layout, and how it is fetched.
-- [sat-teleop-detail](crates/detail/AGENTS.md): the snapshot store, the job API (relay and vehicle sides) and its client, crop mapping and chunk assembly.
-- [sat-teleop-lab](crates/lab/AGENTS.md): impairment profiles, tc translation, router agent, budgets, checks.
-- [sat-teleop-vehicle](apps/vehicle/AGENTS.md): the vehicle executable (sender, adaptation, MAVLink bridge, `probe-camera`).
-- [sat-teleop-relay](apps/relay/AGENTS.md): the relay ingress and feedback executable.
-- [sat-teleop-ground](apps/ground/AGENTS.md): the ground adapter executable (MAVLink bridge, controller, camera, freshness output).
-- [sat-teleop-lab-cli](apps/lab/AGENTS.md): the `lab` executable.
+- [thinlink-video-core](crates/video-core/AGENTS.md): the pure core of the video path: the in-picture stamp and the state stamp, video freshness, pacing, the byte-rate token bucket, the uplink budget, the adaptation ladder and controller, the bearer token.
+- [thinlink-x264](crates/x264/AGENTS.md): the `thinlinkx264enc` GStreamer element, libx264 FFI boundary and encoder checks.
+- [thinlink-video](crates/video/AGENTS.md): GStreamer pipelines of the live video path (test, file, ingest, V4L2 and libcamera sources, x264 or the hardware encoder) and the ground's freshness output, media feedback and the sender's adaptation loop, metrics endpoint, and the frame hook, taps and decoration the drone plugs into.
+- [thinlink-policy](crates/policy/AGENTS.md): the drone's pure decisions: the control lease and command freshness, regions, following, outline drawing, sightings, landing, the predictive display, the detail inset, retention, retrieval.
+- [thinlink-media](crates/media/AGENTS.md): what the drone adds to the video: regional video, the detector, tracker and tag feeds, the aim ring and detail inset, retrieval's view of adaptation.
+- [thinlink-control](crates/control/AGENTS.md): MAVLink frames, the autopilot link (SITL TCP or serial) and SITL identification, the vehicle bridge with its command gate, telemetry budget and control endpoint, the ground bridge, controller and camera component, the control envelope.
+- [thinlink-detect](crates/detect/AGENTS.md): the detector, its model and output layout, and how it is fetched.
+- [thinlink-detail](crates/detail/AGENTS.md): the snapshot store, the job API (relay and vehicle sides) and its client, crop mapping and chunk assembly.
+- [thinlink-lab](crates/lab/AGENTS.md): impairment profiles, tc translation, router agent, budgets, checks.
+- [thinlink-vehicle](apps/vehicle/AGENTS.md): the vehicle executable (sender, adaptation, MAVLink bridge, `probe-camera`).
+- [thinlink-relay](apps/relay/AGENTS.md): the relay ingress and feedback executable.
+- [thinlink-ground](apps/ground/AGENTS.md): the ground adapter executable (MAVLink bridge, controller, camera, freshness output).
+- [thinlink-lab-cli](apps/lab/AGENTS.md): the `lab` executable.
 
 Each new package adds its own `AGENTS.md` focused on local invariants and commands, and one line here. Do not copy this root file into it.

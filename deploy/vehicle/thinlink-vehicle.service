@@ -1,6 +1,6 @@
 [Unit]
-Description=sat-teleop vehicle: stamped H.264 video and gated MAVLink to the relay
-Documentation=https://github.com/oscnord/sat-teleop
+Description=thinlink vehicle: stamped H.264 video and gated MAVLink to the relay
+Documentation=https://github.com/oscnord/thinlink
 # The video and MAVLink go to overlay addresses, so the tunnel and the clock come first. The
 # vehicle retries a missing tunnel itself; this only saves the first failed starts.
 After=network-online.target wg-quick@wg0.service chrony.service
@@ -8,20 +8,20 @@ Wants=network-online.target wg-quick@wg0.service chrony.service
 
 [Service]
 Type=simple
-User=sat-teleop
+User=thinlink
 # video: the camera, dialout: the flight controller's serial port.
 SupplementaryGroups=video dialout
-ExecStart=/usr/local/bin/sat-teleop-vehicle run \
-    --config /etc/sat-teleop/vehicle.toml \
-    --limits /etc/sat-teleop/limits.toml \
-    --ladder /etc/sat-teleop/ladder.toml \
+ExecStart=/usr/local/bin/thinlink-vehicle run \
+    --config /etc/thinlink/vehicle.toml \
+    --limits /etc/thinlink/limits.toml \
+    --ladder /etc/thinlink/ladder.toml \
     --metrics-addr 127.0.0.1:9100 \
-    --token-file /etc/sat-teleop/vehicle.token \
-    --job-token-file /etc/sat-teleop/job.token
+    --token-file /etc/thinlink/vehicle.token \
+    --job-token-file /etc/thinlink/job.token
 Restart=always
 RestartSec=2
 # Retained snapshots live here.
-StateDirectory=sat-teleop
+StateDirectory=thinlink
 # The vehicle's own memory is small; a runaway is stopped before it takes the board down.
 MemoryMax=300M
 NoNewPrivileges=yes

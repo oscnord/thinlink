@@ -1,4 +1,4 @@
-# sat-teleop
+# thinlink
 
 Low-latency H.264 video from a drone over satellite and cellular links. The drone adapts resolution, frame rate and bitrate to the uplink it measures, keeping queue delay down before picture quality. QGroundControl is the ground station. Written in Rust on GStreamer.
 
@@ -15,7 +15,7 @@ drone:  probe every 250 ms --> relay: what it received --> drone: pick a rung
 - **Adaptation.** The drone times probes to the relay. A queue delay over 150 ms that keeps rising is a cut: the drone drops to the best rung that fits 75 % of the rate the relay measured. Over 300 ms it also pauses the video until the queue drains. Loss is read in GCC's bands. It climbs one rung after 10 s of healthy answers. Six rungs, from 1280x720 at 15 fps and 1.2 Mbit/s down to 320x180 at 1 fps and 25 kbit/s (`testbed/ladder.toml`).
 - **Pacer.** Packets leave through a token bucket at the rung's rate. A frame that would wait more than 150 ms is dropped whole, together with the frames that depend on it. The sender requests a whole IDR picture at the next frame. Control and telemetry use their own sockets and a reserved share of the uplink.
 - **Retained detail.** The drone keeps a full-size JPEG every second. You can fetch a whole one or a crop from the last few seconds through the relay's job API; it is sent only when live video and control leave room. Snapshots taken while the link was down are kept until fetched (`just detail-outage` lists them).
-- **Sources and encoders.** Test patterns, y4m clips, V4L2 and libcamera cameras, or an RTP camera; `satx264enc` (`zerolatency`, with intra refresh and IDRs on request) or the Pi's `v4l2h264enc`. `satx264enc` supports quantiser offsets for selected regions. The ground output uses GStreamer's `x264enc`.
+- **Sources and encoders.** Test patterns, y4m clips, V4L2 and libcamera cameras, or an RTP camera; `thinlinkx264enc` (`zerolatency`, with intra refresh and IDRs on request) or the Pi's `v4l2h264enc`. `thinlinkx264enc` supports quantiser offsets for selected regions. The ground output uses GStreamer's `x264enc`.
 - **Stamp.** Each frame gets its id and capture time (two 32-bit values and a CRC-8) drawn as blocks into the luma plane, so the stamp survives encoding, transcoding and any player.
 - **Freshness.** The ground compares the capture time with its own clock (both synced by chrony) and labels each frame `LIVE`, `LOW RATE`, `STALE`, `FROZEN`, `NO VIDEO` or `AGE UNKNOWN` with its age. The camera's own delay is not included.
 
@@ -44,7 +44,7 @@ Paused video shows `STALE` within 0.65 s. When the uplink drops from 512 to 128 
 | Crate | What |
 |---|---|
 | `video-core` | Stamp, freshness, pacing, uplink budget, adaptation controller. Pure. |
-| `x264` | GStreamer `satx264enc` element, linked to libx264. |
+| `x264` | GStreamer `thinlinkx264enc` element, linked to libx264. |
 | `video` | GStreamer sender, relay ingress, receiver, ground output, feedback, metrics. |
 | `policy` | Control lease, regions, follow, sightings, landing, prediction. Pure. |
 | `media` | What the drone adds to the video: overlays, detector, tracker and tag taps. |
@@ -141,4 +141,4 @@ Control reaches a real flight controller only in real mode, which is off by defa
 
 ## Licence
 
-The code is MIT or Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). The exception is `crates/x264`, which links libx264 and is GPL-2.0-or-later ([LICENSE-GPL-2.0](crates/x264/LICENSE-GPL-2.0)). The vehicle, relay, ground and lab binaries all link it through `sat-teleop-video`, so they are distributed under the GPL.
+The code is MIT or Apache-2.0, at your option ([LICENSE-MIT](LICENSE-MIT), [LICENSE-APACHE](LICENSE-APACHE)). The exception is `crates/x264`, which links libx264 and is GPL-2.0-or-later ([LICENSE-GPL-2.0](crates/x264/LICENSE-GPL-2.0)). The vehicle, relay, ground and lab binaries all link it through `thinlink-video`, so they are distributed under the GPL.

@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use sat_teleop_control::clock::{Clock, Injection};
-use sat_teleop_control::vehicle::VehicleStats;
-use sat_teleop_video::sender::{Rung, SenderStats, SourceMode};
+use thinlink_control::clock::{Clock, Injection};
+use thinlink_control::vehicle::VehicleStats;
+use thinlink_video::sender::{Rung, SenderStats, SourceMode};
 
 use super::{Retained, SLOW_WRITE};
 

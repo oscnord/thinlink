@@ -6,7 +6,7 @@ services:
   # ArduCopter SITL, in the vehicle's namespace as the rover was; Gazebo's plugin reaches it over
   # loopback on UDP 9002 (JSON, lockstep).
   sitl:
-    image: localhost/sat-teleop-sitl-copter:dev
+    image: localhost/thinlink-sitl-copter:dev
     environment:
       SITL_EXTRA_PARMS: ${SITL_EXTRA_PARMS:-}
 
@@ -15,7 +15,7 @@ services:
   # link like any frame. The memory cap keeps an overrun from taking the shared Podman machine's
   # other containers with it.
   sim:
-    image: localhost/sat-teleop-sim:dev
+    image: localhost/thinlink-sim:dev
     init: true
     network_mode: service:vehicle-net
     mem_limit: 1100m

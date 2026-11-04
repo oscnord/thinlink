@@ -4,21 +4,21 @@ use crate::command::Command;
 /// Enabled forwarding removes the table again. Both are idempotent.
 pub fn forwarding(enabled: bool) -> Vec<Command> {
     let mut cmds =
-        vec![Command::new(&["nft", "delete", "table", "inet", "sat_teleop_cut"]).tolerant()];
+        vec![Command::new(&["nft", "delete", "table", "inet", "thinlink_cut"]).tolerant()];
     if !enabled {
         cmds.push(Command::new(&[
             "nft",
             "add",
             "table",
             "inet",
-            "sat_teleop_cut",
+            "thinlink_cut",
         ]));
         cmds.push(Command::new(&[
             "nft",
             "add",
             "chain",
             "inet",
-            "sat_teleop_cut",
+            "thinlink_cut",
             "forward",
             "{ type filter hook forward priority -100; policy accept; }",
         ]));
@@ -27,7 +27,7 @@ pub fn forwarding(enabled: bool) -> Vec<Command> {
             "add",
             "rule",
             "inet",
-            "sat_teleop_cut",
+            "thinlink_cut",
             "forward",
             "counter",
             "drop",
@@ -46,15 +46,15 @@ mod tests {
         assert_eq!(
             cut,
             [
-                "nft delete table inet sat_teleop_cut",
-                "nft add table inet sat_teleop_cut",
-                "nft add chain inet sat_teleop_cut forward { type filter hook forward priority -100; policy accept; }",
-                "nft add rule inet sat_teleop_cut forward counter drop",
+                "nft delete table inet thinlink_cut",
+                "nft add table inet thinlink_cut",
+                "nft add chain inet thinlink_cut forward { type filter hook forward priority -100; policy accept; }",
+                "nft add rule inet thinlink_cut forward counter drop",
             ]
         );
         let enable = forwarding(true);
         assert_eq!(enable.len(), 1);
-        assert_eq!(enable[0].display(), "nft delete table inet sat_teleop_cut");
+        assert_eq!(enable[0].display(), "nft delete table inet thinlink_cut");
         assert!(enable[0].tolerate_failure);
     }
 }

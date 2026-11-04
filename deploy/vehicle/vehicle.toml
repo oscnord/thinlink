@@ -1,4 +1,4 @@
-# /etc/sat-teleop/vehicle.toml: the vehicle on a Raspberry Pi, a native binary under systemd.
+# /etc/thinlink/vehicle.toml: the vehicle on a Raspberry Pi, a native binary under systemd.
 # Written for a USB UVC webcam and a Pixhawk-class ArduPilot flight controller. Nothing here has run
 # on hardware (docs/hardware.md#boards). Unknown keys are rejected.
 
@@ -14,7 +14,7 @@ detail = "http://10.77.0.1:8080"
 encoder = "hardware"
 
 [source]
-# A USB webcam. `sat-teleop-vehicle probe-camera` lists the devices and the modes they offer; MJPEG
+# A USB webcam. `thinlink-vehicle probe-camera` lists the devices and the modes they offer; MJPEG
 # is decoded here (the stamp needs raw pixels), YUYV needs only a conversion.
 kind = "v4l2"
 device = "/dev/video0"
@@ -36,7 +36,7 @@ fps = 1
 quality = 75
 
 [store]
-dir = "/var/lib/sat-teleop/snapshots"
+dir = "/var/lib/thinlink/snapshots"
 # 256 MiB, an hour, and 512 MiB left free on the card.
 max_bytes = 268435456
 max_age_s = 3600
@@ -81,6 +81,6 @@ control = "10.77.0.2:7700"
 vehicle_id = "vehicle-1"
 # The only overlay addresses that may take the control lease: the ground adapter, with the public
 # key its envelopes must be signed with (`just deploy-keys`; provision.sh installs it).
-controllers = [{ address = "10.77.0.3", public_key = "/etc/sat-teleop/ctl-ground.pub" }]
+controllers = [{ address = "10.77.0.3", public_key = "/etc/thinlink/ctl-ground.pub" }]
 # The bound on this clock's error, from `chronyc tracking`, reported to the ground (docs/real-vehicle.md).
 clock = "chrony"

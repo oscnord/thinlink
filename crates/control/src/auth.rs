@@ -17,14 +17,14 @@ use base64::engine::general_purpose::STANDARD;
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use serde::Deserialize;
 
-use sat_teleop_video_core::token::exposed;
+use thinlink_video_core::token::exposed;
 
 use crate::envelope::{Envelope, Refusal};
 
 const KEY_LEN: usize = 32;
-const ENVELOPE: &str = "sat-teleop/envelope/v1";
-const LEASE_REQUEST: &str = "sat-teleop/lease-request/v1";
-const LEASE_RELEASE: &str = "sat-teleop/lease-release/v1";
+const ENVELOPE: &str = "thinlink/envelope/v1";
+const LEASE_REQUEST: &str = "thinlink/lease-request/v1";
+const LEASE_RELEASE: &str = "thinlink/lease-release/v1";
 const MAX_ID_LEN: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
@@ -290,7 +290,7 @@ fn write(path: &Path, text: &str, mode: u32) -> Result<(), KeyError> {
 
 #[cfg(test)]
 mod tests {
-    use sat_teleop_policy::region::NormRect;
+    use thinlink_policy::region::NormRect;
 
     use crate::envelope::Kind;
 
@@ -417,7 +417,7 @@ mod tests {
     fn a_private_key_that_others_can_use_is_refused_with_the_fix() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = std::env::temp_dir().join(format!("sat-teleop-key-mode-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("thinlink-key-mode-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         generate(&dir, "t").unwrap();
         let key = dir.join("ctl-t.key");

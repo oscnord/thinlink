@@ -19,7 +19,7 @@ use mavlink::dialects::ardupilotmega::{
 };
 use serde::Deserialize;
 
-use sat_teleop_video_core::rate::{Priority, TokenBucket};
+use thinlink_video_core::rate::{Priority, TokenBucket};
 
 use crate::ControlError;
 use crate::frame::Frame;

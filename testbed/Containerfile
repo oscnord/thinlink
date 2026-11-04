@@ -22,7 +22,7 @@ ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 # rustc segfaults under qemu emulation on Apple Silicon (`rustc -vV` itself), so an amd64 image is
 # cross-built rather than built emulated.
 # CARGO_FEATURES is empty for a release image. The testbed's images pass
-# `--features sat-teleop-vehicle/testbed` (the justfile's `image` recipe): the vehicle's test hooks and
+# `--features thinlink-vehicle/testbed` (the justfile's `image` recipe): the vehicle's test hooks and
 # its SITL allowance in real mode exist only in a build with it, and a build without refuses a
 # config that names them.
 FROM build AS bins-native
@@ -35,10 +35,10 @@ ARG CHECKOUT=main
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target,id=sat-teleop-target-$BUILDARCH-$CHECKOUT \
+    --mount=type=cache,target=/src/target,id=thinlink-target-$BUILDARCH-$CHECKOUT \
     cargo build --release --locked $CARGO_FEATURES \
- && install -D -t /out target/release/lab target/release/sat-teleop-vehicle target/release/sat-teleop-relay \
-    target/release/sat-teleop-ground
+ && install -D -t /out target/release/lab target/release/thinlink-vehicle target/release/thinlink-relay \
+    target/release/thinlink-ground
 
 FROM build AS bins-cross-amd64
 ARG CARGO_FEATURES=""
@@ -57,10 +57,10 @@ ENV PKG_CONFIG_ALLOW_CROSS=1 \
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target,id=sat-teleop-target-cross-amd64-$CHECKOUT \
+    --mount=type=cache,target=/src/target,id=thinlink-target-cross-amd64-$CHECKOUT \
     cargo build --release --locked --target x86_64-unknown-linux-gnu $CARGO_FEATURES \
- && install -D -t /out target/x86_64-unknown-linux-gnu/release/lab target/x86_64-unknown-linux-gnu/release/sat-teleop-vehicle \
-    target/x86_64-unknown-linux-gnu/release/sat-teleop-relay target/x86_64-unknown-linux-gnu/release/sat-teleop-ground
+ && install -D -t /out target/x86_64-unknown-linux-gnu/release/lab target/x86_64-unknown-linux-gnu/release/thinlink-vehicle \
+    target/x86_64-unknown-linux-gnu/release/thinlink-relay target/x86_64-unknown-linux-gnu/release/thinlink-ground
 
 # debian:trixie-slim by its multi-platform index digest (resolved 2026-11-01), the same as the SITL
 # image's base; a tag would follow whichever platform was pulled last.
@@ -88,10 +88,10 @@ RUN case "$TARGETARCH" in \
  && chmod 755 /usr/local/bin/mavlink-routerd
 # The person detector's model (NanoDet-Plus-m 320, Apache-2.0), pinned by revision and SHA-256 like
 # the justfile's `model` recipe.
-RUN mkdir -p /usr/share/sat-teleop \
- && curl -fsSL -o /usr/share/sat-teleop/person.onnx \
+RUN mkdir -p /usr/share/thinlink \
+ && curl -fsSL -o /usr/share/thinlink/person.onnx \
     "https://huggingface.co/nouman/nanodet-plus-onnx/resolve/1c71d967632f4b5cdfbc08326328df6def7a6ecc/plus-m-320/nanodet-plus-m_320.onnx" \
- && echo "4f12723cce3d48e47ca92cb925ba74d97a965c069208edca660bbb9f7ce2c610  /usr/share/sat-teleop/person.onnx" | sha256sum -c -
+ && echo "4f12723cce3d48e47ca92cb925ba74d97a965c069208edca660bbb9f7ce2c610  /usr/share/thinlink/person.onnx" | sha256sum -c -
 
 # `runtime` carries the binaries built for the build host's own architecture (arm64 on Apple Silicon,
 # which is also the Pi's), `runtime-amd64` the cross-built ones (`just image-for amd64`).

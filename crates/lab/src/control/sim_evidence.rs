@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use serde_json::{Map, Value, json};
 
-use sat_teleop_video::receiver::Observation;
+use thinlink_video::receiver::Observation;
 
 use super::sim_flight::{count, record_metrics, state};
 use super::sim_probe::{self, Reading};

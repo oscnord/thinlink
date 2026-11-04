@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 use mavlink::dialects::ardupilotmega::MavResult;
 use serde_json::Value;
 
-use sat_teleop_control::envelope::ToGround;
-use sat_teleop_control::ground::LeaseStatus;
+use thinlink_control::envelope::ToGround;
+use thinlink_control::ground::LeaseStatus;
 
 use super::intruder::{Answer, Case};
 use super::{

@@ -10,24 +10,24 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use sat_teleop_control::auth::Signer;
-use sat_teleop_control::envelope::{ControlLimits, TrackingLimits};
-use sat_teleop_control::ground::{
+use thinlink_control::auth::Signer;
+use thinlink_control::envelope::{ControlLimits, TrackingLimits};
+use thinlink_control::ground::{
     self, Camera, CameraCounts, CameraStream, ClockView, ControlSnapshot, Controller, GroundConfig,
     GroundSnapshot, GroundStats, TakeError,
 };
-use sat_teleop_detail::client::Client;
-use sat_teleop_media::decorate::{self, CameraConfig, InsetCount, Predictive};
-use sat_teleop_media::inset::DetailCell;
-use sat_teleop_policy::predict::Inputs;
-use sat_teleop_video::metrics;
-use sat_teleop_video::output::{
+use thinlink_detail::client::Client;
+use thinlink_media::decorate::{self, CameraConfig, InsetCount, Predictive};
+use thinlink_media::inset::DetailCell;
+use thinlink_policy::predict::Inputs;
+use thinlink_video::metrics;
+use thinlink_video::output::{
     self, Decoration, FreshnessLimits, OutputConfig, OutputSnapshot, OutputStats,
 };
-use sat_teleop_video::sender::Frame;
-use sat_teleop_video_core::freshness::Thresholds;
-use sat_teleop_video_core::stamp::StateStamp;
-use sat_teleop_video_core::token::Token;
+use thinlink_video::sender::Frame;
+use thinlink_video_core::freshness::Thresholds;
+use thinlink_video_core::stamp::StateStamp;
+use thinlink_video_core::token::Token;
 
 use crate::detail::Detail;
 
@@ -41,7 +41,7 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Parser)]
 #[command(
-    name = "sat-teleop-ground",
+    name = "thinlink-ground",
     about = "Ground adapter: MAVLink between mavlink-router and the ground stations, their only command endpoint, and the video output that shows freshness"
 )]
 struct Cli {
@@ -184,7 +184,7 @@ fn run(config: &Path, limits: &Path, metrics_addr: &str, tokens: &Tokens) -> Res
     let (control_limits, thresholds, tracking) = load_limits(limits)?;
     let stations = ground::resolve(&ground.gcs).context("ground stations")?;
     let destinations = ground::resolve(&video.destinations).context("video destinations")?;
-    sat_teleop_video::init().context("GStreamer")?;
+    thinlink_video::init().context("GStreamer")?;
     let camera = camera_stream(&video).map(|stream| Arc::new(Camera::new(stream, tracking)));
     let output_stats = Arc::new(OutputStats::default());
     let detail = Arc::new(DetailCell::default());

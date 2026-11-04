@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-lab-cli"
+name = "thinlink-lab-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,8 +16,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-sat-teleop-control = { path = "../../crates/control" }
-sat-teleop-detail = { path = "../../crates/detail" }
-sat-teleop-lab = { path = "../../crates/lab" }
-sat-teleop-policy = { path = "../../crates/policy" }
-sat-teleop-video-core = { path = "../../crates/video-core" }
+thinlink-control = { path = "../../crates/control" }
+thinlink-detail = { path = "../../crates/detail" }
+thinlink-lab = { path = "../../crates/lab" }
+thinlink-policy = { path = "../../crates/policy" }
+thinlink-video-core = { path = "../../crates/video-core" }

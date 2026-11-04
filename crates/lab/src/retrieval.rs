@@ -15,13 +15,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_detail::client::{Client, ClientError};
-use sat_teleop_detail::crop::{self, Crop};
-use sat_teleop_detail::store::{self, Entry};
-use sat_teleop_detail::vehicle::RetrievalLimits;
-use sat_teleop_detail::wire::{JobRequest, Kind};
-use sat_teleop_video::receiver::Source;
-use sat_teleop_video::unix_ms;
+use thinlink_detail::client::{Client, ClientError};
+use thinlink_detail::crop::{self, Crop};
+use thinlink_detail::store::{self, Entry};
+use thinlink_detail::vehicle::RetrievalLimits;
+use thinlink_detail::wire::{JobRequest, Kind};
+use thinlink_video::receiver::Source;
+use thinlink_video::unix_ms;
 
 use crate::adaptation::{self, Expect, ages_ms, new_frames, offered_bytes};
 use crate::budget::{self, Budget};
@@ -128,7 +128,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("video_received", Verdict::Incomplete, e.to_string());
         return results;
     }
@@ -236,7 +236,7 @@ fn fetch_job(
     job: &JobRequest,
     results: &mut Results,
     name: &str,
-) -> Result<sat_teleop_detail::client::Fetched, String> {
+) -> Result<thinlink_detail::client::Fetched, String> {
     let started = Instant::now();
     let id = ground.request(job).map_err(|e| e.to_string())?;
     let fetched = ground.fetch(&id, JOB_DEADLINE).map_err(|e| e.to_string());
@@ -256,7 +256,7 @@ fn fetch_job(
 }
 
 fn judge_crop(
-    fetched: &sat_teleop_detail::client::Fetched,
+    fetched: &thinlink_detail::client::Fetched,
     truth: Entry,
     source: Option<(u32, u32)>,
     at: u64,
@@ -303,7 +303,7 @@ fn judge_crop(
 }
 
 fn judge_snapshot(
-    fetched: &sat_teleop_detail::client::Fetched,
+    fetched: &thinlink_detail::client::Fetched,
     truth: Entry,
     stored: &[u8],
     at: u64,

@@ -3,12 +3,12 @@
 engine := env_var_or_default("CONTAINER_ENGINE", "podman")
 # keep-id maps the host user into the container on Podman; Docker needs the uid spelled out.
 user_flags := if engine == "podman" { "--userns=keep-id" } else { "--user $(id -u):$(id -g)" }
-gstreamer_packages := "sat-teleop-x264 sat-teleop-video sat-teleop-media sat-teleop-lab sat-teleop-lab-cli sat-teleop-vehicle sat-teleop-relay sat-teleop-ground"
+gstreamer_packages := "thinlink-x264 thinlink-video thinlink-media thinlink-lab thinlink-lab-cli thinlink-vehicle thinlink-relay thinlink-ground"
 # The testbed's runtime image has the vehicle's test hooks; the release images (`image-for`) do not.
-testbed_features := "--build-arg CARGO_FEATURES='--features sat-teleop-vehicle/testbed'"
-build_image := "localhost/sat-teleop-build:dev"
+testbed_features := "--build-arg CARGO_FEATURES='--features thinlink-vehicle/testbed'"
+build_image := "localhost/thinlink-build:dev"
 native_arch := if arch() == "x86_64" { "amd64" } else { "arm64" }
-runtime_image := "localhost/sat-teleop-runtime:dev"
+runtime_image := "localhost/thinlink-runtime:dev"
 # Docker does not know the name Podman gives the host; testbed/compose.docker.yml maps it.
 engine_compose := if engine == "podman" { "" } else { " -f testbed/compose.docker.yml" }
 # SIM=1 adds the simulated flight's services (`just sim-up`). PI=pi4 or PI=pi-zero-2w caps the
@@ -16,10 +16,10 @@ engine_compose := if engine == "podman" { "" } else { " -f testbed/compose.docke
 # `PI=pi4 just lab-up`; set it for `lab-check` too.
 sim_file := if env_var_or_default("SIM", "") != "" { " -f testbed/compose.sim.yml" } else { "" }
 pi_file := if env_var_or_default("PI", "") != "" { " -f testbed/compose." + env_var("PI") + ".yml" } else { "" }
-compose := engine + " compose -p sat-teleop -f testbed/compose.yml" + engine_compose + sim_file + pi_file
+compose := engine + " compose -p thinlink -f testbed/compose.yml" + engine_compose + sim_file + pi_file
 # Taking the testbed down names every service of either mode: a simulator container shares the
 # vehicle sidecar's namespace, so the sidecar cannot be removed before it.
-compose_down := engine + " compose -p sat-teleop -f testbed/compose.yml" + engine_compose + " -f testbed/compose.sim.yml"
+compose_down := engine + " compose -p thinlink -f testbed/compose.yml" + engine_compose + " -f testbed/compose.sim.yml"
 # Builds and `check` run in a cgroup capped below the shared Podman machine's memory, so running out of
 # memory kills the build, not another project's containers. BuildKit has no build memory limit. The
 # defaults fit a 2 GiB machine; a larger one can raise them (BUILD_MEMORY=4g BUILD_JOBS=4).
@@ -42,15 +42,15 @@ default:
 check: (image "build")
     {{engine}} run --rm {{user_flags}} --memory {{build_mem}} -e CARGO_BUILD_JOBS={{build_jobs}} \
         -v "{{justfile_directory()}}:/src" -w /src \
-        -v sat-teleop-cargo-registry:/cache/cargo -v sat-teleop-target:/cache/target \
+        -v thinlink-cargo-registry:/cache/cargo -v thinlink-target:/cache/target \
         -e HOME=/tmp -e CARGO_HOME=/cache/cargo -e CARGO_TARGET_DIR=/cache/target/{{checkout}} \
         {{build_image}} sh -ec ' \
             if grep -rl --include="*.rs" unsafe_code crates apps xtask | grep -v "^crates/x264/"; then echo "unsafe_code may be allowed only in crates/x264"; exit 1; fi; \
             cargo fmt --all -- --check; \
             cargo clippy --workspace --all-targets --locked -- -D warnings; \
             cargo test --workspace --locked; \
-            cargo clippy -p sat-teleop-control -p sat-teleop-vehicle --all-targets --locked --features sat-teleop-vehicle/testbed -- -D warnings; \
-            cargo test -p sat-teleop-control -p sat-teleop-vehicle --locked --features sat-teleop-vehicle/testbed; \
+            cargo clippy -p thinlink-control -p thinlink-vehicle --all-targets --locked --features thinlink-vehicle/testbed -- -D warnings; \
+            cargo test -p thinlink-control -p thinlink-vehicle --locked --features thinlink-vehicle/testbed; \
             cargo xtask layers'
 
 # Same gates on the host, for packages that do not link GStreamer.
@@ -67,21 +67,21 @@ check-native:
     cargo fmt --all -- --check
     cargo clippy --workspace $exclude --all-targets --locked -- -D warnings
     cargo test --workspace $exclude --locked
-    cargo clippy -p sat-teleop-control --all-targets --locked --features testbed -- -D warnings
-    cargo test -p sat-teleop-control --locked --features testbed
+    cargo clippy -p thinlink-control --all-targets --locked --features testbed -- -D warnings
+    cargo test -p thinlink-control --locked --features testbed
     cargo xtask layers
 
 # The runtime build also tags the build stage: its untagged layers (the apt install) are otherwise
 # only reachable from an untagged release image, which `podman image prune` removes.
 image target: vm-memory
     {{ if target == "runtime" { engine + " build " + build_memory + " --target build -t " + build_image + " -f testbed/Containerfile ." } else { "true" } }}
-    {{engine}} build {{build_memory}} {{ if target == "runtime" { testbed_features } else { "" } }} --target {{target}} -t localhost/sat-teleop-{{target}}:dev -f testbed/Containerfile .
+    {{engine}} build {{build_memory}} {{ if target == "runtime" { testbed_features } else { "" } }} --target {{target}} -t localhost/thinlink-{{target}}:dev -f testbed/Containerfile .
 
 # The runtime image for one platform, `arm64` (the Pi, Apple Silicon) or `amd64` (a typical VPS),
 # tagged with the architecture. amd64 is cross-built from the host's own architecture (rustc cannot
 # run emulated); only its runtime stage runs emulated. docs/hardware.md#images-and-binaries.
 image-for arch: vm-memory
-    {{engine}} build {{build_memory}} --platform linux/{{arch}} --target {{ if arch == "amd64" { "runtime-amd64" } else { "runtime" } }} -t localhost/sat-teleop-runtime:{{arch}} -f testbed/Containerfile .
+    {{engine}} build {{build_memory}} --platform linux/{{arch}} --target {{ if arch == "amd64" { "runtime-amd64" } else { "runtime" } }} -t localhost/thinlink-runtime:{{arch}} -f testbed/Containerfile .
 
 # Podman reads the build context through the machine's file share, which needs free 512 KiB blocks
 # of VM memory; once page cache has fragmented it, `COPY` fails with "cannot allocate memory".
@@ -103,22 +103,22 @@ forget-checkout folder:
     #!/usr/bin/env bash
     set -euo pipefail
     [ -n "{{folder}}" ] && [ "{{folder}}" != "{{checkout}}" ] || { echo "name another checkout's folder"; exit 1; }
-    {{engine}} run --rm -v sat-teleop-target:/t {{build_image}} rm -rf "/t/{{folder}}"
+    {{engine}} run --rm -v thinlink-target:/t {{build_image}} rm -rf "/t/{{folder}}"
     [ "{{engine}}" = podman ] && podman machine inspect >/dev/null 2>&1 || exit 0
     for arch in amd64 arm64 cross-amd64; do
-        dir=$(printf '%s' "sat-teleop-target-$arch-{{folder}}:0:0" | shasum -a 256 | cut -c1-16)
+        dir=$(printf '%s' "thinlink-target-$arch-{{folder}}:0:0" | shasum -a 256 | cut -c1-16)
         podman machine ssh "sudo rm -rf /var/tmp/buildah-cache-*/$dir"
     done
 
 # ArduRover SITL image; x86_64 only, emulated on other hosts.
 sitl-image: vm-memory
-    {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/sat-teleop-sitl:dev -f testbed/Containerfile.sitl .
+    {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/thinlink-sitl:dev -f testbed/Containerfile.sitl .
 
 # The simulated flight's images: ArduCopter SITL (x86_64, emulated on other hosts) and Gazebo with its
 # camera (native). docs/drone.md#simulated-flight.
 sim-image: vm-memory
-    {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/sat-teleop-sitl-copter:dev -f testbed/Containerfile.sitl-copter .
-    {{engine}} build {{build_memory}} -t localhost/sat-teleop-sim:dev -f testbed/Containerfile.sim .
+    {{engine}} build {{build_memory}} --platform linux/amd64 -t localhost/thinlink-sitl-copter:dev -f testbed/Containerfile.sitl-copter .
+    {{engine}} build {{build_memory}} -t localhost/thinlink-sim:dev -f testbed/Containerfile.sim .
 
 fmt:
     cargo fmt --all
@@ -163,14 +163,14 @@ vehicle-release: lab-down (image-for "arm64")
     out=dist/vehicle
     rm -rf "$out"
     mkdir -p "$out/wireguard"
-    id=$({{engine}} create localhost/sat-teleop-runtime:arm64)
-    {{engine}} cp "$id:/usr/local/bin/sat-teleop-vehicle" "$out/sat-teleop-vehicle"
+    id=$({{engine}} create localhost/thinlink-runtime:arm64)
+    {{engine}} cp "$id:/usr/local/bin/thinlink-vehicle" "$out/thinlink-vehicle"
     {{engine}} rm "$id" > /dev/null
-    file "$out/sat-teleop-vehicle" | grep -q aarch64 || { echo "vehicle-release: the packed binary is not aarch64 ($(file -b "$out/sat-teleop-vehicle")); build on an arm64 host (docs/hardware.md)" >&2; exit 1; }
+    file "$out/thinlink-vehicle" | grep -q aarch64 || { echo "vehicle-release: the packed binary is not aarch64 ($(file -b "$out/thinlink-vehicle")); build on an arm64 host (docs/hardware.md)" >&2; exit 1; }
     cp deploy/vehicle/* testbed/limits.toml testbed/ladder.toml "$out/"
     cp deploy/secrets/vehicle.conf "$out/wireguard/vehicle.conf"
     cp deploy/secrets/ctl-ground.pub deploy/secrets/vehicle.token deploy/secrets/job.token "$out/"
-    (cd "$out" && shasum -a 256 sat-teleop-vehicle > SHA256SUMS)
+    (cd "$out" && shasum -a 256 thinlink-vehicle > SHA256SUMS)
     echo "vehicle-release: $out is ready; copy it to the Pi and run sudo ./provision.sh (docs/hardware.md)"
 
 # dist/relay: what to copy to the relay server: the amd64 runtime image as a tar (built under
@@ -183,7 +183,7 @@ relay-release: lab-down (image-for "amd64")
     rm -rf "$out"
     mkdir -p "$out/wireguard"
     cp deploy/secrets/job.token "$out/job.token"
-    {{ if engine == "podman" { "podman save --format docker-archive" } else { "docker save" } }} -o "$out/runtime.tar" localhost/sat-teleop-runtime:amd64
+    {{ if engine == "podman" { "podman save --format docker-archive" } else { "docker save" } }} -o "$out/runtime.tar" localhost/thinlink-runtime:amd64
     cp deploy/relay/* "$out/"
     cp deploy/secrets/relay.conf "$out/wireguard/relay.conf"
     (cd "$out" && shasum -a 256 runtime.tar > SHA256SUMS)
@@ -201,10 +201,10 @@ ground-release: lab-down (image-for native_arch)
     cp deploy/ground/* testbed/limits.toml "$out/"
     cp deploy/secrets/ground.conf "$out/wireguard/ground.conf"
     cp deploy/secrets/ctl-ground.key deploy/secrets/ground.token deploy/secrets/job.token "$out/"
-    echo "SAT_TELEOP_IMAGE=localhost/sat-teleop-runtime:{{native_arch}}" > "$out/.env"
+    echo "THINLINK_IMAGE=localhost/thinlink-runtime:{{native_arch}}" > "$out/.env"
     echo "ground-release: $out is ready; cd into it and run {{engine}} compose up -d (docs/hardware.md)"
 
-# Build images, make keys and (re)start compose project sat-teleop. Services share sidecar network
+# Build images, make keys and (re)start compose project thinlink. Services share sidecar network
 # namespaces, which Podman cannot recreate under them, so a running project is taken down first, and
 # before any build: the Podman machine's 2 GiB cannot build beside a running testbed.
 # On a Podman machine, netavark#1497 can leave forwarding off on ground_net's bridge, which stops
@@ -216,12 +216,12 @@ lab-up: lab-down lab-keys sitl-image
     {{compose}} up -d
     [ "{{engine}}" = podman ] && podman machine inspect >/dev/null 2>&1 || exit 0
     for net in ground_net ingest_net; do
-        bridge=$(podman network inspect sat-teleop_$net --format '{{{{.NetworkInterface}}')
+        bridge=$(podman network inspect thinlink_$net --format '{{{{.NetworkInterface}}')
         [[ $bridge =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "lab-up: unexpected bridge name '$bridge'" >&2; exit 1; }
         forwarding=$(podman machine ssh "cat /proc/sys/net/ipv4/conf/$bridge/forwarding" | tr -d '\r')
         [ "$forwarding" = 0 ] || continue
         podman machine ssh "sudo sysctl -q -w net.ipv4.conf.$bridge.forwarding=1"
-        echo "lab-up: forwarding was off on $bridge (sat-teleop_$net), turned it on; see https://github.com/containers/netavark/issues/1497"
+        echo "lab-up: forwarding was off on $bridge (thinlink_$net), turned it on; see https://github.com/containers/netavark/issues/1497"
     done
 
 # Run `lab check` in the checks container; results land in results/<run-id>/. Further arguments go
@@ -272,7 +272,7 @@ gate-fast scenario profile *args:
     services=$({{compose}} config --services | wc -l)
     image_of() { {{engine}} inspect --format '{{{{.Image}}' "$1" 2>/dev/null || true; }
     current=$({{engine}} image inspect --format '{{{{.Id}}' {{runtime_image}} 2>/dev/null || true)
-    if [ "$running" -ne "$services" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$inputs" ] || [ "$(image_of sat-teleop-companion-1)" != "$current" ]; then
+    if [ "$running" -ne "$services" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$inputs" ] || [ "$(image_of thinlink-companion-1)" != "$current" ]; then
         just lab-up
         mkdir -p .cache
         echo "$inputs" > "$stamp"
@@ -324,7 +324,7 @@ ingest-isolation:
     #!/usr/bin/env bash
     set -uo pipefail
     failed=0
-    published=$({{engine}} port sat-teleop-vehicle-net-1)
+    published=$({{engine}} port thinlink-vehicle-net-1)
     if [ "$published" = "5700/udp -> 127.0.0.1:5700" ]; then
         echo "ingest-isolation: the vehicle sidecar publishes only $published"
     else
@@ -339,7 +339,7 @@ ingest-isolation:
         fi
     }
     dropped() {
-        {{compose}} exec -T vehicle-net nft list chain inet sat_teleop_ingest "$1" |
+        {{compose}} exec -T vehicle-net nft list chain inet thinlink_ingest "$1" |
             awk -v rule="$2" '$0 ~ rule && /counter packets .* drop$/ { for (i = 1; i < NF; i++) if ($i == "packets") print $(i + 1) }'
     }
     # prove <chain> <rule pattern> <what the probe tries> <probe command...>
@@ -452,42 +452,42 @@ impair profile:
 
 # Ask the ground adapter to take the vehicle's control lease (docs/drone.md#taking-control).
 take-control:
-    {{compose}} exec -T ground sat-teleop-ground --token-file /secrets/ground.token take-control
+    {{compose}} exec -T ground thinlink-ground --token-file /secrets/ground.token take-control
 
 # Give the control lease back.
 release-control:
-    {{compose}} exec -T ground sat-teleop-ground --token-file /secrets/ground.token release-control
+    {{compose}} exec -T ground thinlink-ground --token-file /secrets/ground.token release-control
 
 # Show the ground adapter's lease.
 control-status:
-    {{compose}} exec -T ground sat-teleop-ground --token-file /secrets/ground.token status
+    {{compose}} exec -T ground thinlink-ground --token-file /secrets/ground.token status
 
 # Ask the relay for the retained camera frame from <ago_s> seconds ago, whole or a crop given as
 # fractions x,y,w,h (for example 0.25,0.25,0.5,0.5). Prints the request's id for `detail-fetch`.
 # docs/drone.md#retained-detail.
 detail-request ago_s="10" crop="":
-    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail request --ago-s {{ago_s}} {{ if crop != "" { "--crop " + crop } else { "" } }}
+    {{compose}} exec -T ground thinlink-ground --job-token-file /secrets/job.token detail request --ago-s {{ago_s}} {{ if crop != "" { "--crop " + crop } else { "" } }}
 
 # Like `detail-request`, for the frame captured at <at_ms> (UNIX milliseconds, as `detail-outage`
 # prints it).
 detail-request-at at_ms crop="":
-    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail request --at-ms {{at_ms}} {{ if crop != "" { "--crop " + crop } else { "" } }}
+    {{compose}} exec -T ground thinlink-ground --job-token-file /secrets/job.token detail request --at-ms {{at_ms}} {{ if crop != "" { "--crop " + crop } else { "" } }}
 
 # List the snapshots the vehicle took while the ground was out of reach, with where it was, from the last
 # <since_s> seconds. They stay on the vehicle until fetched (`detail-request-at`, `detail-fetch`).
 detail-outage since_s="3600":
-    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail outage --since-s {{since_s}}
+    {{compose}} exec -T ground thinlink-ground --job-token-file /secrets/job.token detail outage --since-s {{since_s}}
 
 # List the people the detector saw while the ground was out of reach in the last <since_s> seconds:
 # when, where the drone was, and the snapshot to fetch (`detail-request-at`, `detail-fetch`).
 sightings since_s="3600":
-    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail sightings --since-s {{since_s}}
+    {{compose}} exec -T ground thinlink-ground --job-token-file /secrets/job.token detail sightings --since-s {{since_s}}
 
 # Wait for the answer to a `detail-request` and save the JPEG on this machine; prints which frame it
 # is and how old, labelled as historical.
 detail-fetch id file="detail.jpg":
-    {{compose}} exec -T ground sat-teleop-ground --job-token-file /secrets/job.token detail fetch {{id}} -o /tmp/detail.jpg
-    {{engine}} cp sat-teleop-ground-1:/tmp/detail.jpg {{file}}
+    {{compose}} exec -T ground thinlink-ground --job-token-file /secrets/job.token detail fetch {{id}} -o /tmp/detail.jpg
+    {{engine}} cp thinlink-ground-1:/tmp/detail.jpg {{file}}
 
 # The vehicle's test-only video hooks (docs/drone.md#checking-the-display): pause, freeze or resume.
 video-hook action:
@@ -539,8 +539,8 @@ sim-landing run="on" profile="lan" *args:
     #!/usr/bin/env bash
     set -uo pipefail
     export SIM=1
-    precland=/sitl/sat-teleop-copter-precland.parm
-    down=/sitl/sat-teleop-copter-camera-down.parm
+    precland=/sitl/thinlink-copter-precland.parm
+    down=/sitl/thinlink-copter-camera-down.parm
     case "{{run}}" in
         on) config=vehicle-sim-landing.toml; extra="$precland,$down" ;;
         off) config=vehicle-sim.toml; extra="$precland,$down" ;;
@@ -551,15 +551,15 @@ sim-landing run="on" profile="lan" *args:
     just sim-up "$config" || exit 2
     just lab-check sim-landing {{profile}} {{args}}
 
-# Remove the sat-teleop containers and networks; nothing outside the project. On a Podman machine,
+# Remove the thinlink containers and networks; nothing outside the project. On a Podman machine,
 # netavark#1497 leaves a forwarding = 0 sysctl drop-in behind for each internal network, which
-# would later disable forwarding on any network reusing the bridge name; sat-teleop's are removed.
+# would later disable forwarding on any network reusing the bridge name; thinlink's are removed.
 lab-down:
     #!/usr/bin/env bash
     set -euo pipefail
     bridges=""
     if [ "{{engine}}" = podman ] && podman machine inspect >/dev/null 2>&1; then
-        for net in sat-teleop_vehicle_net sat-teleop_ctl_net; do
+        for net in thinlink_vehicle_net thinlink_ctl_net; do
             bridges="$bridges $(podman network inspect "$net" --format '{{{{.NetworkInterface}}' 2>/dev/null || true)"
         done
     fi

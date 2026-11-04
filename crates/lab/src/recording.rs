@@ -11,8 +11,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_detail::store::{self, Entry, StoreConfig, StoreSettings};
-use sat_teleop_video::receiver::{Observation, Source};
+use thinlink_detail::store::{self, Entry, StoreConfig, StoreSettings};
+use thinlink_video::receiver::{Observation, Source};
 
 use crate::adaptation::{self, Frame, ages_ms, new_frames};
 use crate::budget::{self, Budget};
@@ -99,7 +99,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("video_received", Verdict::Incomplete, e.to_string());
         return results;
     }
@@ -526,7 +526,7 @@ fn record_live(results: &mut Results, frames: &[Frame], healthy: Option<Span>, s
 
 #[cfg(test)]
 mod tests {
-    use sat_teleop_video_core::stamp::{CaptureMs, FrameId, Stamp};
+    use thinlink_video_core::stamp::{CaptureMs, FrameId, Stamp};
 
     use super::*;
 

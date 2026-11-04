@@ -1,14 +1,14 @@
 #!/bin/sh
 # Provisions a Raspberry Pi (Raspberry Pi OS Lite 64-bit, Debian 13 "trixie" or the same release as
-# the build container) as the sat-teleop vehicle: packages, the service user, chrony, WireGuard, the
+# the build container) as the thinlink vehicle: packages, the service user, chrony, WireGuard, the
 # binary, the configs and the systemd unit. Run as root from the unpacked release directory:
 #
 #   sudo ./provision.sh
 #
-# The directory must hold what `just vehicle-release` made: sat-teleop-vehicle, SHA256SUMS, limits.toml,
+# The directory must hold what `just vehicle-release` made: thinlink-vehicle, SHA256SUMS, limits.toml,
 # ladder.toml, wireguard/vehicle.conf, ctl-ground.pub, vehicle.token and job.token (from `just deploy-keys`), and the files of deploy/vehicle. The
 # binary is checked against SHA256SUMS before it is installed; nothing is downloaded but apt packages.
-# Running it again keeps /etc/sat-teleop/vehicle.toml and the WireGuard config as they are.
+# Running it again keeps /etc/thinlink/vehicle.toml and the WireGuard config as they are.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -27,22 +27,22 @@ apt-get install -y --no-install-recommends \
     v4l-utils chrony wireguard-tools ca-certificates
 apt-get install -y --no-install-recommends gstreamer1.0-libcamera || echo "provision: no gstreamer1.0-libcamera; a CSI camera module will not work"
 
-id sat-teleop >/dev/null 2>&1 || useradd --system --home-dir /var/lib/sat-teleop --shell /usr/sbin/nologin sat-teleop
-usermod -aG video,dialout sat-teleop
+id thinlink >/dev/null 2>&1 || useradd --system --home-dir /var/lib/thinlink --shell /usr/sbin/nologin thinlink
+usermod -aG video,dialout thinlink
 
-install -D -m 0755 "$here/sat-teleop-vehicle" /usr/local/bin/sat-teleop-vehicle
-install -d -m 0755 /etc/sat-teleop
-install -m 0644 "$here/limits.toml" /etc/sat-teleop/limits.toml
-install -m 0644 "$here/ladder.toml" /etc/sat-teleop/ladder.toml
-[ -e /etc/sat-teleop/vehicle.toml ] || install -m 0644 "$here/vehicle.toml" /etc/sat-teleop/vehicle.toml
+install -D -m 0755 "$here/thinlink-vehicle" /usr/local/bin/thinlink-vehicle
+install -d -m 0755 /etc/thinlink
+install -m 0644 "$here/limits.toml" /etc/thinlink/limits.toml
+install -m 0644 "$here/ladder.toml" /etc/thinlink/ladder.toml
+[ -e /etc/thinlink/vehicle.toml ] || install -m 0644 "$here/vehicle.toml" /etc/thinlink/vehicle.toml
 
-install -m 0644 "$here/ctl-ground.pub" /etc/sat-teleop/ctl-ground.pub
+install -m 0644 "$here/ctl-ground.pub" /etc/thinlink/ctl-ground.pub
 for token in vehicle job; do
-    install -m 0600 -o sat-teleop -g sat-teleop "$here/$token.token" "/etc/sat-teleop/$token.token"
+    install -m 0600 -o thinlink -g thinlink "$here/$token.token" "/etc/thinlink/$token.token"
 done
 
 install -d -m 0755 /etc/chrony/conf.d
-install -m 0644 "$here/chrony-sat-teleop.conf" /etc/chrony/conf.d/sat-teleop.conf
+install -m 0644 "$here/chrony-thinlink.conf" /etc/chrony/conf.d/thinlink.conf
 systemctl enable --now chrony
 systemctl restart chrony
 
@@ -50,9 +50,9 @@ install -d -m 0700 /etc/wireguard
 [ -e /etc/wireguard/wg0.conf ] || install -m 0600 "$here/wireguard/vehicle.conf" /etc/wireguard/wg0.conf
 systemctl enable --now wg-quick@wg0
 
-install -m 0644 "$here/sat-teleop-vehicle.service" /etc/systemd/system/sat-teleop-vehicle.service
+install -m 0644 "$here/thinlink-vehicle.service" /etc/systemd/system/thinlink-vehicle.service
 systemctl daemon-reload
-systemctl enable --now sat-teleop-vehicle
+systemctl enable --now thinlink-vehicle
 
-echo "provision: done. Check: systemctl status sat-teleop-vehicle; curl -s -H \"Authorization: Bearer \$(sudo cat /etc/sat-teleop/vehicle.token)\" http://127.0.0.1:9100/metrics"
+echo "provision: done. Check: systemctl status thinlink-vehicle; curl -s -H \"Authorization: Bearer \$(sudo cat /etc/thinlink/vehicle.token)\" http://127.0.0.1:9100/metrics"
 echo "provision: then docs/hardware.md#boards, the bench checklist in docs/hardware.md#bring-up-checklist"

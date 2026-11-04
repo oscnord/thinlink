@@ -1,4 +1,4 @@
-# MediaMTX on the relay (docs/testbed.md). It shares the relay-net namespace with sat-teleop-relay, which
+# MediaMTX on the relay (docs/testbed.md). It shares the relay-net namespace with thinlink-relay, which
 # publishes path `live` over RTSP from 127.0.0.1. Settings not listed keep the defaults of
 # bluenviron/mediamtx:1.21.3.
 logLevel: info

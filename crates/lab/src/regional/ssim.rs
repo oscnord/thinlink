@@ -2,7 +2,7 @@
 //! pixels, and how much of the reference's local contrast survived. The windows are scored once;
 //! `Region` then averages the ones inside and the ones outside a box.
 
-use sat_teleop_policy::region::PixelRect;
+use thinlink_policy::region::PixelRect;
 
 const WINDOW: usize = 8;
 const STEP: usize = 4;

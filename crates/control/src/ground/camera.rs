@@ -17,7 +17,7 @@ use mavlink::dialects::ardupilotmega::{
 use mavlink::{MavHeader, Message};
 use serde::Serialize;
 
-use sat_teleop_policy::region::NormRect;
+use thinlink_policy::region::NormRect;
 
 use crate::envelope::TrackingLimits;
 use crate::frame::Frame;
@@ -34,7 +34,7 @@ const HEARD_FOR: Duration = Duration::from_millis(1200);
 /// The one stream.
 const STREAM_ID: u8 = 1;
 const STREAM_NAME: &str = "overview";
-const VENDOR: &str = "sat-teleop";
+const VENDOR: &str = "thinlink";
 const MODEL: &str = "ground freshness output";
 /// `CAMERA_TRACKING_IMAGE_STATUS`.
 const TRACKING_STATUS_ID: f32 = 275.0;

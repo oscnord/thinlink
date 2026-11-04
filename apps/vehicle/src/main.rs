@@ -11,32 +11,30 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_control::envelope::{CHALLENGE_EVERY, ControlLimits, ToGround};
-use sat_teleop_control::telemetry::TelemetryLimits;
-use sat_teleop_control::vehicle::{self, VehicleConfig, VehicleSnapshot, VehicleStats};
-use sat_teleop_detail::store::{Store, StoreSettings, StoreSnapshot, Tag};
-use sat_teleop_detail::vehicle::{
+use thinlink_control::envelope::{CHALLENGE_EVERY, ControlLimits, ToGround};
+use thinlink_control::telemetry::TelemetryLimits;
+use thinlink_control::vehicle::{self, VehicleConfig, VehicleSnapshot, VehicleStats};
+use thinlink_detail::store::{Store, StoreSettings, StoreSnapshot, Tag};
+use thinlink_detail::vehicle::{
     self as retrieval, RetrievalLimits, RetrievalSnapshot, RetrievalStats,
 };
-use sat_teleop_detect::{Detection, Detector};
-use sat_teleop_media::hooks::sender_hooks;
-use sat_teleop_media::region::{
-    RegionSettings, Regional, RegionalSnapshot, validate_roi_qp_offset,
-};
-use sat_teleop_media::retrieval as media_retrieval;
-use sat_teleop_media::tags::TagFeed;
-use sat_teleop_policy::follow::{Follower, Luma, Step};
-use sat_teleop_policy::kind::Kind;
-use sat_teleop_policy::region::NormRect;
-use sat_teleop_policy::retrieval::ground_heard;
-use sat_teleop_policy::sighting::Seen;
-use sat_teleop_video::adapt::{
+use thinlink_detect::{Detection, Detector};
+use thinlink_media::hooks::sender_hooks;
+use thinlink_media::region::{RegionSettings, Regional, RegionalSnapshot, validate_roi_qp_offset};
+use thinlink_media::retrieval as media_retrieval;
+use thinlink_media::tags::TagFeed;
+use thinlink_policy::follow::{Follower, Luma, Step};
+use thinlink_policy::kind::Kind;
+use thinlink_policy::region::NormRect;
+use thinlink_policy::retrieval::ground_heard;
+use thinlink_policy::sighting::Seen;
+use thinlink_video::adapt::{
     self, AdaptLimits, AdaptSnapshot, AdaptStats, LadderConfig, Rungs, Setup, Uplink,
 };
-use sat_teleop_video::camera;
-use sat_teleop_video::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
-use sat_teleop_video::{Health, HealthSnapshot, metrics, supervise, unix_ms};
-use sat_teleop_video_core::budget::{Budget, wire_bytes};
+use thinlink_video::camera;
+use thinlink_video::sender::{self, SenderConfig, SenderSnapshot, SenderStats, Snapshot};
+use thinlink_video::{Health, HealthSnapshot, metrics, supervise, unix_ms};
+use thinlink_video_core::budget::{Budget, wire_bytes};
 
 #[cfg(feature = "testbed")]
 mod hooks;
@@ -45,7 +43,7 @@ mod process;
 
 #[derive(Parser)]
 #[command(
-    name = "sat-teleop-vehicle",
+    name = "thinlink-vehicle",
     about = "Vehicle companion: stamped H.264 over RTP and gated MAVLink to the relay"
 )]
 struct Cli {
@@ -131,7 +129,7 @@ struct RegionConfig {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DetectorConfig {
-    /// The ONNX model, for example /usr/share/sat-teleop/person.onnx.
+    /// The ONNX model, for example /usr/share/thinlink/person.onnx.
     model: PathBuf,
     /// The model's square input size in pixels, `DETECTOR_INPUT`.
     input: u32,
@@ -280,7 +278,7 @@ fn main() -> Result<()> {
 }
 
 fn probe_camera() -> Result<()> {
-    sat_teleop_video::init().context("GStreamer")?;
+    thinlink_video::init().context("GStreamer")?;
     let devices = camera::probe().context("device monitor")?;
     if devices.is_empty() {
         println!(
@@ -350,7 +348,7 @@ fn run(
         },
         rungs,
     };
-    sat_teleop_video::init().context("GStreamer")?;
+    thinlink_video::init().context("GStreamer")?;
     let retained = store
         .map(|settings| open_store(settings, sender.snapshot.is_some()))
         .transpose()?
@@ -771,7 +769,7 @@ fn load(path: &Path) -> Result<Config> {
 /// needs them.
 #[cfg(feature = "testbed")]
 fn test_hooks(table: &mut toml::Table, mavlink: &VehicleConfig, path: &Path) -> Result<bool> {
-    use sat_teleop_control::identity::Mode;
+    use thinlink_control::identity::Mode;
 
     let enabled = match table.remove("debug_hooks") {
         None => false,
@@ -858,7 +856,7 @@ mod tests {
     fn load_text(text: &str) -> Result<Config> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "sat-teleop-vehicle-{}-{}.toml",
+            "thinlink-vehicle-{}-{}.toml",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

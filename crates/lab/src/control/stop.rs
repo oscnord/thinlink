@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use mavlink::dialects::ardupilotmega::MavResult;
 use serde_json::Value;
 
-use sat_teleop_control::envelope::{ControlLimits, TICK};
+use thinlink_control::envelope::{ControlLimits, TICK};
 
-use sat_teleop_control::ground::LeaseStatus;
+use thinlink_control::ground::LeaseStatus;
 
 use super::{
     Ack, MANUAL, Parts, Untouched, applied, armed, disarm, force_disarm, intruder, lease_status,

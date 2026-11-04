@@ -2,9 +2,9 @@
 
 use serde_json::json;
 
-use sat_teleop_detail::client::{Client, ClientError};
-use sat_teleop_detail::wire::{JobId, JobRequest, Kind};
-use sat_teleop_video_core::token::Token;
+use thinlink_detail::client::{Client, ClientError};
+use thinlink_detail::wire::{JobId, JobRequest, Kind};
+use thinlink_video_core::token::Token;
 
 use super::{CLIENT_TIMEOUT, Settings};
 use crate::check::{self, Results, Verdict, float};

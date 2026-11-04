@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-lab"
+name = "thinlink-lab"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,11 +11,11 @@ workspace = true
 
 [dependencies]
 mavlink.workspace = true
-sat-teleop-control = { path = "../control" }
-sat-teleop-detail = { path = "../detail" }
-sat-teleop-policy = { path = "../policy" }
-sat-teleop-video = { path = "../video" }
-sat-teleop-video-core = { path = "../video-core" }
+thinlink-control = { path = "../control" }
+thinlink-detail = { path = "../detail" }
+thinlink-policy = { path = "../policy" }
+thinlink-video = { path = "../video" }
+thinlink-video-core = { path = "../video-core" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

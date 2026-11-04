@@ -25,24 +25,24 @@ Either run through rustup explicitly:
 
 ```sh
 rustup toolchain install 1.99.0 --component rustfmt --component clippy
-rustup run 1.99.0 cargo test -p sat-teleop-video-core --locked
+rustup run 1.99.0 cargo test -p thinlink-video-core --locked
 ```
 
 or put the toolchain's `bin` directory first on `PATH`. On an Apple Silicon Mac:
 
 ```sh
-PATH=$HOME/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH cargo test -p sat-teleop-video-core --locked
+PATH=$HOME/.rustup/toolchains/1.99.0-aarch64-apple-darwin/bin:$PATH cargo test -p thinlink-video-core --locked
 ```
 
 Do not rewrite your global toolchain setup just for this project.
 
 ## Builds and gates
 
-Pure crates build and test natively. GStreamer-linked packages (`sat-teleop-x264`, `sat-teleop-video`, `sat-teleop-media`, `sat-teleop-lab` and the applications) build in the build container. The host does not need GStreamer.
+Pure crates build and test natively. GStreamer-linked packages (`thinlink-x264`, `thinlink-video`, `thinlink-media`, `thinlink-lab` and the applications) build in the build container. The host does not need GStreamer.
 
 | Recipe | Purpose |
 |---|---|
-| `just check` | Full workspace fmt, Clippy, tests, layer checks and the unsafe-code boundary check in `localhost/sat-teleop-build:dev`, including control and vehicle checks with the `testbed` feature. |
+| `just check` | Full workspace fmt, Clippy, tests, layer checks and the unsafe-code boundary check in `localhost/thinlink-build:dev`, including control and vehicle checks with the `testbed` feature. |
 | `just check-native` | Host gates for packages without GStreamer, including control's `testbed` feature. Needs `jq` and Bash and uses the pinned toolchain even when `cargo` is not a rustup proxy. |
 | `just fmt` | Format the workspace on the host. |
 | `just image <target>` | Build `runtime` or `build` from `testbed/Containerfile`. The runtime includes vehicle test hooks. |
@@ -71,9 +71,9 @@ The workspace sets `unsafe_code = "deny"`. `just check` rejects any `.rs` file u
 
 ## xtask
 
-`cargo xtask <command>` is an alias for `cargo run -q -p sat-teleop-xtask --` (see `.cargo/config.toml`).
+`cargo xtask <command>` is an alias for `cargo run -q -p thinlink-xtask --` (see `.cargo/config.toml`).
 
-- `cargo xtask layers` loads the workspace with `cargo metadata` and checks it against the registry in `xtask/src/layers.rs`. It reports every violation and exits 1 if there are any: unregistered members, missing `[lints] workspace = true`, upward or sideways dependencies, dependencies on apps or tooling, non-dev use of `sat-teleop-testkit`, forbidden families in `sat-teleop-policy`, GStreamer outside `sat-teleop-x264`, `sat-teleop-video`, `sat-teleop-media` and apps. It checks dependencies as declared, including optional and target-specific ones. `sat-teleop-x264` sits at L0 beside `sat-teleop-video-core`; `sat-teleop-video` depends on both.
+- `cargo xtask layers` loads the workspace with `cargo metadata` and checks it against the registry in `xtask/src/layers.rs`. It reports every violation and exits 1 if there are any: unregistered members, missing `[lints] workspace = true`, upward or sideways dependencies, dependencies on apps or tooling, non-dev use of `thinlink-testkit`, forbidden families in `thinlink-policy`, GStreamer outside `thinlink-x264`, `thinlink-video`, `thinlink-media` and apps. It checks dependencies as declared, including optional and target-specific ones. `thinlink-x264` sits at L0 beside `thinlink-video-core`; `thinlink-video` depends on both.
 - `cargo xtask fixtures` reads `fixtures/manifest.toml`, downloads each missing fixture into `.cache/fixtures/` and verifies it. `cargo xtask fixtures --check` only verifies files already present and fails on a missing one.
 
 ## Fixtures
@@ -97,7 +97,7 @@ These are CPU-time quotas on host cores, not emulated Pi cores. Memory bandwidth
 
 ## Lab setup
 
-The testbed is compose project `sat-teleop` (`testbed/compose.yml`). A router container replaces the cellular or GEO-like link: it forwards and NATs the vehicle network onto the ground network and impairs each direction with `tc` through the router agent (`lab router`). Every node joins a WireGuard overlay whose server is the relay, so vehicle traffic reaches the relay inside WireGuard through the router, as it would over a carrier network.
+The testbed is compose project `thinlink` (`testbed/compose.yml`). A router container replaces the cellular or GEO-like link: it forwards and NATs the vehicle network onto the ground network and impairs each direction with `tc` through the router agent (`lab router`). Every node joins a WireGuard overlay whose server is the relay, so vehicle traffic reaches the relay inside WireGuard through the router, as it would over a carrier network.
 
 Applications share a sidecar's network namespace (`network_mode: service:<sidecar>`). The services table below gives each namespace.
 
@@ -150,30 +150,30 @@ The vehicle (`testbed/config/vehicle-ingest.toml`) then accepts datagrams from t
 | `ground-net` | .232.30, .233.30 | 10.77.0.3/24 | `NET_ADMIN` | `sidecar.sh` |
 | `checks` | .232.40, .233.40 | 10.77.0.4/24 | `NET_ADMIN` | `sidecar.sh` with `ROUTE="192.168.231.0/24 via 192.168.232.254"`; `lab check` runs here |
 | `feeder` | .234.5 (and .234.6, an alias) | none | `NET_ADMIN`, profile `feeder` | `feeder.sh`: a 720p30 test pattern as RTP/H.264 to the ingest port, from .5 (accepted) and a trickle from .6 (refused). Started by `just ingest-check`, not by `lab-up` |
-| `companion` | vehicle-net's | vehicle-net's | none | `sat-teleop-vehicle run --config /config/vehicle.toml --limits /config/limits.toml --ladder /config/ladder.toml --metrics-addr 192.168.233.10:9100 --token-file /secrets/vehicle.token --job-token-file /secrets/job.token` (`VEHICLE_CONFIG=vehicle-ingest.toml` mounts the ingest config as `vehicle.toml`) |
-| `relay` | relay-net's | relay-net's | none | `sat-teleop-relay run --config /config/relay.toml --metrics-addr 192.168.233.20:9100 --token-file /secrets/job.token` |
+| `companion` | vehicle-net's | vehicle-net's | none | `thinlink-vehicle run --config /config/vehicle.toml --limits /config/limits.toml --ladder /config/ladder.toml --metrics-addr 192.168.233.10:9100 --token-file /secrets/vehicle.token --job-token-file /secrets/job.token` (`VEHICLE_CONFIG=vehicle-ingest.toml` mounts the ingest config as `vehicle.toml`) |
+| `relay` | relay-net's | relay-net's | none | `thinlink-relay run --config /config/relay.toml --metrics-addr 192.168.233.20:9100 --token-file /secrets/job.token` |
 | `mediamtx` | relay-net's | relay-net's | none | `bluenviron/mediamtx:1.21.3` with `testbed/mediamtx.yml` |
 | `mavlink-router` | relay-net's | relay-net's | none, `init`, `restart: on-failure` | `mavlink-routerd -c /config/mavlink-router.conf` (`testbed/mavlink-router.conf`) |
-| `ground` | ground-net's | ground-net's | none | `sat-teleop-ground run --config /config/ground.toml --limits /config/limits.toml --metrics-addr 192.168.233.30:9100 --token-file /secrets/ground.token --job-token-file /secrets/job.token` |
-| `sitl` | vehicle-net's | vehicle-net's | none, `init` | `localhost/sat-teleop-sitl:dev` (linux/amd64): `ardurover --model rover --defaults /sitl/rover.parm,/sitl/sat-teleop.parm --speedup 1 -I0 --home 59.3293,18.0686,10,0` |
+| `ground` | ground-net's | ground-net's | none | `thinlink-ground run --config /config/ground.toml --limits /config/limits.toml --metrics-addr 192.168.233.30:9100 --token-file /secrets/ground.token --job-token-file /secrets/job.token` |
+| `sitl` | vehicle-net's | vehicle-net's | none, `init` | `localhost/thinlink-sitl:dev` (linux/amd64): `ardurover --model rover --defaults /sitl/rover.parm,/sitl/thinlink.parm --speedup 1 -I0 --home 59.3293,18.0686,10,0` |
 
 | Port | Where | Purpose |
 |---|---|---|
 | 51820/udp | 192.168.232.20 | WireGuard server on the relay |
 | 9000/tcp | 192.168.233.254 | Router agent, `ctl_net` only |
-| 9100/tcp | 192.168.233.10, 192.168.233.20, 192.168.233.30 | `GET /metrics` of sat-teleop-vehicle, sat-teleop-relay and sat-teleop-ground, and sat-teleop-ground's lease endpoints; the only other port `ctl.nft` admits |
+| 9100/tcp | 192.168.233.10, 192.168.233.20, 192.168.233.30 | `GET /metrics` of thinlink-vehicle, thinlink-relay and thinlink-ground, and thinlink-ground's lease endpoints; the only other port `ctl.nft` admits |
 | 5004/udp | 10.77.0.1 | RTP/H.264 from the vehicle; the relay binds the overlay address only |
 | 5006/udp | 10.77.0.1 | The relay's feedback to the vehicle's probes ([video path](video.md)); overlay address only |
 | 5700/udp | 192.168.234.10, published on host 127.0.0.1:5700 | RTP/H.264 from an external camera into the vehicle's ingest source (`vehicle-ingest.toml` only), from the addresses in `from` only |
 | 5760/tcp | vehicle namespace, loopback only (`sitl.nft`) | SITL serial 0, MAVLink for the companion |
 | 14550/udp | 10.77.0.1 | mavlink-router's server endpoint for the vehicle, overlay address only |
-| 14551/udp | 10.77.0.3 | sat-teleop-ground's overlay socket; mavlink-router's client endpoint sends here |
-| 14552/udp | 192.168.232.40 | `lab check mavlink` and `control-freshness` in `checks`, a ground station of sat-teleop-ground |
+| 14551/udp | 10.77.0.3 | thinlink-ground's overlay socket; mavlink-router's client endpoint sends here |
+| 14552/udp | 192.168.232.40 | `lab check mavlink` and `control-freshness` in `checks`, a ground station of thinlink-ground |
 | 14553/udp | 10.77.0.4 | `lab check control-freshness` in `checks`: SITL's telemetry straight from mavlink-router |
 | 7700/udp | 10.77.0.2 | The vehicle's control endpoint (control envelopes, lease, challenges) |
-| 7701/udp | 10.77.0.3 | sat-teleop-ground's controller, the lease holder's socket |
-| 14550/udp | the Mac, as `host.containers.internal` | QGC's default UDP link; sat-teleop-ground sends telemetry there and hears QGC's replies on the same socket, so nothing is published; see [drone.md](drone.md) |
-| 5600/udp | the Mac, as `host.containers.internal` | QGC's default UDP video port; sat-teleop-ground's freshness output (RTP/H.264) goes there through gvproxy; see [drone.md](drone.md) |
+| 7701/udp | 10.77.0.3 | thinlink-ground's controller, the lease holder's socket |
+| 14550/udp | the Mac, as `host.containers.internal` | QGC's default UDP link; thinlink-ground sends telemetry there and hears QGC's replies on the same socket, so nothing is published; see [drone.md](drone.md) |
+| 5600/udp | the Mac, as `host.containers.internal` | QGC's default UDP video port; thinlink-ground's freshness output (RTP/H.264) goes there through gvproxy; see [drone.md](drone.md) |
 | 5602/udp | 192.168.232.40 | `lab check qgc-status` in `checks`: the same output |
 | 8080/tcp | 10.77.0.1 | The relay's job API for the vehicle (`GET /jobs/next`, chunk uploads, `complete`, `fail`): overlay address only, bearer token required ([retained detail](drone.md)) |
 | 8080/tcp | 192.168.232.20 | The relay's job API for the ground and `checks` (`POST /jobs`, `GET /objects/{id}`, `DELETE /jobs/{id}`): its `ground_net` address only, bearer token required |
@@ -216,23 +216,23 @@ just lab-check adaptation bandwidth-steps            # the vehicle's adaptation 
 just lab-check adaptation lte-bad --duration-s 120   # further arguments go to `lab check`
 just ingest-check lan         # the camera ingest path with a test-pattern feeder in place of a webcam
 just video-hook pause         # the vehicle's test-only video hooks: pause, freeze, resume
-just lab-down                 # remove the sat-teleop containers and networks
+just lab-down                 # remove the thinlink containers and networks
 ```
 
 `just lab-up` first runs `just lab-down`, then the image builds (`runtime` and `sitl-image`); cached layers make them quick when nothing changed, and source changes rebuild the binaries.
 
 The testbed goes down first because services share sidecar network namespaces, and Podman cannot recreate a sidecar (for a new image) while services still use it, and because a build never starts beside a running testbed.
 
-On a Podman machine it then makes sure forwarding is on for `ground_net`'s bridge (see "macOS and Podman notes"). `just lab-check <scenario> <profile> [args]` runs `lab check` in `checks` with the working directory `/sat-teleop`, where `testbed/profiles/` is mounted read-only and `results/` is the repository's `results/` directory. It passes `git describe --always --dirty` as the revision and exits with the check's code.
+On a Podman machine it then makes sure forwarding is on for `ground_net`'s bridge (see "macOS and Podman notes"). `just lab-check <scenario> <profile> [args]` runs `lab check` in `checks` with the working directory `/thinlink`, where `testbed/profiles/` is mounted read-only and `results/` is the repository's `results/` directory. It passes `git describe --always --dirty` as the revision and exits with the check's code.
 
 Only the host can kill a container, so when a check prints the line `lab: kill ground` on stdout (`control-freshness` does, mid-drive), the recipe runs `compose kill ground` and `compose start ground` and passes every other line through; the adapter restarts at once, without a lease.
 
-Cleanup: `just lab-down` runs `compose down --remove-orphans`, which removes only the `sat-teleop` containers and networks, and on a Podman machine the leaked netavark drop-ins ("macOS and Podman notes"). Images (`localhost/sat-teleop-*`), `testbed/secrets/` and `results/` stay. Remove them explicitly if wanted, for example `podman rmi localhost/sat-teleop-runtime:dev`; never prune the shared machine.
+Cleanup: `just lab-down` runs `compose down --remove-orphans`, which removes only the `thinlink` containers and networks, and on a Podman machine the leaked netavark drop-ins ("macOS and Podman notes"). Images (`localhost/thinlink-*`), `testbed/secrets/` and `results/` stay. Remove them explicitly if wanted, for example `podman rmi localhost/thinlink-runtime:dev`; never prune the shared machine.
 
 To apply a profile by hand, go through `checks` (the agent is on `ctl_net` only):
 
 ```sh
-podman compose -p sat-teleop -f testbed/compose.yml exec checks \
+podman compose -p thinlink -f testbed/compose.yml exec checks \
   lab impair --agent http://192.168.233.254:9000 --profile testbed/profiles/geo.toml
 ```
 
@@ -243,12 +243,12 @@ podman compose -p sat-teleop -f testbed/compose.yml exec checks \
 All three applications restart a failed pipeline after one second (for example until `wg0` is up) and report counters and health (`runs`, `running`, `last_error`) on `GET /metrics` (the vehicle's also carries its MAVLink counters under `mavlink`, the ground's its video under `video`):
 
 ```sh
-podman compose -p sat-teleop -f testbed/compose.yml exec checks sh -c 'curl -s -H "Authorization: Bearer $(cat /secrets/vehicle.token)" http://192.168.233.10:9100/metrics'
-podman compose -p sat-teleop -f testbed/compose.yml exec checks sh -c 'curl -s -H "Authorization: Bearer $(cat /secrets/job.token)" http://192.168.233.20:9100/metrics'
-podman compose -p sat-teleop -f testbed/compose.yml exec checks sh -c 'curl -s -H "Authorization: Bearer $(cat /secrets/ground.token)" http://192.168.233.30:9100/metrics'
+podman compose -p thinlink -f testbed/compose.yml exec checks sh -c 'curl -s -H "Authorization: Bearer $(cat /secrets/vehicle.token)" http://192.168.233.10:9100/metrics'
+podman compose -p thinlink -f testbed/compose.yml exec checks sh -c 'curl -s -H "Authorization: Bearer $(cat /secrets/job.token)" http://192.168.233.20:9100/metrics'
+podman compose -p thinlink -f testbed/compose.yml exec checks sh -c 'curl -s -H "Authorization: Bearer $(cat /secrets/ground.token)" http://192.168.233.30:9100/metrics'
 ```
 
-`sat-teleop-ground` reports its overlay socket (`listen`), where mavlink-router was last heard from (`relay_endpoint`), per direction (`telemetry` towards the stations, `gcs` from them) messages and bytes in and out and drops by reason, its camera's counts (`camera`) and its video output (`video`: both pipelines' health, frames decoded, new and unreadable, frames sent by state, the current state); `apps/ground/AGENTS.md` lists every field.
+`thinlink-ground` reports its overlay socket (`listen`), where mavlink-router was last heard from (`relay_endpoint`), per direction (`telemetry` towards the stations, `gcs` from them) messages and bytes in and out and drops by reason, its camera's counts (`camera`) and its video output (`video`: both pipelines' health, frames decoded, new and unreadable, frames sent by state, the current state); `apps/ground/AGENTS.md` lists every field.
 
 ## Checks
 
@@ -783,10 +783,10 @@ lab router --listen 192.168.233.254:9000 --uplink-if auto --downlink-if auto
 | `POST /timeline/start` | Re-apply the current profile's baseline and run its timeline on a thread. 409 without a profile or timeline. |
 | `GET /timeline` | `running` and the recorded transitions (`planned_ms`, `actual_ms`, interface, command, error). |
 | `GET /counters` | Per direction: `tc -s` qdisc counters (bytes, packets, drops, overlimits, backlog) and `/sys/class/net` statistics. |
-| `POST /forwarding` `{"enabled": bool}` | `false` installs an nft table `inet sat_teleop_cut` that drops forwarded traffic; `true` removes it. |
+| `POST /forwarding` `{"enabled": bool}` | `false` installs an nft table `inet thinlink_cut` that drops forwarded traffic; `true` removes it. |
 | `POST /reset` | Stop the timeline, delete the root qdiscs, remove the nft table. |
 
-`inet sat_teleop_cut` hooks forward at priority -100, ahead of the router's own `ip sat_teleop_router` table, and only the agent touches it.
+`inet thinlink_cut` hooks forward at priority -100, ahead of the router's own `ip thinlink_router` table, and only the agent touches it.
 
 The CLI wraps this for interactive use and validates the file locally first:
 
@@ -801,12 +801,12 @@ For HTTP diagnostics inside a container use `curl` (in the runtime image), for e
 
 `testbed/Containerfile` has these stages, built with the repository root as context (`.dockerignore` keeps `target/`, `.git/`, caches, results and secrets out):
 
-- `build`: the pinned Rust image ([toolchain](#toolchain)) with GStreamer development packages (`localhost/sat-teleop-build:dev`, used by `just check`). `just image runtime` tags it too, so its layers, apt install included, are not left to a dangling release image that `podman image prune` removes.
+- `build`: the pinned Rust image ([toolchain](#toolchain)) with GStreamer development packages (`localhost/thinlink-build:dev`, used by `just check`). `just image runtime` tags it too, so its layers, apt install included, are not left to a dangling release image that `podman image prune` removes.
 - `bins-native`: from `build`, runs `cargo build --release --locked` with cache mounts for the registry and `target/` (one `target/` cache per build architecture, so a second architecture never empties the first's). `bins-cross-amd64`: from `build` too, cross-compiles the same binaries for `x86_64-unknown-linux-gnu` with the Debian cross toolchain and amd64 GStreamer headers, because `rustc` segfaults under qemu emulation on Apple Silicon. `build` always runs on the build host's own architecture.
-- `localhost/sat-teleop-sitl:dev` comes from `testbed/Containerfile.sitl` instead.
-- `runtime-base`, `runtime` and `runtime-amd64`: Debian trixie slim (pinned by index digest) with GStreamer runtime plugins (`gstreamer1.0-x` for Pango's `textoverlay`), `iproute2`, `nftables`, `wireguard-tools`, `iputils-ping`, `tcpdump`, `procps`, `curl`, `gstreamer1.0-rtsp` (for `rtspclientsink`), mavlink-router v4 (`mavlink-routerd-glibc-aarch64` or `-x86_64` by `TARGETARCH`, pinned by SHA-256 from the v4 GitHub release), and the release binaries `lab`, `sat-teleop-vehicle`, `sat-teleop-relay` and `sat-teleop-ground` in `/usr/local/bin`: `runtime` from `bins-native` (`localhost/sat-teleop-runtime:dev`), `runtime-amd64` from `bins-cross-amd64` (`just image-for amd64`, `localhost/sat-teleop-runtime:amd64`, [hardware.md](hardware.md)).
+- `localhost/thinlink-sitl:dev` comes from `testbed/Containerfile.sitl` instead.
+- `runtime-base`, `runtime` and `runtime-amd64`: Debian trixie slim (pinned by index digest) with GStreamer runtime plugins (`gstreamer1.0-x` for Pango's `textoverlay`), `iproute2`, `nftables`, `wireguard-tools`, `iputils-ping`, `tcpdump`, `procps`, `curl`, `gstreamer1.0-rtsp` (for `rtspclientsink`), mavlink-router v4 (`mavlink-routerd-glibc-aarch64` or `-x86_64` by `TARGETARCH`, pinned by SHA-256 from the v4 GitHub release), and the release binaries `lab`, `thinlink-vehicle`, `thinlink-relay` and `thinlink-ground` in `/usr/local/bin`: `runtime` from `bins-native` (`localhost/thinlink-runtime:dev`), `runtime-amd64` from `bins-cross-amd64` (`just image-for amd64`, `localhost/thinlink-runtime:amd64`, [hardware.md](hardware.md)).
 
-`testbed/Containerfile.sitl` builds `localhost/sat-teleop-sitl:dev` (`just sitl-image`, `--platform linux/amd64`) from Debian trixie slim (pinned by index digest) and two downloads pinned by SHA-256 with `ADD --checksum`: the official ArduRover 4.7.2 SITL binary (statically linked x86_64, ArduPilot git `fb773567896014da007bca58358704d4a0d8516f`, 6845664 bytes, `f453fd8217b9d798c873e5c424e139a2a3597b52e31658f76b2c177b523391af`) and `rover.parm` from the same commit (606 bytes, `6479879d3e625854a6c32cb4d3fe231bab81d935e07904eac8a411fd6f971bc4`).
+`testbed/Containerfile.sitl` builds `localhost/thinlink-sitl:dev` (`just sitl-image`, `--platform linux/amd64`) from Debian trixie slim (pinned by index digest) and two downloads pinned by SHA-256 with `ADD --checksum`: the official ArduRover 4.7.2 SITL binary (statically linked x86_64, ArduPilot git `fb773567896014da007bca58358704d4a0d8516f`, 6845664 bytes, `f453fd8217b9d798c873e5c424e139a2a3597b52e31658f76b2c177b523391af`) and `rover.parm` from the same commit (606 bytes, `6479879d3e625854a6c32cb4d3fe231bab81d935e07904eac8a411fd6f971bc4`).
 
 Both apt installs use cache mounts (`/var/cache/apt`, `/var/lib/apt`) with Debian's `docker-clean` hook removed, so a layer rebuild reuses downloaded packages.
 
@@ -822,7 +822,7 @@ Both apt installs use cache mounts (`/var/cache/apt`, `/var/lib/apt`) with Debia
 
 ## Docker equivalence
 
-The recipes take the engine from `CONTAINER_ENGINE` (default `podman`; `just engine=docker ...` works too): `CONTAINER_ENGINE=docker just lab-up`, `CONTAINER_ENGINE=docker just lab-check boot lan` and `CONTAINER_ENGINE=docker just lab-down` run `docker compose -p sat-teleop -f testbed/compose.yml -f testbed/compose.docker.yml ...`.
+The recipes take the engine from `CONTAINER_ENGINE` (default `podman`; `just engine=docker ...` works too): `CONTAINER_ENGINE=docker just lab-up`, `CONTAINER_ENGINE=docker just lab-check boot lan` and `CONTAINER_ENGINE=docker just lab-down` run `docker compose -p thinlink -f testbed/compose.yml -f testbed/compose.docker.yml ...`.
 
 The second file maps `host.containers.internal` (Podman's name for the host, which the ground adapter sends QGroundControl's telemetry and video to) with `host-gateway`. `lab-keys` swaps `--userns=keep-id` for `--user $(id -u):$(id -g)`. Docker already allows unprivileged ping, so the sysctl is redundant there but harmless.
 

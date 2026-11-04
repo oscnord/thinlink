@@ -1,6 +1,6 @@
 //! Regional video on the vehicle: the `[region]` limits, what the sender needs to give the encoder
 //! the regions to spend more on and outline the people and vehicles found, and the detector's counters. The
-//! detector itself (`sat-teleop-detect`) is in a sibling crate, so the application runs it: the
+//! detector itself (`thinlink-detect`) is in a sibling crate, so the application runs it: the
 //! sender offers it the newest scaled frame (`DetectorFrame`) and it publishes what it finds to the cell.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
@@ -12,14 +12,14 @@ use gstreamer_video as gst_video;
 use gstreamer_video::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::draw::{outline, tag};
-use sat_teleop_policy::follow::{self, Lost};
-use sat_teleop_policy::kind::Kind;
-use sat_teleop_policy::region::{NormRect, PixelRect, RegionCell, RegionLimits};
+use thinlink_policy::draw::{outline, tag};
+use thinlink_policy::follow::{self, Lost};
+use thinlink_policy::kind::Kind;
+use thinlink_policy::region::{NormRect, PixelRect, RegionCell, RegionLimits};
 
-use sat_teleop_video::sender::{FrameHook, Roi, Tap, TapFormat, TapSpec};
-use sat_teleop_video::stages::{Stage, StageSnapshot};
-use sat_teleop_video::{MediaError, plane_geometry};
+use thinlink_video::sender::{FrameHook, Roi, Tap, TapFormat, TapSpec};
+use thinlink_video::stages::{Stage, StageSnapshot};
+use thinlink_video::{MediaError, plane_geometry};
 
 fn wait_forever() -> ! {
     loop {
@@ -556,7 +556,7 @@ mod tests {
         let _regional = Regional::new(SETTINGS, cell.clone(), Some(320), 0.0, false);
         let pilot = NormRect::new(0.1, 0.1, 0.3, 0.3).unwrap();
         let person = (Kind::Person, NormRect::new(0.5, 0.5, 0.6, 0.8).unwrap());
-        cell.set(sat_teleop_policy::region::Timed {
+        cell.set(thinlink_policy::region::Timed {
             rect: pilot,
             at_ms: cell.now_ms(),
         });
@@ -567,12 +567,12 @@ mod tests {
 
     #[test]
     fn the_hook_returns_the_pilot_box_in_pixels_when_offsets_are_on() {
-        sat_teleop_video::init().unwrap();
+        thinlink_video::init().unwrap();
         let cell = RegionCell::default();
         let regional = Regional::new(SETTINGS, cell.clone(), None, -6.0, false);
         // The bottom left quarter of the picture.
         let rect = NormRect::new(0.0, 0.5, 0.5, 1.0).unwrap();
-        cell.set(sat_teleop_policy::region::Timed {
+        cell.set(thinlink_policy::region::Timed {
             rect,
             at_ms: cell.now_ms(),
         });

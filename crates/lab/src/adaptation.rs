@@ -11,9 +11,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_video::receiver::{Observation, Source};
-use sat_teleop_video::unix_ms;
-use sat_teleop_video_core::stamp::plausible_age;
+use thinlink_video::receiver::{Observation, Source};
+use thinlink_video::unix_ms;
+use thinlink_video_core::stamp::plausible_age;
 
 use crate::budget::{self, Budget};
 use crate::check::{self, Results, Sample, Verdict, float, percentile};
@@ -195,7 +195,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("video_received", Verdict::Incomplete, e.to_string());
         return results;
     }

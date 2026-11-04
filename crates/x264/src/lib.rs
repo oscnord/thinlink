@@ -1,4 +1,4 @@
-//! A `GStreamer` H.264 encoder element on libx264, `satx264enc`, for the sender.
+//! A `GStreamer` H.264 encoder element on libx264, `thinlinkx264enc`, for the sender.
 //!
 //! `x264enc` cannot give a whole IDR frame on demand while intra refresh is on, cannot change its
 //! refresh period while playing and has no per-macroblock quantiser offsets. This element drives

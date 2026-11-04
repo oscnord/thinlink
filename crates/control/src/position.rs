@@ -6,7 +6,7 @@ use std::time::Instant;
 use mavlink::MessageData;
 use mavlink::dialects::ardupilotmega::{GLOBAL_POSITION_INT_DATA, MavMessage};
 
-use sat_teleop_policy::position::{self, Position};
+use thinlink_policy::position::{self, Position};
 
 use crate::frame::Frame;
 

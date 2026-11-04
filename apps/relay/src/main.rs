@@ -8,14 +8,14 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
-use sat_teleop_detail::relay::{self, Relay, RelayConfig, RelaySnapshot};
-use sat_teleop_video::feedback::{self, FeedbackConfig, FeedbackSnapshot, FeedbackStats};
-use sat_teleop_video::ingress::{self, IngressConfig, IngressSnapshot, IngressStats};
-use sat_teleop_video::{metrics, supervise};
+use thinlink_detail::relay::{self, Relay, RelayConfig, RelaySnapshot};
+use thinlink_video::feedback::{self, FeedbackConfig, FeedbackSnapshot, FeedbackStats};
+use thinlink_video::ingress::{self, IngressConfig, IngressSnapshot, IngressStats};
+use thinlink_video::{metrics, supervise};
 
 #[derive(Parser)]
 #[command(
-    name = "sat-teleop-relay",
+    name = "thinlink-relay",
     about = "Relay: RTP from the vehicle in, RTSP publish to the local MediaMTX, feedback to the vehicle"
 )]
 struct Cli {
@@ -74,7 +74,7 @@ fn main() -> Result<()> {
         feedback,
         detail,
     } = load(&config)?;
-    sat_teleop_video::init().context("GStreamer")?;
+    thinlink_video::init().context("GStreamer")?;
     let stats = Arc::new(IngressStats::default());
     {
         let stats = Arc::clone(&stats);

@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-xtask"
+name = "thinlink-xtask"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

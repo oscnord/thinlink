@@ -1,5 +1,5 @@
 //! The ground's freshness output: `MediaMTX`'s stream decoded, every frame marked with its freshness
-//! (`sat_teleop_video_core::freshness`) as a state stamp and overlay text, re-encoded and sent as RTP/H.264 to
+//! (`thinlink_video_core::freshness`) as a state stamp and overlay text, re-encoded and sent as RTP/H.264 to
 //! QGC and to the lab. A new frame goes out as soon as it is decoded; the last frame (or a black
 //! slate) is sent again with its state updated only when nothing went out for two output periods,
 //! or earlier when the state may change then, so the picture never looks live while the source is
@@ -18,8 +18,8 @@ use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_video_core::freshness::{self, LabelDeadline, Link, Observed, State, Thresholds};
-use sat_teleop_video_core::stamp::{self, CaptureMs, FrameId, StateStamp};
+use thinlink_video_core::freshness::{self, LabelDeadline, Link, Observed, State, Thresholds};
+use thinlink_video_core::stamp::{self, CaptureMs, FrameId, StateStamp};
 
 use crate::receiver::{self, Observation, Source};
 use crate::sender::{Frame, Rung};

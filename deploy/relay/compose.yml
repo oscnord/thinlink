@@ -1,9 +1,9 @@
 # The relay, MediaMTX and mavlink-router on a public server, started by `docker compose up -d` in
-# /opt/sat-teleop (deploy/relay/provision.sh). Host networking: they bind the overlay address that
+# /opt/thinlink (deploy/relay/provision.sh). Host networking: they bind the overlay address that
 # WireGuard (wg-quick@wg0, on the host) brings up, and restart until it exists. The server never
 # transcodes, so it needs no more than a small VPS; the memory caps below are guesses, not
 # measurements (docs/hardware.md).
-name: sat-teleop-relay
+name: thinlink-relay
 
 services:
   mediamtx:
@@ -15,7 +15,7 @@ services:
       - ./mediamtx.yml:/mediamtx.yml:ro
 
   mavlink-router:
-    image: localhost/sat-teleop-runtime:amd64
+    image: localhost/thinlink-runtime:amd64
     command: ["mavlink-routerd", "-c", "/config/mavlink-router.conf"]
     network_mode: host
     init: true
@@ -25,10 +25,10 @@ services:
       - ./mavlink-router.conf:/config/mavlink-router.conf:ro
 
   relay:
-    image: localhost/sat-teleop-runtime:amd64
+    image: localhost/thinlink-runtime:amd64
     command:
       [
-        "sat-teleop-relay", "run", "--config", "/config/relay.toml", "--metrics-addr", "127.0.0.1:9100",
+        "thinlink-relay", "run", "--config", "/config/relay.toml", "--metrics-addr", "127.0.0.1:9100",
         "--token-file", "/secrets/job.token",
       ]
     network_mode: host

@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-detail"
+name = "thinlink-detail"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,8 +12,8 @@ workspace = true
 [dependencies]
 image.workspace = true
 rustix.workspace = true
-sat-teleop-policy = { path = "../policy" }
-sat-teleop-video-core = { path = "../video-core" }
+thinlink-policy = { path = "../policy" }
+thinlink-video-core = { path = "../video-core" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

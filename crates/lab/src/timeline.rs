@@ -205,7 +205,7 @@ rate_kbit = 64
     #[test]
     fn stopping_before_the_first_deadline_runs_nothing() {
         let marker =
-            std::env::temp_dir().join(format!("sat-teleop-timeline-stop-{}", std::process::id()));
+            std::env::temp_dir().join(format!("thinlink-timeline-stop-{}", std::process::id()));
         let _ = std::fs::remove_file(&marker);
         let touch = step(300, &["touch", marker.to_str().unwrap()]);
         TimelineRun::start(vec![touch]).stop();

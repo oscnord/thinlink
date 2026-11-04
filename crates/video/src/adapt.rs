@@ -1,7 +1,7 @@
 //! The vehicle's side of adaptation: it probes the relay every probe interval, turns each answer
-//! into feedback for `sat_teleop_video_core::adapt::Controller` and gives the sender the rung the controller
+//! into feedback for `thinlink_video_core::adapt::Controller` and gives the sender the rung the controller
 //! picks. The uplink the controller measured at its last cut also caps the telemetry, through the
-//! caller, from the same budget (`sat_teleop_video_core::budget`), sized to what the autopilot offers.
+//! caller, from the same budget (`thinlink_video_core::budget`), sized to what the autopilot offers.
 
 use std::collections::VecDeque;
 use std::io;
@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_video_core::adapt::{
+use thinlink_video_core::adapt::{
     Controller, Decision, Feedback, Group, Ladder, Reason, Rung as LadderRung, Thresholds,
 };
-use sat_teleop_video_core::budget::{Budget, DATAGRAM_OVERHEAD, Usage, wire_bytes};
+use thinlink_video_core::budget::{Budget, DATAGRAM_OVERHEAD, Usage, wire_bytes};
 
 use crate::feedback::{self, MAX_DATAGRAM, Probe, Report};
 use crate::sender::{Rung, SenderStats};

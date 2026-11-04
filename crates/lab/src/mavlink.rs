@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use mavlink::dialects::ardupilotmega::{COMMAND_LONG_DATA, MavCmd, MavMessage, MavResult};
 use serde_json::{Value, json};
 
-use sat_teleop_video::unix_ms;
+use thinlink_video::unix_ms;
 
 use self::gcs::{Gcs, HEARTBEAT_EVERY, Kind, Seen};
 use crate::budget::{self, Budget};

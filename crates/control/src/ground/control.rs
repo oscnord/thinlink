@@ -18,9 +18,9 @@ use mavlink::dialects::ardupilotmega::{
 use mavlink::{MavHeader, Message};
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::clock::{self, Reading};
-use sat_teleop_policy::control::Kind as Class;
-use sat_teleop_policy::region::NormRect;
+use thinlink_policy::clock::{self, Reading};
+use thinlink_policy::control::Kind as Class;
+use thinlink_policy::region::NormRect;
 
 use super::{Camera, Station};
 use crate::auth::Signer;
@@ -267,7 +267,7 @@ impl Controller {
             .sign_request(nonce)
             .map_err(|e| TakeError::Send(e.to_string()))?;
         let request = ToVehicle::LeaseRequest {
-            peer: "sat-teleop-ground".to_owned(),
+            peer: "thinlink-ground".to_owned(),
             nonce,
             sig: Some(sig),
         };

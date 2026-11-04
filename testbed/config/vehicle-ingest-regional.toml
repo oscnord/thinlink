@@ -31,7 +31,7 @@ gap_after_ms = 1500
 # the detector's rate and score) are [region] of limits.toml.
 [region]
 roi_qp_offset = -6
-detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+detector = { model = "/usr/share/thinlink/person.onnx", input = 320 }
 
 [mavlink]
 autopilot = "tcpout:127.0.0.1:5760"

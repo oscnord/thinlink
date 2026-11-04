@@ -1,5 +1,5 @@
 //! Cameras and encoders of real hardware: the V4L2 and libcamera sources, the choice of encoder and
-//! the device listing behind `sat-teleop-vehicle probe-camera`.
+//! the device listing behind `thinlink-vehicle probe-camera`.
 //!
 //! Nothing here has run against hardware. The pure parts (`plan`, `choose_encoder`) are tested, the
 //! elements are built from `GStreamer`'s documented properties, and the first run on a Pi is the

@@ -4,8 +4,8 @@
 //! the stamp rows.
 
 use crate::region::{NormRect, PixelRect};
-use sat_teleop_video_core::freshness::State;
-use sat_teleop_video_core::stamp::state_rows_px;
+use thinlink_video_core::freshness::State;
+use thinlink_video_core::stamp::state_rows_px;
 
 /// A crop older than this is not shown.
 pub const MAX_AGE_MS: u64 = 30_000;

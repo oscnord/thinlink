@@ -229,8 +229,7 @@ fn bench() -> Bench {
         socket.local_addr().unwrap()
     };
     let (relay, control) = (free_port(), free_port());
-    let keys =
-        std::env::temp_dir().join(format!("sat-teleop-keys-{}-{control}", std::process::id()));
+    let keys = std::env::temp_dir().join(format!("thinlink-keys-{}-{control}", std::process::id()));
     std::fs::create_dir_all(&keys).unwrap();
     auth::generate(&keys, "test").unwrap();
     let vehicle: VehicleId = VEHICLE.parse().unwrap();

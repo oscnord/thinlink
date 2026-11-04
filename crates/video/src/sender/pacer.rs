@@ -14,9 +14,9 @@ use std::time::{Duration, Instant};
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 
-use sat_teleop_video_core::budget::DATAGRAM_OVERHEAD;
-use sat_teleop_video_core::pace::{Admission, Verdict};
-use sat_teleop_video_core::rate::{Priority, TokenBucket};
+use thinlink_video_core::budget::DATAGRAM_OVERHEAD;
+use thinlink_video_core::pace::{Admission, Verdict};
+use thinlink_video_core::rate::{Priority, TokenBucket};
 
 use super::{RTP_MTU, SenderStats};
 use crate::MediaError;

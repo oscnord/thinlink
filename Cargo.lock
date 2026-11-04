@@ -1792,196 +1792,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sat-teleop-control"
-version = "0.1.0"
-dependencies = [
- "base64",
- "ed25519-dalek",
- "mavlink",
- "sat-teleop-policy",
- "sat-teleop-video-core",
- "serde",
- "serde_json",
- "serialport",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sat-teleop-detail"
-version = "0.1.0"
-dependencies = [
- "image",
- "rustix",
- "sat-teleop-policy",
- "sat-teleop-video-core",
- "serde",
- "serde_json",
- "sha2",
- "thiserror 2.0.21",
- "tiny_http",
- "ureq",
-]
-
-[[package]]
-name = "sat-teleop-detect"
-version = "0.1.0"
-dependencies = [
- "apriltag",
- "sat-teleop-policy",
- "thiserror 2.0.21",
- "tract-onnx",
-]
-
-[[package]]
-name = "sat-teleop-ground"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "sat-teleop-control",
- "sat-teleop-detail",
- "sat-teleop-media",
- "sat-teleop-policy",
- "sat-teleop-video",
- "sat-teleop-video-core",
- "serde",
- "serde_json",
- "toml",
- "ureq",
-]
-
-[[package]]
-name = "sat-teleop-lab"
-version = "0.1.0"
-dependencies = [
- "mavlink",
- "sat-teleop-control",
- "sat-teleop-detail",
- "sat-teleop-policy",
- "sat-teleop-video",
- "sat-teleop-video-core",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tiny_http",
- "toml",
- "ureq",
-]
-
-[[package]]
-name = "sat-teleop-lab-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "sat-teleop-control",
- "sat-teleop-detail",
- "sat-teleop-lab",
- "sat-teleop-policy",
- "sat-teleop-video-core",
-]
-
-[[package]]
-name = "sat-teleop-media"
-version = "0.1.0"
-dependencies = [
- "gstreamer",
- "gstreamer-video",
- "image",
- "sat-teleop-policy",
- "sat-teleop-video",
- "sat-teleop-video-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sat-teleop-policy"
-version = "0.1.0"
-dependencies = [
- "sat-teleop-video-core",
- "serde",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sat-teleop-relay"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "sat-teleop-detail",
- "sat-teleop-video",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "sat-teleop-vehicle"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "sat-teleop-control",
- "sat-teleop-detail",
- "sat-teleop-detect",
- "sat-teleop-media",
- "sat-teleop-policy",
- "sat-teleop-video",
- "sat-teleop-video-core",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "sat-teleop-video"
-version = "0.1.0"
-dependencies = [
- "gstreamer",
- "gstreamer-app",
- "gstreamer-video",
- "sat-teleop-video-core",
- "sat-teleop-x264",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "tiny_http",
-]
-
-[[package]]
-name = "sat-teleop-video-core"
-version = "0.1.0"
-dependencies = [
- "subtle",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sat-teleop-x264"
-version = "0.1.0"
-dependencies = [
- "bindgen",
- "gstreamer",
- "gstreamer-app",
- "gstreamer-video",
- "pkg-config",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "sat-teleop-xtask"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "cargo_metadata",
- "serde",
- "sha2",
- "toml",
- "ureq",
-]
-
-[[package]]
 name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2193,6 +2003,196 @@ name = "target-lexicon"
 version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
+
+[[package]]
+name = "thinlink-control"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "ed25519-dalek",
+ "mavlink",
+ "serde",
+ "serde_json",
+ "serialport",
+ "thinlink-policy",
+ "thinlink-video-core",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "thinlink-detail"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thinlink-policy",
+ "thinlink-video-core",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "ureq",
+]
+
+[[package]]
+name = "thinlink-detect"
+version = "0.1.0"
+dependencies = [
+ "apriltag",
+ "thinlink-policy",
+ "thiserror 2.0.21",
+ "tract-onnx",
+]
+
+[[package]]
+name = "thinlink-ground"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "thinlink-control",
+ "thinlink-detail",
+ "thinlink-media",
+ "thinlink-policy",
+ "thinlink-video",
+ "thinlink-video-core",
+ "toml",
+ "ureq",
+]
+
+[[package]]
+name = "thinlink-lab"
+version = "0.1.0"
+dependencies = [
+ "mavlink",
+ "serde",
+ "serde_json",
+ "thinlink-control",
+ "thinlink-detail",
+ "thinlink-policy",
+ "thinlink-video",
+ "thinlink-video-core",
+ "thiserror 2.0.21",
+ "tiny_http",
+ "toml",
+ "ureq",
+]
+
+[[package]]
+name = "thinlink-lab-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "thinlink-control",
+ "thinlink-detail",
+ "thinlink-lab",
+ "thinlink-policy",
+ "thinlink-video-core",
+]
+
+[[package]]
+name = "thinlink-media"
+version = "0.1.0"
+dependencies = [
+ "gstreamer",
+ "gstreamer-video",
+ "image",
+ "serde",
+ "thinlink-policy",
+ "thinlink-video",
+ "thinlink-video-core",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "thinlink-policy"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thinlink-video-core",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "thinlink-relay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "thinlink-detail",
+ "thinlink-video",
+ "toml",
+]
+
+[[package]]
+name = "thinlink-vehicle"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "thinlink-control",
+ "thinlink-detail",
+ "thinlink-detect",
+ "thinlink-media",
+ "thinlink-policy",
+ "thinlink-video",
+ "thinlink-video-core",
+ "toml",
+]
+
+[[package]]
+name = "thinlink-video"
+version = "0.1.0"
+dependencies = [
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "serde",
+ "serde_json",
+ "thinlink-video-core",
+ "thinlink-x264",
+ "thiserror 2.0.21",
+ "tiny_http",
+]
+
+[[package]]
+name = "thinlink-video-core"
+version = "0.1.0"
+dependencies = [
+ "subtle",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "thinlink-x264"
+version = "0.1.0"
+dependencies = [
+ "bindgen",
+ "gstreamer",
+ "gstreamer-app",
+ "gstreamer-video",
+ "pkg-config",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "thinlink-xtask"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cargo_metadata",
+ "serde",
+ "sha2",
+ "toml",
+ "ureq",
+]
 
 [[package]]
 name = "thiserror"

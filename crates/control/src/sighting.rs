@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use mavlink::MavHeader;
 use mavlink::dialects::ardupilotmega::{MavMessage, MavSeverity, STATUSTEXT_DATA};
 
-use sat_teleop_policy::sighting::{Sightings, status_text};
+use thinlink_policy::sighting::{Sightings, status_text};
 
 use crate::frame::{Frame, datagram_frames};
 use crate::telemetry::RateCap;
@@ -78,10 +78,10 @@ pub(crate) fn status_frame(header: MavHeader, severity: MavSeverity, text: &str)
 
 #[cfg(test)]
 mod tests {
-    use sat_teleop_policy::kind::Kind;
-    use sat_teleop_policy::position::Position;
-    use sat_teleop_policy::region::NormRect;
-    use sat_teleop_policy::sighting::Seen;
+    use thinlink_policy::kind::Kind;
+    use thinlink_policy::position::Position;
+    use thinlink_policy::region::NormRect;
+    use thinlink_policy::sighting::Seen;
 
     use super::*;
     use crate::telemetry::TelemetryLimits;

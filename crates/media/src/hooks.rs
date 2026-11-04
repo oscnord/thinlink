@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::region::Regional;
 use crate::tags::TagFeed;
-use sat_teleop_video::sender::Hooks;
+use thinlink_video::sender::Hooks;
 
 pub fn sender_hooks(regional: &Arc<Regional>, tags: Option<&Arc<TagFeed>>) -> Hooks {
     let mut taps = regional.taps();

@@ -1,5 +1,5 @@
 # Precision landing for the landing target (`just sim-landing`, docs/drone.md#simulated-flight), loaded after
-# sat-teleop-copter.parm. Names, values and meanings are those of ArduPilot git
+# thinlink-copter.parm. Names, values and meanings are those of ArduPilot git
 # fb773567896014da007bca58358704d4a0d8516f, libraries/AC_PrecLand/AC_PrecLand.cpp and
 # AC_PrecLand_StateMachine.cpp: the same values real mode requires (docs/real-vehicle.md).
 #

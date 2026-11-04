@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-video-core"
+name = "thinlink-video-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

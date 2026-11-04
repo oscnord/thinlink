@@ -11,7 +11,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tiny_http::{Header, Method, Response, Server};
 
-use sat_teleop_video_core::token::{Token, admit, exposed, listen_address};
+use thinlink_video_core::token::{Token, admit, exposed, listen_address};
 
 use crate::MediaError;
 

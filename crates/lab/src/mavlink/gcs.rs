@@ -14,9 +14,9 @@ use mavlink::dialects::ardupilotmega::{
 };
 use mavlink::types::CharArray;
 
-use sat_teleop_control::frame::{MAX_DATAGRAM, datagram_frames};
-use sat_teleop_policy::landing;
-use sat_teleop_video::unix_ms;
+use thinlink_control::frame::{MAX_DATAGRAM, datagram_frames};
+use thinlink_policy::landing;
+use thinlink_video::unix_ms;
 
 /// SITL's system id and autopilot component.
 const VEHICLE_SYSTEM: u32 = 1;

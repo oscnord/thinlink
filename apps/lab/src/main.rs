@@ -7,19 +7,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use sat_teleop_control::auth::{self, VehicleId};
-use sat_teleop_detail::store::StoreConfig;
-use sat_teleop_lab::agent::{self, Agent};
-use sat_teleop_lab::budget::Budgets;
-use sat_teleop_lab::check::{self, Summary, Verdict};
-use sat_teleop_lab::client::{self, AgentClient};
-use sat_teleop_lab::interface::Interfaces;
-use sat_teleop_lab::profile::{self, Profile};
-use sat_teleop_lab::{
+use thinlink_control::auth::{self, VehicleId};
+use thinlink_detail::store::StoreConfig;
+use thinlink_lab::agent::{self, Agent};
+use thinlink_lab::budget::Budgets;
+use thinlink_lab::check::{self, Summary, Verdict};
+use thinlink_lab::client::{self, AgentClient};
+use thinlink_lab::interface::Interfaces;
+use thinlink_lab::profile::{self, Profile};
+use thinlink_lab::{
     adaptation, boot, control, ingest, mavlink, qgc_status, quality, recording, regional,
     retrieval, sightings, skeleton,
 };
-use sat_teleop_video_core::token::Token;
+use thinlink_video_core::token::Token;
 
 const PROFILES_DIR: &str = "testbed/profiles";
 const BUDGETS_PATH: &str = "perf/budgets.toml";
@@ -28,7 +28,7 @@ const VEHICLE_CONFIG_PATH: &str = "testbed/config/vehicle.toml";
 const RESULTS_DIR: &str = "results";
 
 #[derive(Parser)]
-#[command(name = "lab", about = "sat-teleop lab runner")]
+#[command(name = "lab", about = "thinlink lab runner")]
 struct Cli {
     #[command(subcommand)]
     command: Command,

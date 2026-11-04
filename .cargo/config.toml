@@ -1,2 +1,2 @@
 [alias]
-xtask = "run -q -p sat-teleop-xtask --"
+xtask = "run -q -p thinlink-xtask --"

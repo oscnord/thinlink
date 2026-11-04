@@ -27,7 +27,7 @@ use mavlink::dialects::ardupilotmega::{
 };
 use serde::Serialize;
 
-use sat_teleop_policy::landing::{self, Aim, Camera, Mount, Setup, Sighting, Withheld};
+use thinlink_policy::landing::{self, Aim, Camera, Mount, Setup, Sighting, Withheld};
 
 use crate::frame::Frame;
 use crate::identity::{self, ControlTarget};

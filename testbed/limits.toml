@@ -41,7 +41,7 @@ ack_window_ms = 4000
 # intervals lost, plus margin.
 lease_lifetime_ms = 3000
 # After the vehicle's last setpoint, SITL's throttle must be back to zero within this: the setpoint
-# lifetime and RC_OVERRIDE_TIME (testbed/sat-teleop.parm) end the drive, then the throttle slews down and
+# lifetime and RC_OVERRIDE_TIME (testbed/thinlink.parm) end the drive, then the throttle slews down and
 # telemetry brings it up. 1.25 x the worst measured (1451 ms, geo, run 1793504643578 on e593abc;
 # 1373-1409 ms on e1d5edb) + 10 ms, rounded up to 5 ms. SITL's rover then coasts to a stop without
 # brakes, which is recorded, not bounded here.

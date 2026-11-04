@@ -1,4 +1,4 @@
-# sat-teleop-vehicle sender (docs/testbed.md). Unknown keys are rejected.
+# thinlink-vehicle sender (docs/testbed.md). Unknown keys are rejected.
 
 # RTP/H.264 to the relay, inside WireGuard.
 destination = "10.77.0.1:5004"
@@ -46,7 +46,7 @@ gap_after_ms = 1500
 # detector's rate and score) are [region] of limits.toml.
 # [region]
 # roi_qp_offset = -6
-# detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320, kinds = ["person"] }
+# detector = { model = "/usr/share/thinlink/person.onnx", input = 320, kinds = ["person"] }
 
 # MAVLink bridge (docs/drone.md#mavlink-path): SITL's serial 0 in this network namespace (a TCP autopilot must
 # be on loopback, and control reaches it only once it reports the SITL marker parameter),

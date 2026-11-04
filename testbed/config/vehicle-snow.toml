@@ -1,4 +1,4 @@
-# sat-teleop-vehicle sender (docs/testbed.md). Unknown keys are rejected.
+# thinlink-vehicle sender (docs/testbed.md). Unknown keys are rejected.
 
 # RTP/H.264 to the relay, inside WireGuard.
 destination = "10.77.0.1:5004"

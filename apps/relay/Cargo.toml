@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-relay"
+name = "thinlink-relay"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-sat-teleop-detail = { path = "../../crates/detail" }
-sat-teleop-video = { path = "../../crates/video" }
+thinlink-detail = { path = "../../crates/detail" }
+thinlink-video = { path = "../../crates/video" }
 serde.workspace = true
 toml.workspace = true

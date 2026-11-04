@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use sat_teleop_policy::retrieval::MAX_CHUNK;
+use thinlink_policy::retrieval::MAX_CHUNK;
 
 use crate::wire::sha256_hex;
 

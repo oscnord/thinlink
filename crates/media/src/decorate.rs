@@ -1,5 +1,5 @@
 //! What the ground draws into the output's frames besides the state: the predictive display (aim
-//! ring and horizon, `sat_teleop_policy::predict`) and the pilot's detail inset (`inset`).
+//! ring and horizon, `thinlink_policy::predict`) and the pilot's detail inset (`inset`).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
@@ -7,15 +7,15 @@ use std::time::Instant;
 use gstreamer_video::prelude::*;
 use serde::Deserialize;
 
-use sat_teleop_policy::inset as inset_policy;
-use sat_teleop_policy::mark as draw_mark;
-use sat_teleop_policy::predict::{self, Inputs, Mark};
-use sat_teleop_video_core::stamp::StateStamp;
+use thinlink_policy::inset as inset_policy;
+use thinlink_policy::mark as draw_mark;
+use thinlink_policy::predict::{self, Inputs, Mark};
+use thinlink_video_core::stamp::StateStamp;
 
 use crate::inset::DetailCell;
-use sat_teleop_video::output::Note;
-use sat_teleop_video::sender::Frame;
-use sat_teleop_video::{MediaError, luma_geometry, plane_geometry};
+use thinlink_video::output::Note;
+use thinlink_video::sender::Frame;
+use thinlink_video::{MediaError, luma_geometry, plane_geometry};
 
 /// `[camera]` of `testbed/config/ground.toml`. Without it the predictive display is off.
 #[derive(Debug, Clone, Copy, Deserialize)]

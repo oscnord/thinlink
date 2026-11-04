@@ -11,7 +11,7 @@ use mavlink::dialects::ardupilotmega::{
 };
 use serde::Serialize;
 
-use sat_teleop_policy::control::Kind as Class;
+use thinlink_policy::control::Kind as Class;
 
 use crate::envelope::Kind;
 
@@ -117,7 +117,7 @@ const CUSTOM_MODE_ENABLED: f32 = 1.0;
 /// mission item may.
 const MAX_TAKEOFF_M: f32 = 120.0;
 /// The most items a mission upload may announce. Every item is a transaction of its own and the
-/// vehicle remembers 64 (`sat_teleop_policy::control`), oldest first: more would push an arm or a
+/// vehicle remembers 64 (`thinlink_policy::control`), oldest first: more would push an arm or a
 /// takeoff out of its memory, and a retry of it would run again.
 const MAX_MISSION_ITEMS: u16 = 48;
 /// The longest a mission item may hold the copter (s): a waypoint's hold, a timed loiter, a delay.

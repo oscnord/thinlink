@@ -1,5 +1,5 @@
 #!/bin/sh
-# Provisions a public Ubuntu LTS server (24.04, one small vCPU is enough) as the sat-teleop relay:
+# Provisions a public Ubuntu LTS server (24.04, one small vCPU is enough) as the thinlink relay:
 # Docker, WireGuard, the firewall, and the relay, MediaMTX and mavlink-router. Run as root from the
 # unpacked release directory (`just relay-release`):
 #
@@ -38,8 +38,8 @@ apt-get install -y --no-install-recommends docker.io docker-compose-v2 wireguard
 [ -z "$wrote" ] || [ -z "$had_docker" ] || systemctl restart docker
 
 # The relay forwards the control envelopes between the vehicle and the ground (nftables.conf).
-echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-sat-teleop.conf
-sysctl -q -p /etc/sysctl.d/99-sat-teleop.conf
+echo 'net.ipv4.ip_forward = 1' > /etc/sysctl.d/99-thinlink.conf
+sysctl -q -p /etc/sysctl.d/99-thinlink.conf
 
 install -d -m 0700 /etc/wireguard
 [ -e /etc/wireguard/wg0.conf ] || install -m 0600 "$here/wireguard/relay.conf" /etc/wireguard/wg0.conf
@@ -52,12 +52,12 @@ systemctl enable --now nftables
 systemctl restart nftables
 
 docker load -i "$here/runtime.tar"
-install -d -m 0755 /opt/sat-teleop
+install -d -m 0755 /opt/thinlink
 for file in compose.yml relay.toml mediamtx.yml mavlink-router.conf; do
-    install -m 0644 "$here/$file" "/opt/sat-teleop/$file"
+    install -m 0644 "$here/$file" "/opt/thinlink/$file"
 done
-install -m 0600 "$here/job.token" /opt/sat-teleop/job.token
-(cd /opt/sat-teleop && docker compose up -d)
+install -m 0600 "$here/job.token" /opt/thinlink/job.token
+(cd /opt/thinlink && docker compose up -d)
 
-echo "provision: done. Check: docker compose -f /opt/sat-teleop/compose.yml ps; wg show"
+echo "provision: done. Check: docker compose -f /opt/thinlink/compose.yml ps; wg show"
 echo "provision: then docs/hardware.md"

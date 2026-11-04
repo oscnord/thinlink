@@ -30,7 +30,7 @@ gap_after_ms = 1500
 roi_qp_offset = -6
 # The pilot's box is followed from frame to frame (limits.toml has the tracker's limits).
 follow = true
-detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320, kinds = ["person", "car"] }
+detector = { model = "/usr/share/thinlink/person.onnx", input = 320, kinds = ["person", "car"] }
 
 [mavlink]
 autopilot = "tcpout:127.0.0.1:5760"

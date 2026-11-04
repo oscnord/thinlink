@@ -12,9 +12,9 @@ ADD --checksum=sha256:4aee140cbb29b967e4519e4c84c4b389a2172c30e542f36b4fba4c118b
 # The gimbal's servo outputs, from ardupilot_gazebo at the commit testbed/Containerfile.sim builds.
 ADD --checksum=sha256:abd1023d9162d31e4e852b0bf68673fd1576deb136be5b35ff52745e603a8be6 --chmod=644 \
     https://raw.githubusercontent.com/ArduPilot/ardupilot_gazebo/f116b03552d05c8d0b0bed5ed67033a1183121d1/config/gazebo-iris-gimbal.parm /sitl/gazebo-iris-gimbal.parm
-COPY --chmod=644 testbed/sat-teleop-copter.parm testbed/sat-teleop-copter-precland.parm testbed/sat-teleop-copter-camera-down.parm /sitl/
+COPY --chmod=644 testbed/thinlink-copter.parm testbed/thinlink-copter-precland.parm testbed/thinlink-copter-camera-down.parm /sitl/
 WORKDIR /var/lib/sitl
 # Serial 0 is MAVLink on tcp:5760; SITL waits there until a client (the companion) connects.
 # SITL_EXTRA_PARMS is a comma-separated list of further defaults files, loaded last (`just sim-landing`).
-ENTRYPOINT ["/bin/sh", "-c", "exec /sitl/arducopter --model JSON --speedup 1 --slave 0 --sim-address=127.0.0.1 -I0 --defaults \"/sitl/copter.parm,/sitl/gazebo-iris.parm,/sitl/gazebo-iris-gimbal.parm,/sitl/sat-teleop-copter.parm${SITL_EXTRA_PARMS:+,$SITL_EXTRA_PARMS}\" \"$@\"", "sitl"]
+ENTRYPOINT ["/bin/sh", "-c", "exec /sitl/arducopter --model JSON --speedup 1 --slave 0 --sim-address=127.0.0.1 -I0 --defaults \"/sitl/copter.parm,/sitl/gazebo-iris.parm,/sitl/gazebo-iris-gimbal.parm,/sitl/thinlink-copter.parm${SITL_EXTRA_PARMS:+,$SITL_EXTRA_PARMS}\" \"$@\"", "sitl"]
 CMD ["--home", "-35.363262,149.165237,584,353"]

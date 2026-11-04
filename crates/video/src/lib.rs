@@ -15,7 +15,7 @@ use gstreamer::prelude::*;
 use gstreamer_video::prelude::*;
 use serde::Serialize;
 
-use sat_teleop_video_core::stamp::{PlaneGeometry, StampError};
+use thinlink_video_core::stamp::{PlaneGeometry, StampError};
 
 pub mod adapt;
 pub mod camera;

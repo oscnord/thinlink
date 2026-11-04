@@ -2,7 +2,7 @@
 # metrics (9100), plus their replies. Everything else on it, UDP and ICMP included, is dropped
 # and nothing is forwarded to or from it, so no data can bypass the router over ctl_net.
 # sidecar.sh loads this with `nft -D ctl_if=<interface on 192.168.233.0/24>`.
-table inet sat_teleop_ctl {
+table inet thinlink_ctl {
     chain input {
         type filter hook input priority filter; policy accept;
         iifname $ctl_if ct state established,related accept

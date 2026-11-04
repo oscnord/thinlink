@@ -1,6 +1,6 @@
 # AGENTS.md: crates/policy
 
-`sat-teleop-policy` (L1) holds the drone's pure decisions: the control lease, clock bounds (`clock`, with the rule that ends a hand-measured bound when the wall clock steps), regions and following, outline drawing, kinds, sightings and positions, the landing target decision, the predictive display's prediction and drawing, the detail inset's placement, retention of retained snapshots and when retrieval may send. It builds on `sat-teleop-video-core` (the stamp, freshness, budget and adaptation it reads) and otherwise depends only on `std`, `thiserror` and `serde` (derives only): no I/O, no clock reads (time arrives as an argument), no GStreamer, MAVLink, HTTP, filesystem or sockets. See the root `AGENTS.md`.
+`thinlink-policy` (L1) holds the drone's pure decisions: the control lease, clock bounds (`clock`, with the rule that ends a hand-measured bound when the wall clock steps), regions and following, outline drawing, kinds, sightings and positions, the landing target decision, the predictive display's prediction and drawing, the detail inset's placement, retention of retained snapshots and when retrieval may send. It builds on `thinlink-video-core` (the stamp, freshness, budget and adaptation it reads) and otherwise depends only on `std`, `thiserror` and `serde` (derives only): no I/O, no clock reads (time arrives as an argument), no GStreamer, MAVLink, HTTP, filesystem or sockets. See the root `AGENTS.md`.
 
 ## Predictive display (`predict`, `mark`)
 
@@ -12,7 +12,7 @@
 
 ## Control lease and freshness (`control`)
 
-`LeaseState<T>` is the vehicle's control state for one session (`Epoch`, the vehicle's start time); `sat-teleop-control` drives it with milliseconds of the vehicle's monotonic clock and never with a ground timestamp.
+`LeaseState<T>` is the vehicle's control state for one session (`Epoch`, the vehicle's start time); `thinlink-control` drives it with milliseconds of the vehicle's monotonic clock and never with a ground timestamp.
 
 - Only the `PeerId`s given to `LeaseState::new` may request, release or send (`NotController`, checked first; `controller` lets the caller refuse a stranger before reading anything). One lease at a time (`LeaseId`, holder `PeerId`, expiry). `request` grants a new lease unless another peer holds an unexpired one (`LeaseHeld`); the holder asking again gets a new lease and loses the old one. `release` ends it for its holder only. The lease lasts `lease_ms` after its grant or its holder's last admitted envelope.
 - `issue_challenge` returns a `ChallengeToken` (a per-session counter: tokens prove freshness, not identity) only while a lease is unexpired; a new grant forgets earlier challenges.
@@ -24,7 +24,7 @@
 
 `NormRect` is a rectangle in fractions of the picture, so a region means the same part of the picture at any rung. `NormRect::new` normalises corner order, clamps to the picture and returns `None` for a non-finite corner or a side under 1 %: a degenerate box is ignored, never an error. `pixels` rounds outwards, so the pixels always cover the box.
 
-`active(pilot, detections, now_ms, limits)` gives the regions to favour in encoding: the pilot's box first while at most `pilot_ttl_ms` old, then detections at most `detection_ttl_ms` old, largest first, `max_regions` in all; an empty list when their summed area exceeds `max_area_percent`. `RegionCell` hands the pilot's box from the vehicle's control loop to the sender; `sat-teleop-media` and `sat-teleop-control` share it through this crate, and with it a monotonic clock (`now_ms`) that `Timed::at_ms` counts on.
+`active(pilot, detections, now_ms, limits)` gives the regions to favour in encoding: the pilot's box first while at most `pilot_ttl_ms` old, then detections at most `detection_ttl_ms` old, largest first, `max_regions` in all; an empty list when their summed area exceeds `max_area_percent`. `RegionCell` hands the pilot's box from the vehicle's control loop to the sender; `thinlink-media` and `thinlink-control` share it through this crate, and with it a monotonic clock (`now_ms`) that `Timed::at_ms` counts on.
 
 `RegionCell` also holds the follow of the pilot's box, once `enable_follow` has been called: `set` with a box other than the one followed starts it (the ground repeats the same box every 500 ms, and a repeat, or the same box after a follow was lost, starts nothing; `clear` forgets it), `follow_order` is what the tracker is to follow, `follow_moved` and `follow_lost` are its answers (ignored when they name an older box), and `followed` is where the target is now if the tracker said so within `detection_ttl_ms`. With the follow on, `regions` selects the followed box and `confirmed` reports it to the ground, never the box that was drawn, and a lost follow leaves neither.
 
@@ -51,7 +51,7 @@ Retrieval of retained detail yields to live video and control. `permit(&Conditio
 ## Checks
 
 ```sh
-cargo test -p sat-teleop-policy --locked
+cargo test -p thinlink-policy --locked
 ```
 
 `landing` decides whether a sighting of the landing marker becomes a `LANDING_TARGET` and with which angles: `decide` (one pure function, one table test) withholds a frame older than `SIGHTING_MAX_AGE`, a camera more than `MAX_OFF_NADIR_DEG` from straight down (`Camera::Fixed { tilt_deg }`, or a gimbal `Mount` at most `MOUNT_MAX_GAP` from the sighting, before or after), a picture whose top is more than `MAX_TURN_DEG` from the nose (`Withheld::Turned`) and a missing height; `off_nadir_deg` and `picture_turn_deg` turn the mount's quaternion (roll and pitch relative to the horizon, yaw relative to the airframe) into those two angles. `Sighting.at` is when the frame left the tee, not its capture. Nothing in it reads a clock or the autopilot.

@@ -9,13 +9,13 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_control::identity::Mode;
-use sat_teleop_control::params;
-use sat_teleop_control::vehicle::{VehicleConfig, VehicleStats};
-use sat_teleop_detect::TagDetector;
-use sat_teleop_media::tags::{self, TagFeed};
-use sat_teleop_policy::landing::{Camera, Setup, Sighting};
-use sat_teleop_video::stages::{Stage, StageSnapshot};
+use thinlink_control::identity::Mode;
+use thinlink_control::params;
+use thinlink_control::vehicle::{VehicleConfig, VehicleStats};
+use thinlink_detect::TagDetector;
+use thinlink_media::tags::{self, TagFeed};
+use thinlink_policy::landing::{Camera, Setup, Sighting};
+use thinlink_video::stages::{Stage, StageSnapshot};
 
 /// A fixed camera for the landing target looks straight down: the angles are not corrected for a tilt.
 const FIXED_TILT_DEG: f32 = -90.0;

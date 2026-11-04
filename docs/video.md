@@ -8,9 +8,9 @@ This page covers the video path, its adaptation and how its age is measured. [Dr
 
 | Package | Owns |
 |---|---|
-| `sat-teleop-video-core` (L0) | Pure stamp and state stamp, freshness, pacing admission, byte-rate token bucket, uplink budget, adaptation ladder and controller, bearer-token check. No I/O or clock reads. |
-| `sat-teleop-x264` (L0) | The `satx264enc` GStreamer element and its libx264 wrapper. |
-| `sat-teleop-video` (L1) | GStreamer sender, relay ingress, feedback and adaptation loop, headless receiver, freshness output, snapshot encoding and metrics endpoint. Its workspace dependencies are `video-core` and `x264`. |
+| `thinlink-video-core` (L0) | Pure stamp and state stamp, freshness, pacing admission, byte-rate token bucket, uplink budget, adaptation ladder and controller, bearer-token check. No I/O or clock reads. |
+| `thinlink-x264` (L0) | The `thinlinkx264enc` GStreamer element and its libx264 wrapper. |
+| `thinlink-video` (L1) | GStreamer sender, relay ingress, feedback and adaptation loop, headless receiver, freshness output, snapshot encoding and metrics endpoint. Its workspace dependencies are `video-core` and `x264`. |
 
 These crates know nothing about drones. Applications wire the video to `media`, `control`, `detail` and `policy`. Dependencies point downward, packages on one layer do not depend on each other, and `cargo xtask layers` checks the boundaries. See [development setup](testbed.md#development-setup).
 
@@ -62,9 +62,9 @@ The ladder is [testbed/ladder.toml](../testbed/ladder.toml), best first. `start 
 
 The rung bitrate is the video allowance for any one second, including refresh bursts. x264 gets the rung bitrate times `1000 / (1000 + frame_period_ms)`, with a one-frame VBV buffer. That is about 94 % at 15 fps, two thirds at 2 fps and half at 1 fps. Headers come on top: each RTP packet costs another 122 bytes of RTP, UDP, IPv4, WireGuard and Ethernet headers. The source may send less than the allowance.
 
-The sender uses `satx264enc`, a GStreamer `VideoEncoder` registered from Rust at startup, with no plugin file. It drives libx264 with preset `ultrafast` and tune `zerolatency`: no lookahead or B-frames, with sliced threads. Rate control uses average bitrate under the one-frame VBV. Parameter sets repeat. Intra refresh sweeps the picture over `refresh-ms`, set from `keyframe_interval_ms = 2000`. There are no periodic IDRs.
+The sender uses `thinlinkx264enc`, a GStreamer `VideoEncoder` registered from Rust at startup, with no plugin file. It drives libx264 with preset `ultrafast` and tune `zerolatency`: no lookahead or B-frames, with sliced threads. Rate control uses average bitrate under the one-frame VBV. Parameter sets repeat. Intra refresh sweeps the picture over `refresh-ms`, set from `keyframe_interval_ms = 2000`. There are no periodic IDRs.
 
-`roi-qp-offset` accepts -51 to 0, with 0 off, and is read when caps are set. `satx264enc` maps each buffer's ROI metadata to x264 quantiser offsets on every 16x16 macroblock a region touches. Overlaps do not add up. A negative offset enables variance adaptive quantization at strength 0.01; otherwise it is off. x264 honours offsets only with adaptive quantization enabled and clears it at strength 0. The offsets leave the input pixels unchanged. The hardware encoder does not use this property.
+`roi-qp-offset` accepts -51 to 0, with 0 off, and is read when caps are set. `thinlinkx264enc` maps each buffer's ROI metadata to x264 quantiser offsets on every 16x16 macroblock a region touches. Overlaps do not add up. A negative offset enables variance adaptive quantization at strength 0.01; otherwise it is off. x264 honours offsets only with adaptive quantization enabled and clears it at strength 0. The offsets leave the input pixels unchanged. The hardware encoder does not use this property.
 
 A size or frame-rate change needs only new caps. The element reopens libx264 for those caps and starts with an IDR. It computes `i_keyint_max` from their frame rate and the refresh period. `bitrate` and `vbv-buf-capacity` changes apply in place at the next frame. A forced key unit from upstream or downstream makes the next picture a whole IDR. Only IDRs are sync points; all other frames, including refresh-wave starts, are delta units. Time-based forced keyframes apply only to V4L2. Metrics keep `requested` and `applied` separate, including the first stamped frame in the new shape.
 
@@ -100,7 +100,7 @@ A cut within a dwell of a climb or ceiling raise doubles that rung's hold, start
 
 The sender's pacer holds RTP packets in its own backlog. `Controller::pace_bytes_per_s` uses `video-core::pace::rate`: never below the wire cost allowed to the encoder, never above 120 % of it, and within those bounds 110 % of the believed uplink. The belief includes capacity proved by later ceiling raises, so a recovered link is not held to an old measurement. Without a measurement, the pace is 120 % of the allowance.
 
-A token bucket allows a 20 ms burst, at least two packets. A frame whose backlog ahead would take more than 150 ms to send is dropped whole. Following delta frames are dropped until a frame marked as a sync point fits. The first drop requests a forced key unit, so `satx264enc` encodes the next picture as a whole IDR. A frame whose own send time exceeds 150 ms is admitted if the backlog ahead fits. Control, probes and telemetry use other sockets and never wait behind this queue.
+A token bucket allows a 20 ms burst, at least two packets. A frame whose backlog ahead would take more than 150 ms to send is dropped whole. Following delta frames are dropped until a frame marked as a sync point fits. The first drop requests a forced key unit, so `thinlinkx264enc` encodes the next picture as a whole IDR. A frame whose own send time exceeds 150 ms is admitted if the backlog ahead fits. Control, probes and telemetry use other sockets and never wait behind this queue.
 
 ### Shared uplink budget
 
@@ -252,7 +252,7 @@ The operator's loop also includes the command's outward delay. Propagation canno
 
 ## Recommended settings
 
-Use `encoder = "hardware"` on a Pi 4 or Zero 2 W, as in `deploy/vehicle/vehicle.toml`. The sender selects `v4l2h264enc` when available and falls back to `satx264enc`. The hardware path remains unverified; [Hardware](hardware.md) describes the bench checks. CPU quotas on the development Mac do not emulate a board's cores, memory bandwidth, caches or hardware encoder.
+Use `encoder = "hardware"` on a Pi 4 or Zero 2 W, as in `deploy/vehicle/vehicle.toml`. The sender selects `v4l2h264enc` when available and falls back to `thinlinkx264enc`. The hardware path remains unverified; [Hardware](hardware.md) describes the bench checks. CPU quotas on the development Mac do not emulate a board's cores, memory bandwidth, caches or hardware encoder.
 
 Keep the sender's [encoder settings](#rungs-and-encoder) for bounded latency. The ground output uses GStreamer's `x264enc`. H.264 is the implemented codec.
 

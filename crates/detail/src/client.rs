@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 
-use sat_teleop_video_core::token::Token;
+use thinlink_video_core::token::Token;
 
 use crate::crop::Rect;
 use crate::wire::{

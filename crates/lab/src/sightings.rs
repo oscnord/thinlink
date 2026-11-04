@@ -10,16 +10,16 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_detail::client::Client;
-use sat_teleop_detail::wire::{JobRequest, Kind as JobKind, Listing, MAX_LISTED};
-use sat_teleop_video::unix_ms;
+use thinlink_detail::client::Client;
+use thinlink_detail::wire::{JobRequest, Kind as JobKind, Listing, MAX_LISTED};
+use thinlink_video::unix_ms;
 
 use crate::check::{self, Results, Verdict};
 use crate::client::AgentClient;
 use crate::control::blackout;
 use crate::mavlink::gcs::{Gcs, Kind, Seen};
 use crate::profile::Profile;
-use sat_teleop_policy::kind::Kind as Thing;
+use thinlink_policy::kind::Kind as Thing;
 
 const HEARTBEAT_DEADLINE: Duration = Duration::from_secs(60);
 /// The detector has run on the people before the link is cut.

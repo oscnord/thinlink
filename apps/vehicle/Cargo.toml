@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-vehicle"
+name = "thinlink-vehicle"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,18 +12,18 @@ workspace = true
 [features]
 # The test hooks and the SITL allowance in real mode. The testbed's images build with it; release
 # artifacts never do.
-testbed = ["sat-teleop-control/testbed"]
+testbed = ["thinlink-control/testbed"]
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-sat-teleop-control = { path = "../../crates/control" }
-sat-teleop-detail = { path = "../../crates/detail" }
-sat-teleop-detect = { path = "../../crates/detect" }
-sat-teleop-media = { path = "../../crates/media" }
-sat-teleop-policy = { path = "../../crates/policy" }
-sat-teleop-video = { path = "../../crates/video" }
-sat-teleop-video-core = { path = "../../crates/video-core" }
+thinlink-control = { path = "../../crates/control" }
+thinlink-detail = { path = "../../crates/detail" }
+thinlink-detect = { path = "../../crates/detect" }
+thinlink-media = { path = "../../crates/media" }
+thinlink-policy = { path = "../../crates/policy" }
+thinlink-video = { path = "../../crates/video" }
+thinlink-video-core = { path = "../../crates/video-core" }
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

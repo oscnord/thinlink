@@ -15,10 +15,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_video::card::{self as reference_card, Luma};
-use sat_teleop_video::receiver::Source;
-use sat_teleop_video::{Health, supervise};
-use sat_teleop_video_core::stamp::{plausible_age, state_rows_px};
+use thinlink_video::card::{self as reference_card, Luma};
+use thinlink_video::receiver::Source;
+use thinlink_video::{Health, supervise};
+use thinlink_video_core::stamp::{plausible_age, state_rows_px};
 
 use crate::adaptation;
 use crate::budget::{self, Budget};
@@ -335,7 +335,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("video_received", Verdict::Incomplete, e.to_string());
         return results;
     }

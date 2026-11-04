@@ -7,8 +7,8 @@ use std::io::{self, Read};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use sat_teleop_policy::position::Position;
-use sat_teleop_policy::sighting::Sighting;
+use thinlink_policy::position::Position;
+use thinlink_policy::sighting::Sighting;
 
 use crate::crop::{self, Crop, Rect};
 

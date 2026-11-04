@@ -1,6 +1,6 @@
 //! The vehicle's side of retrieval: polls the relay for a job, picks the nearest retained snapshot
 //! at or before the time asked for, crops it, and uploads the result in chunks. It sends only when
-//! `sat_teleop_policy::retrieval::permit` says live video and control are not paying for it, one
+//! `thinlink_policy::retrieval::permit` says live video and control are not paying for it, one
 //! chunk at a time and paced by a token bucket at the retrieval allowance; it stops at the next
 //! chunk when the conditions go, the job is cancelled or its life is over.
 
@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::retrieval::{self, Conditions, Hold};
-use sat_teleop_policy::sighting::Sightings;
-use sat_teleop_video_core::rate::{Priority, TokenBucket};
-use sat_teleop_video_core::token::Token;
+use thinlink_policy::retrieval::{self, Conditions, Hold};
+use thinlink_policy::sighting::Sightings;
+use thinlink_video_core::rate::{Priority, TokenBucket};
+use thinlink_video_core::token::Token;
 
 use crate::DetailError;
 use crate::client::{Client, ClientError};

@@ -3,7 +3,7 @@
 //! start deletes; the index is the directory itself, scanned at start. A snapshot taken with a
 //! fresh position, or while the ground was out of reach, has a small
 //! `<capture_ms>-<frame_id>.pos` beside it; one without is just the JPEG, as every snapshot was
-//! before positions. Retention is decided by `sat_teleop_policy::retention`, which keeps the
+//! before positions. Retention is decided by `thinlink_policy::retention`, which keeps the
 //! out-of-reach snapshots until they are fetched.
 
 use std::collections::HashMap;
@@ -14,8 +14,8 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::position::Position;
-use sat_teleop_policy::retention::{self, Limits, Object};
+use thinlink_policy::position::Position;
+use thinlink_policy::retention::{self, Limits, Object};
 
 use crate::DetailError;
 
@@ -545,7 +545,7 @@ mod tests {
     fn config() -> StoreConfig {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "sat-teleop-store-{}-{}",
+            "thinlink-store-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));

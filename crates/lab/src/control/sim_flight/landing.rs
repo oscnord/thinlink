@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use mavlink::dialects::ardupilotmega::MavMessage;
 use serde_json::Value;
 
-use sat_teleop_policy::landing::{MAX_OFF_NADIR_DEG, MAX_TURN_DEG};
+use thinlink_policy::landing::{MAX_OFF_NADIR_DEG, MAX_TURN_DEG};
 
 use super::{
     ARM_DEADLINE, ARM_EVERY, CLIMB_DEADLINE, GUIDED, LAND, LOITER, ON_GROUND_M, SETPOINT_EVERY,

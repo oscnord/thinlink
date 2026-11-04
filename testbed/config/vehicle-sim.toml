@@ -26,7 +26,7 @@ gap_after_ms = 1500
 # Regional video (see vehicle.toml): off unless this is set.
 # [region]
 # roi_qp_offset = -6
-# detector = { model = "/usr/share/sat-teleop/person.onnx", input = 320 }
+# detector = { model = "/usr/share/thinlink/person.onnx", input = 320 }
 
 [mavlink]
 autopilot = "tcpout:127.0.0.1:5760"

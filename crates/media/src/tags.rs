@@ -5,8 +5,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use sat_teleop_video::MediaError;
-use sat_teleop_video::sender::{Tap, TapFormat, TapFrame, TapSpec};
+use thinlink_video::MediaError;
+use thinlink_video::sender::{Tap, TapFormat, TapFrame, TapSpec};
 
 const WIDTHS: std::ops::RangeInclusive<u32> = 160..=1920;
 const MAX_FPS: u16 = 15;

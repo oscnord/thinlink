@@ -1,4 +1,4 @@
-# sat-teleop-ground MAVLink bridge (docs/testbed.md). Unknown keys are rejected.
+# thinlink-ground MAVLink bridge (docs/testbed.md). Unknown keys are rejected.
 
 # mavlink-router's client endpoint sends telemetry here, on the ground's overlay address.
 listen = "10.77.0.3:14551"

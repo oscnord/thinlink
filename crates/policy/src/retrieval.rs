@@ -1,8 +1,8 @@
 //! Retrieval of retained detail yields to live video and control: when it may send, what a chunk
 //! costs on the wire and how large a chunk the allowance carries.
 
-use sat_teleop_video_core::adapt::Group;
-use sat_teleop_video_core::budget::DATAGRAM_OVERHEAD;
+use thinlink_video_core::adapt::Group;
+use thinlink_video_core::budget::DATAGRAM_OVERHEAD;
 
 /// The largest chunk of an upload.
 pub const MAX_CHUNK: usize = 16 * 1024;

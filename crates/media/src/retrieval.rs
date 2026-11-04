@@ -2,11 +2,11 @@
 
 use std::time::Instant;
 
-use sat_teleop_policy::retrieval::Conditions;
+use thinlink_policy::retrieval::Conditions;
 
-use sat_teleop_video::adapt::{AdaptLimits, AdaptStats};
+use thinlink_video::adapt::{AdaptLimits, AdaptStats};
 
-/// The link as retrieval needs it to decide (`sat_teleop_policy::retrieval::permit`).
+/// The link as retrieval needs it to decide (`thinlink_policy::retrieval::permit`).
 pub fn conditions(
     stats: &AdaptStats,
     now: Instant,

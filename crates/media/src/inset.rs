@@ -1,7 +1,7 @@
 //! The pilot's detail inset in the ground's picture: a retained crop decoded and scaled once to the
 //! size it is shown at (`Image`), held with its age (`DetailCell`), and blitted into the planes of
 //! a frame inside a frame of its own (`Image::draw`). Where and when it shows is decided by
-//! `sat_teleop_policy::inset`.
+//! `thinlink_policy::inset`.
 
 use std::io::Cursor;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -10,8 +10,8 @@ use std::time::Instant;
 use image::imageops::{self, FilterType};
 use image::{ImageFormat, ImageReader, Limits};
 
-use sat_teleop_policy::inset::{self, FRAME_PX, Placement};
-use sat_teleop_video_core::stamp::PlaneGeometry;
+use thinlink_policy::inset::{self, FRAME_PX, Placement};
+use thinlink_video_core::stamp::PlaneGeometry;
 
 /// The most a crop may decode to (a retained snapshot is at most 8192 on a side).
 const MAX_SIDE: u32 = 8192;
@@ -179,7 +179,7 @@ impl DetailCell {
 
 #[cfg(test)]
 mod tests {
-    use sat_teleop_video_core::freshness::State;
+    use thinlink_video_core::freshness::State;
 
     use super::*;
 

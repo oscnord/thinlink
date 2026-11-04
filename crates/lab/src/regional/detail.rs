@@ -3,11 +3,11 @@
 //! region (the output's pixels around the box) is scaled to that size and scored against the same
 //! reference, so the two differ only by what they carry.
 
-use sat_teleop_detail::crop::{Crop, pixel_rect};
-use sat_teleop_policy::inset::{self, Placement};
-use sat_teleop_policy::region::{NormRect, PixelRect};
-use sat_teleop_video::card::Luma;
-use sat_teleop_video_core::freshness::State;
+use thinlink_detail::crop::{Crop, pixel_rect};
+use thinlink_policy::inset::{self, Placement};
+use thinlink_policy::region::{NormRect, PixelRect};
+use thinlink_video::card::Luma;
+use thinlink_video_core::freshness::State;
 
 use super::ssim;
 

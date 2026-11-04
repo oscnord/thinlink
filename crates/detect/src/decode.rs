@@ -1,7 +1,7 @@
 //! NanoDet-Plus-m's output tensor as detections of the wanted kinds in picture fractions, and the overlap filter. Pure.
 
-use sat_teleop_policy::kind::Kind;
-use sat_teleop_policy::region::NormRect;
+use thinlink_policy::kind::Kind;
+use thinlink_policy::region::NormRect;
 
 use crate::Detection;
 

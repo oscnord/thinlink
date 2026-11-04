@@ -1,4 +1,4 @@
-use sat_teleop_video_core::stamp::PlaneGeometry;
+use thinlink_video_core::stamp::PlaneGeometry;
 
 use crate::region::PixelRect;
 

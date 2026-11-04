@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 
 pub use self::camera::{Camera, CameraCounts, CameraStream};
 pub use self::control::{ControlSnapshot, Controller, LeaseStatus, Status, TakeError};
-use sat_teleop_policy::clock;
-use sat_teleop_policy::predict::Attitude;
+use thinlink_policy::clock;
+use thinlink_policy::predict::Attitude;
 
 use crate::auth::VehicleId;
 use crate::clock::{Clock, ClockSnapshot, ClockSource};

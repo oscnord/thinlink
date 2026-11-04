@@ -2,7 +2,7 @@
 # 5762 and 5763 (serial 1 and 2) and RC input on udp 5501. Only the companion, over loopback, may
 # reach them; otherwise a host on the overlay could talk to the autopilot past the vehicle's gate.
 # sidecar.sh loads this when EXTRA_NFT names it.
-table inet sat_teleop_sitl {
+table inet thinlink_sitl {
     chain input {
         type filter hook input priority filter; policy accept;
         iif lo accept

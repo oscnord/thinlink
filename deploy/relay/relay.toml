@@ -1,4 +1,4 @@
-# /opt/sat-teleop/relay.toml: the relay on a public server. Unknown keys are rejected.
+# /opt/thinlink/relay.toml: the relay on a public server. Unknown keys are rejected.
 
 # RTP from the vehicle arrives on the overlay address, inside WireGuard.
 listen = "10.77.0.1:5004"

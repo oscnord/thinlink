@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-detect"
+name = "thinlink-detect"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,6 @@ workspace = true
 
 [dependencies]
 apriltag.workspace = true
-sat-teleop-policy = { path = "../policy" }
+thinlink-policy = { path = "../policy" }
 thiserror.workspace = true
 tract-onnx.workspace = true

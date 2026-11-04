@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-video"
+name = "thinlink-video"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,8 +13,8 @@ workspace = true
 gstreamer.workspace = true
 gstreamer-app.workspace = true
 gstreamer-video.workspace = true
-sat-teleop-video-core = { path = "../video-core" }
-sat-teleop-x264 = { path = "../x264" }
+thinlink-video-core = { path = "../video-core" }
+thinlink-x264 = { path = "../x264" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

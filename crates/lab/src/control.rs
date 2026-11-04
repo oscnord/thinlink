@@ -24,9 +24,9 @@ use mavlink::dialects::ardupilotmega::{MANUAL_CONTROL_DATA, MavCmd, MavMessage, 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use sat_teleop_control::auth::VehicleId;
-use sat_teleop_control::envelope::{ControlLimits, Refusal, ToGround};
-use sat_teleop_control::ground::{LeaseStatus, Status};
+use thinlink_control::auth::VehicleId;
+use thinlink_control::envelope::{ControlLimits, Refusal, ToGround};
+use thinlink_control::ground::{LeaseStatus, Status};
 
 use self::intruder::{Answer, Case, Intruder};
 use crate::budget::{self, Budget};
@@ -61,7 +61,7 @@ pub enum LimitsError {
     #[error(transparent)]
     Toml(#[from] toml::de::Error),
     #[error(transparent)]
-    Invalid(#[from] sat_teleop_control::ControlError),
+    Invalid(#[from] thinlink_control::ControlError),
 }
 
 pub use self::real_mode::run as run_real_mode;
@@ -457,7 +457,7 @@ fn round_trip(gcs: &mut Gcs, message: &MavMessage) -> Ack {
         MavMessage::COMMAND_LONG(c) => c.command,
         _ => MavCmd::default(),
     };
-    let (sent_at, sent_unix_ms) = (Instant::now(), sat_teleop_control::unix_ms());
+    let (sent_at, sent_unix_ms) = (Instant::now(), thinlink_control::unix_ms());
     let ack = |s: &Seen| match s.kind {
         Kind::Ack {
             command: acked,

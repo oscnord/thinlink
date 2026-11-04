@@ -12,8 +12,8 @@ use tract_onnx::prelude::{
     DatumExt, Framework, InferenceModelExt, IntoRunnable, Tensor, TypedRunnableModel, tvec,
 };
 
-use sat_teleop_policy::kind::Kind;
-use sat_teleop_policy::region::NormRect;
+use thinlink_policy::kind::Kind;
+use thinlink_policy::region::NormRect;
 
 pub use self::decode::non_max_suppression;
 pub use self::tag::{TagDetector, TagFound};

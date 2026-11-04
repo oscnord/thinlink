@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use sat_teleop_video::MediaError;
-use sat_teleop_video::output::FreshnessLimits;
-use sat_teleop_video::receiver::{self, Observation, Source};
-use sat_teleop_video_core::freshness::State;
-use sat_teleop_video_core::stamp::plausible_age;
+use thinlink_video::MediaError;
+use thinlink_video::output::FreshnessLimits;
+use thinlink_video::receiver::{self, Observation, Source};
+use thinlink_video_core::freshness::State;
+use thinlink_video_core::stamp::plausible_age;
 
 use crate::adaptation;
 use crate::budget::{self, Budget};
@@ -162,7 +162,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("output_received", Verdict::Incomplete, e.to_string());
         return results;
     }

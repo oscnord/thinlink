@@ -1,7 +1,7 @@
 //! The control envelope protocol: JSON over UDP on the overlay between a controller (the ground
 //! adapter on 10.77.0.3:7701) and the vehicle (10.77.0.2:7700), one message per datagram of at
 //! most 1200 bytes. Every state-changing `MAVLink` message travels inside an envelope; the vehicle
-//! checks it with `sat_teleop_policy::control` before anything reaches SITL.
+//! checks it with `thinlink_policy::control` before anything reaches SITL.
 
 use std::fmt;
 use std::time::Duration;
@@ -11,8 +11,8 @@ use base64::engine::general_purpose::STANDARD;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::control::{self as policy, Limits, Reason};
-use sat_teleop_policy::region::NormRect;
+use thinlink_policy::control::{self as policy, Limits, Reason};
+use thinlink_policy::region::NormRect;
 
 use crate::ControlError;
 use crate::frame::{Frame, datagram_frames};

@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn reads_cpu_time_past_a_command_name_with_spaces() {
         let stat =
-            "42 (sat teleop) S 1 42 42 0 -1 4194560 100 0 0 0 250 50 0 0 20 0 8 0 1000 5000 1200";
+            "42 (thin link) S 1 42 42 0 -1 4194560 100 0 0 0 250 50 0 0 20 0 8 0 1000 5000 1200";
         let status = "Name:\tsat\nVmRSS:\t   23456 kB\nThreads:\t8\n";
         assert_eq!(
             parse(stat, status),

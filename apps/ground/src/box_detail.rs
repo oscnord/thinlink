@@ -8,13 +8,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
-use sat_teleop_control::ground::Camera;
-use sat_teleop_detail::client::Client;
-use sat_teleop_detail::crop::Crop;
-use sat_teleop_detail::wire::{JobRequest, Kind};
-use sat_teleop_media::inset::{DetailCell, Image};
-use sat_teleop_policy::inset;
-use sat_teleop_policy::region::NormRect;
+use thinlink_control::ground::Camera;
+use thinlink_detail::client::Client;
+use thinlink_detail::crop::Crop;
+use thinlink_detail::wire::{JobRequest, Kind};
+use thinlink_media::inset::{DetailCell, Image};
+use thinlink_policy::inset;
+use thinlink_policy::region::NormRect;
 
 use crate::detail::now_ms;
 

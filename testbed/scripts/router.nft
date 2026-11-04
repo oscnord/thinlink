@@ -1,4 +1,4 @@
-table ip sat_teleop_router {
+table ip thinlink_router {
     # CGNAT emulation: vehicle_net may open flows to ground_net, ground_net only answers them.
     # ctl_net is never forwarded.
     chain forward {

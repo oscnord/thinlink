@@ -1,7 +1,7 @@
 //! Where the camera's centre will point when a command sent now takes effect, and the horizon,
 //! from the autopilot's newest attitude. Lens distortion is ignored.
 
-use sat_teleop_video_core::freshness::State;
+use thinlink_video_core::freshness::State;
 
 /// An attitude older than this predicts nothing.
 pub const MAX_ATTITUDE_AGE_MS: u64 = 1000;

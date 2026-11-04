@@ -98,13 +98,13 @@ One controller at a time holds the lease. Its identity is its overlay source add
 
 The relay attests those addresses. The vehicle's only WireGuard peer is the relay, with `AllowedIPs = 10.77.0.0/24`; the relay checks each client against its own `/32`. A compromised relay can pose as the ground. Every envelope, lease request and release therefore needs the controller's Ed25519 signature (`ed25519-dalek`). The vehicle holds one public key per controller address. The relay holds neither public nor private control keys. Public keys are read at startup; changes take effect after restart.
 
-Signed data starts with its message-kind constant (`sat-teleop/envelope/v1`, `sat-teleop/lease-request/v1` or `sat-teleop/lease-release/v1`) and `vehicle_id`. The vehicle and ground must configure the same id. Signatures cannot be reused for another vehicle or message kind. An envelope signs every field except the signature itself, including challenge and sequence. A request signs its nonce; a release signs the vehicle epoch and lease.
+Signed data starts with its message-kind constant (`thinlink/envelope/v1`, `thinlink/lease-request/v1` or `thinlink/lease-release/v1`) and `vehicle_id`. The vehicle and ground must configure the same id. Signatures cannot be reused for another vehicle or message kind. An envelope signs every field except the signature itself, including challenge and sequence. A request signs its nonce; a release signs the vehicle epoch and lease.
 
 Missing signatures get `unsigned`. A wrong key, changed field, wrong vehicle id or unreadable controller key gets `bad_signature`. A request returns `lease_denied`; a release returns `rejected`. Signature verification precedes policy checks and lease changes. A request nonce is the ground's millisecond clock and must exceed the last accepted from that controller, or gets `replayed_request`. This remembered nonce is cleared by a vehicle restart.
 
 Challenge tokens are a per-session counter and prove freshness only. Vehicle replies, telemetry and video are unsigned. A compromised relay can forge them, but they do not authorize vehicle motion. Any listed controller can ask for the clock bound without a lease. The ground does so every 2 s with `ClockQuery`, answered by `Clock`. A forged answer could make the ground believe a small clock bound, just as a forged video could mislead it. See [Clock bounds](video.md#frame-age-and-clocks).
 
-The adapter's `POST /lease`, `DELETE /lease`, `GET /status`, and every application's `GET /metrics` require bearer authentication when a token is configured. Tokens are compared in constant time by `sat_teleop_video_core::token`. The service files are `vehicle.token`, `ground.token` and `job.token`. The ground token stays on the ground; the relay holds only the job token. Without a token an endpoint binds to 127.0.0.1 on the configured port. Deployment metrics also bind to loopback. The job API requires its token to start.
+The adapter's `POST /lease`, `DELETE /lease`, `GET /status`, and every application's `GET /metrics` require bearer authentication when a token is configured. Tokens are compared in constant time by `thinlink_video_core::token`. The service files are `vehicle.token`, `ground.token` and `job.token`. The ground token stays on the ground; the relay holds only the job token. Without a token an endpoint binds to 127.0.0.1 on the configured port. Deployment metrics also bind to loopback. The job API requires its token to start.
 
 ### Command paths
 
@@ -145,7 +145,7 @@ The adapter returns `DENIED` without a lease or fresh challenge, and on a vehicl
 
 ### Control lifetimes
 
-`[control]` in `testbed/limits.toml` is validated by `sat-teleop-control`. The configured GEO round trip is about 600 ms.
+`[control]` in `testbed/limits.toml` is validated by `thinlink-control`. The configured GEO round trip is about 600 ms.
 
 | Limit | Value | Purpose |
 |---|---|---|
@@ -157,7 +157,7 @@ The adapter returns `DENIED` without a lease or fresh challenge, and on a vehicl
 | `lease_lifetime_ms` | 3000 | Two missed liveness intervals and margin; reacquisition is explicit. |
 | `throttle_release_deadline_ms` | 1825 | Rover check deadline, described in [Control freshness check](testbed.md#control-freshness-check). |
 
-`testbed/sat-teleop.parm` loads after `rover.parm`. `RC_OVERRIDE_TIME 0.5` ends override 0.5 s after the last refresh. `FS_GCS_ENABLE 1`, `FS_GCS_TIMEOUT 2`, `FS_TIMEOUT 1` and `FS_ACTION 2` select Hold after no GCS heartbeat or `MANUAL_CONTROL` for 2 + 1 s. The vehicle must stop refreshes by the setpoint lifetime plus one 20 ms tick. The rover then coasts without brakes. ArduPilot parameter names and ranges are pinned to commit `fb773567896014da007bca58358704d4a0d8516f`.
+`testbed/thinlink.parm` loads after `rover.parm`. `RC_OVERRIDE_TIME 0.5` ends override 0.5 s after the last refresh. `FS_GCS_ENABLE 1`, `FS_GCS_TIMEOUT 2`, `FS_TIMEOUT 1` and `FS_ACTION 2` select Hold after no GCS heartbeat or `MANUAL_CONTROL` for 2 + 1 s. The vehicle must stop refreshes by the setpoint lifetime plus one 20 ms tick. The rover then coasts without brakes. ArduPilot parameter names and ranges are pinned to commit `fb773567896014da007bca58358704d4a0d8516f`.
 
 ### A filled uplink under `geo`
 
@@ -189,11 +189,11 @@ The vehicle accepts raw datagrams only from 10.77.0.1:14550. Its allowlist is pa
 
 The ground binds 10.77.0.3:14551, retrying each second until available. It accepts telemetry only from mavlink-router's address and learns its sending port. Each configured `gcs` station gets its own UDP socket, accepting replies only from that station. Camera messages stay local. Read-only traffic goes to mavlink-router; the rest goes through the controller on 10.77.0.3:7701.
 
-`testbed/config/ground.toml` configures the adapter. `testbed/limits.toml` supplies operational limits; unknown keys in a table an application reads are rejected. `just take-control`, `just release-control` and `just control-status` call `sat-teleop-ground take-control | release-control | status` in the ground container, against its `ctl_net` HTTP endpoint.
+`testbed/config/ground.toml` configures the adapter. `testbed/limits.toml` supplies operational limits; unknown keys in a table an application reads are rejected. `just take-control`, `just release-control` and `just control-status` call `thinlink-ground take-control | release-control | status` in the ground container, against its `ctl_net` HTTP endpoint.
 
 ## Predictive display
 
-The ground draws a hollow white dashed ring where the camera centre is predicted to point when a command sent now takes effect. It uses the newest `ATTITUDE` yaw/pitch rates, shown frame age and estimated uplink delay: half the latest clock-query round trip. This is not a direct command-delay measurement. `sat_teleop_policy::predict` maps the rates times age-plus-delay into pixels using `[camera] hfov_deg`.
+The ground draws a hollow white dashed ring where the camera centre is predicted to point when a command sent now takes effect. It uses the newest `ATTITUDE` yaw/pitch rates, shown frame age and estimated uplink delay: half the latest clock-query round trip. This is not a direct command-delay measurement. `thinlink_policy::predict` maps the rates times age-plus-delay into pixels using `[camera] hfov_deg`.
 
 For a fixed camera, `[camera] tilt_deg` also enables a dashed horizon from roll, pitch and mount tilt. A gimbal holding its own angle gets no horizon. The simulated camera uses `hfov_deg = 114.6` (2.0 rad). Without `[camera]`, nothing is drawn.
 
@@ -204,7 +204,7 @@ Drawing requires `LIVE` or `LOW RATE`, known frame age, fresh uplink delay and a
 The vehicle keeps what the operator may want to look at again: a JPEG of the source's frame, at the source's full size, every second. An operator who saw something in the live picture asks for the frame captured some seconds ago, whole or a rectangle of it, and gets it labelled as historical: the retained frame's id and capture time, never the live one's.
 
 ```text
-sender (sat-teleop-video)                      vehicle app                      relay                    ground
+sender (thinlink-video)                      vehicle app                      relay                    ground
  source -> convert -> tee -> scale/rate -> ... live
                         \-> queue(leaky,1) -> videorate 1 fps -> jpegenc q90 -> appsink(drop,2)
                                                 |  try_send (queue of 2: full = snapshot dropped, counted)
@@ -219,7 +219,7 @@ sender (sat-teleop-video)                      vehicle app                      
 
 Snapshots are `<capture_ms>-<frame_id>.jpg` on a separate volume. Writes use `.tmp`, sync and rename. Startup removes leftover `.tmp` and orphan `.pos` files, indexes valid names, leaves unrelated files alone and trims to retention limits. Gaps greater than `gap_after_ms`, including restart gaps, appear in metrics.
 
-`sat-teleop-policy::retention` enforces byte quota, maximum age and a free-space floor, evicting oldest first. Retrieval pins a snapshot until the pin expires. Capture time is the wall clock as the frame passes the snapshot branch. Its id is the next live frame id at that moment, within one live frame. The snapshot has no live stamp.
+`thinlink-policy::retention` enforces byte quota, maximum age and a free-space floor, evicting oldest first. Retrieval pins a snapshot until the pin expires. Capture time is the wall clock as the frame passes the snapshot branch. Its id is the next live frame id at that moment, within one live frame. The snapshot has no live stamp.
 
 ### Positions and outage snapshots
 
@@ -294,13 +294,13 @@ just detail-outage
 just sightings
 ```
 
-The underlying CLI is `sat-teleop-ground detail request (--ago-s <n> | --at-ms <unix-ms>) [--crop x,y,w,h] [--max-bytes <n>] [--expires-s <n>] [--relay <url>]`. `detail fetch <id> -o <file>` waits, writes the JPEG with its historical label and frees the job. `detail cancel <id>` cancels it. The default relay URL is `http://192.168.232.20:8080` and `--job-token-file` supplies its token. `--ago-s` needs agreement between this machine's clock and the vehicle's capture clock; `--at-ms` names the capture time directly. The output identifies the retained frame, capture time, age, crop, source size and position when available. It never labels the object as live.
+The underlying CLI is `thinlink-ground detail request (--ago-s <n> | --at-ms <unix-ms>) [--crop x,y,w,h] [--max-bytes <n>] [--expires-s <n>] [--relay <url>]`. `detail fetch <id> -o <file>` waits, writes the JPEG with its historical label and frees the job. `detail cancel <id>` cancels it. The default relay URL is `http://192.168.232.20:8080` and `--job-token-file` supplies its token. `--ago-s` needs agreement between this machine's clock and the vehicle's capture clock; `--at-ms` names the capture time directly. The output identifies the retained frame, capture time, age, crop, source size and position when available. It never labels the object as live.
 
 Sightings appear in QGC's Fly-view notification area under the vehicle, oldest first, at informational severity. Their coordinates locate the drone, not the detected person or vehicle. `just sightings` lists the boxes and retained snapshots, including sightings already announced, within the newest 256 entries. No outline means no detection was reported; it does not prove an area is clear. The detector provides no obstacle avoidance or obstacle-clear decision.
 
 ## Regional video
 
-Regional video gives the pilot's box and detector regions a negative quantiser offset in `satx264enc`. The offsets leave the picture's pixels unchanged. `RegionCell` alone selects the regions and the pilot box confirmed to the ground. Boxes use picture fractions and keep their location across rung changes.
+Regional video gives the pilot's box and detector regions a negative quantiser offset in `thinlinkx264enc`. The offsets leave the picture's pixels unchanged. `RegionCell` alone selects the regions and the pilot box confirmed to the ground. Boxes use picture fractions and keep their location across rung changes.
 
 ```text
 QGC TRACK_RECTANGLE -> ground -> signed Region envelope -> vehicle RegionCell
@@ -327,7 +327,7 @@ The detector is off without `[region] detector` in the vehicle config. NanoDet-P
 
 `[region] follow = true` turns the drawn box into a starting selection. It snaps to a detection overlapped by more than half. A leaky 320x180 luma tap feeds the newest frame at `follow_fps` (10/s in the testbed). A slow tracker never holds live video.
 
-`sat_teleop_policy::follow` matches the starting pixels by normalised cross-correlation near the previous location. Brightness and contrast changes do not affect that score. A match of 0.7 or better moves the template slightly towards the new pixels; weaker matches never teach it. The followed box becomes the selected region and the vehicle's confirmed box. Updates reach the lease holder at most four times a second; QGC's box and crop requests follow them.
+`thinlink_policy::follow` matches the starting pixels by normalised cross-correlation near the previous location. Brightness and contrast changes do not affect that score. A match of 0.7 or better moves the template slightly towards the new pixels; weaker matches never teach it. The followed box becomes the selected region and the vehicle's confirmed box. Updates reach the lease holder at most four times a second; QGC's box and crop requests follow them.
 
 Follow ends when the score stays below `follow_min_score` for `follow_lost_frames`, the target reaches an edge, or the initial box is too small or flat. The outline disappears. `ToGround::Lost { region_seq }` repeats on the 250 ms report tick for 3 s unless a new box is followed. The ground clears only a box whose first sent sequence is no newer than that loss, so a delayed loss cannot clear a new or unsent box. Nothing resumes until the pilot draws again. Following never moves the drone.
 
@@ -415,7 +415,7 @@ Guided go-to is refused. Waypoints require `allow_missions`. Pulling the throttl
 
 ### Copter failsafes
 
-`testbed/sat-teleop-copter.parm` defines the failsafes and cites their ArduPilot sources. Losing only the setpoint stream, with lease and adapter present, triggers Brake and holds position and height. Resume the stream and change mode to fly again. Losing the lease or adapter triggers Land after the 2 s GCS timeout. Guided flight and landing ignore the radio failsafe; the GCS failsafe still lands them when the lease goes. Auto has the mission exceptions below.
+`testbed/thinlink-copter.parm` defines the failsafes and cites their ArduPilot sources. Losing only the setpoint stream, with lease and adapter present, triggers Brake and holds position and height. Resume the stream and change mode to fly again. Losing the lease or adapter triggers Land after the 2 s GCS timeout. Guided flight and landing ignore the radio failsafe; the GCS failsafe still lands them when the lease goes. Auto has the mission exceptions below.
 
 The simulated radio stays at throttle 1000 us. `FS_THR_VALUE 1085` puts that below the failsafe threshold, `FS_THR_ENABLE 7` selects Brake or Land, and `RC3_MIN 1100` with `RC3_MAX 1900` keeps the stick's centre at hold altitude. ArduPilot also refuses Stabilize during RC failsafe; AltHold, Loiter and PosHold request zero climb while that failsafe is active.
 
@@ -448,7 +448,7 @@ Gazebo renders its gimbal camera headlessly at 640x360 and 15 fps. It looks forw
 
 The pinned ardupilot_gazebo `GstCameraPlugin` encodes with x264: 800 kbit/s, `speed-preset` 6 (medium), `tune` 4 (zero latency), and `key-int-max` 10 frames. It sends RTP to the vehicle's ingest in `testbed/config/vehicle-sim.toml`. The vehicle decodes, stamps and sends it. Label age starts at that stamp; the render and plugin encode time are not included and are not measured separately. Gazebo shares the vehicle's network namespace and ingest accepts only the vehicle's own address, so video cannot bypass the emulated link.
 
-The world has an AprilTag 6 m east and 3 m south of takeoff. `just sim-landing <on|off|forward> <profile>` exercises [marker landing](testbed.md#landing-check). `on` enables targets and points the camera down using `testbed/sat-teleop-copter-camera-down.parm`. `off` disables targets. `forward` enables them with the camera 20 degrees below the horizon. `testbed/sat-teleop-copter-precland.parm` supplies the precision-landing values required in real mode, plus `PLND_LAG 0.15` for this simulated camera path.
+The world has an AprilTag 6 m east and 3 m south of takeoff. `just sim-landing <on|off|forward> <profile>` exercises [marker landing](testbed.md#landing-check). `on` enables targets and points the camera down using `testbed/thinlink-copter-camera-down.parm`. `off` disables targets. `forward` enables them with the camera 20 degrees below the horizon. `testbed/thinlink-copter-precland.parm` supplies the precision-landing values required in real mode, plus `PLND_LAG 0.15` for this simulated camera path.
 
 ### Simulation resources
 

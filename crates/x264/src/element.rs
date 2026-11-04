@@ -9,7 +9,7 @@ use gstreamer_video as gst_video;
 
 use crate::encoder::{Config, Encoder, Picture, Rate};
 
-pub const ELEMENT: &str = "satx264enc";
+pub const ELEMENT: &str = "thinlinkx264enc";
 
 glib::wrapper! {
     pub struct X264Enc(ObjectSubclass<imp::X264Enc>)
@@ -102,7 +102,7 @@ mod imp {
 
     #[glib::object_subclass]
     impl ObjectSubclass for X264Enc {
-        const NAME: &'static str = "SatTeleopX264Enc";
+        const NAME: &'static str = "ThinlinkX264Enc";
         type Type = super::X264Enc;
         type ParentType = gst_video::VideoEncoder;
     }
@@ -193,7 +193,7 @@ mod imp {
                     "libx264 encoder",
                     "Codec/Encoder/Video",
                     "H.264 on libx264 with on-demand IDR frames under intra refresh",
-                    "sat-teleop",
+                    "thinlink",
                 )
             });
             Some(&METADATA)
@@ -385,7 +385,7 @@ mod tests {
     const HEIGHT: i32 = 48;
     const IDR: u8 = 5;
 
-    /// appsrc -> satx264enc -> appsink, one frame in and one out at a time.
+    /// appsrc -> thinlinkx264enc -> appsink, one frame in and one out at a time.
     struct Rig {
         pipeline: gst::Pipeline,
         src: gst_app::AppSrc,

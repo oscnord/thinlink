@@ -1,6 +1,6 @@
 # AGENTS.md: crates/x264
 
-`sat-teleop-x264` (L0) provides `satx264enc`, a GStreamer `VideoEncoder` over libx264. It has no workspace dependencies and is GPL-2.0-or-later because it links libx264. See the root `AGENTS.md` for the unsafe-code exception.
+`thinlink-x264` (L0) provides `thinlinkx264enc`, a GStreamer `VideoEncoder` over libx264. It has no workspace dependencies and is GPL-2.0-or-later because it links libx264. See the root `AGENTS.md` for the unsafe-code exception.
 
 ## Invariants
 
@@ -16,7 +16,7 @@
 Build and test in the build container with GStreamer and libx264 development packages:
 
 ```sh
-cargo test -p sat-teleop-x264 --locked
+cargo test -p thinlink-x264 --locked
 ```
 
 Tests inspect NAL type 5 and delta flags for forced IDRs and refresh waves. They also check the refresh period after a frame-rate change. ROI tests cover touched macroblocks and overlaps. An element test checks that a frame with ROI metadata uses more bits after passing through a leaky queue.

@@ -12,10 +12,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use sat_teleop_video::receiver::{self, Observation, Source};
-use sat_teleop_video::stages::StageSnapshot;
-use sat_teleop_video::{Health, HealthSnapshot, supervise, unix_ms};
-use sat_teleop_video_core::stamp::{self, CaptureMs, MAX_PLAUSIBLE_AGE_MS, plausible_age};
+use thinlink_video::receiver::{self, Observation, Source};
+use thinlink_video::stages::StageSnapshot;
+use thinlink_video::{Health, HealthSnapshot, supervise, unix_ms};
+use thinlink_video_core::stamp::{self, CaptureMs, MAX_PLAUSIBLE_AGE_MS, plausible_age};
 
 use crate::adaptation;
 use crate::budget::{self, Budget};
@@ -79,7 +79,7 @@ pub fn run(
     if !check::apply_profile(&mut results, agent, profile_text) {
         return results;
     }
-    if let Err(e) = sat_teleop_video::init() {
+    if let Err(e) = thinlink_video::init() {
         results.record("video_received", Verdict::Incomplete, e.to_string());
         return results;
     }
@@ -576,7 +576,7 @@ fn samples(observations: &[Observation]) -> Vec<Sample> {
 
 #[cfg(test)]
 mod tests {
-    use sat_teleop_video_core::stamp::{FrameId, Stamp};
+    use thinlink_video_core::stamp::{FrameId, Stamp};
 
     use super::*;
 

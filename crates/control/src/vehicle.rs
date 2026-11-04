@@ -22,8 +22,8 @@ use mavlink::MessageData;
 use mavlink::dialects::ardupilotmega::{GLOBAL_POSITION_INT_DATA, MavMessage};
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::landing::Setup;
-use sat_teleop_policy::sighting::Sightings;
+use thinlink_policy::landing::Setup;
+use thinlink_policy::sighting::Sightings;
 
 use self::control::{ControlSnapshot, ControlStats};
 use crate::auth::VehicleId;
@@ -201,7 +201,7 @@ impl VehicleStats {
         }
     }
 
-    /// Sets the telemetry cap from the uplink budget (`sat_teleop_video_core::budget::Budget::telemetry_cap`,
+    /// Sets the telemetry cap from the uplink budget (`thinlink_video_core::budget::Budget::telemetry_cap`,
     /// never below the vehicle's state); the bridge applies it at its next frame.
     pub fn set_telemetry_cap(&self, bytes_per_s: u32) {
         self.telemetry_cap.store(bytes_per_s, Ordering::Relaxed);

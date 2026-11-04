@@ -1,5 +1,5 @@
 //! The vehicle's control endpoint on its overlay address: lease requests and releases, a challenge
-//! for the holder every 500 ms, and the holder's envelopes, checked with `sat_teleop_policy::control` on
+//! for the holder every 500 ms, and the holder's envelopes, checked with `thinlink_policy::control` on
 //! this process's monotonic clock. An admitted envelope's frame goes to SITL at once; the newest
 //! fresh continuous setpoint is written again whenever 200 ms pass without one, until it expires.
 //! Nothing waits: a stale, duplicate or reordered envelope is refused, never queued or replayed.
@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 use mavlink::dialects::ardupilotmega::MavMessage;
 use serde::Serialize;
 
-use sat_teleop_policy::control::{
+use thinlink_policy::control::{
     Admitted, ChallengeToken, Epoch, Header, LeaseId, LeaseState, PeerId, Seq, Txn, TxnId,
 };
-use sat_teleop_policy::region::{NormRect, RegionCell, Timed};
+use thinlink_policy::region::{NormRect, RegionCell, Timed};
 
 use super::{ControllerConfig, SitlWriter, VehicleConfig, write_to_sitl};
 use crate::auth::{VehicleId, Verifier};
@@ -1028,11 +1028,11 @@ mod tests {
         HEARTBEAT_DATA, MavParamType, MavType, PARAM_VALUE_DATA,
     };
 
-    use sat_teleop_policy::follow::Lost;
+    use thinlink_policy::follow::Lost;
 
     use super::*;
     use crate::params::ParamType;
-    use sat_teleop_policy::region::RegionLimits;
+    use thinlink_policy::region::RegionLimits;
 
     fn said(name: &str, value: f32, kind: MavParamType) -> MavMessage {
         MavMessage::PARAM_VALUE(PARAM_VALUE_DATA {
@@ -1132,7 +1132,7 @@ mod tests {
 
     impl Rig {
         fn endpoint(&self) -> Endpoint<'_> {
-            let limits = sat_teleop_policy::control::Limits {
+            let limits = thinlink_policy::control::Limits {
                 challenge_ms: 5000,
                 setpoint_ms: 1000,
                 lease_ms: 10_000,

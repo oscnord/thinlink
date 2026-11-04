@@ -1,6 +1,6 @@
 # AGENTS.md: apps/lab
 
-`sat-teleop-lab-cli` builds the `lab` executable (L4). It stays thin: argument parsing and wiring over `sat-teleop-lab`.
+`thinlink-lab-cli` builds the `lab` executable (L4). It stays thin: argument parsing and wiring over `thinlink-lab`.
 
 - `lab router --listen <addr> --uplink-if <name|auto> --downlink-if <name|auto>` runs the router agent.
 - `lab impair --agent <url> --profile <path> [--start-timeline]` validates a profile locally, then applies it through the agent.
@@ -12,4 +12,4 @@
 
 - `adaptation` also reads `perf/budgets.toml`, and takes `--warmup-s`, `--duration-s` (the observation under a profile without a timeline), `--url` and `--vehicle-metrics` (as for `skeleton`).
 
-Use `anyhow` with `.context()`. Behaviour belongs in `sat-teleop-lab`. Documented in `docs/testbed.md`.
+Use `anyhow` with `.context()`. Behaviour belongs in `thinlink-lab`. Documented in `docs/testbed.md`.

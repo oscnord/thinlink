@@ -8,9 +8,9 @@ ADD --checksum=sha256:f453fd8217b9d798c873e5c424e139a2a3597b52e31658f76b2c177b52
 ADD --checksum=sha256:6479879d3e625854a6c32cb4d3fe231bab81d935e07904eac8a411fd6f971bc4 --chmod=644 \
     https://raw.githubusercontent.com/ArduPilot/ardupilot/fb773567896014da007bca58358704d4a0d8516f/Tools/autotest/default_params/rover.parm /sitl/rover.parm
 # The testbed's overrides, loaded after rover.parm: GCS failsafe and RC override timeout.
-COPY --chmod=644 testbed/sat-teleop.parm /sitl/sat-teleop.parm
+COPY --chmod=644 testbed/thinlink.parm /sitl/thinlink.parm
 # SITL keeps its parameters (eeprom.bin) and logs in the working directory.
 WORKDIR /var/lib/sitl
 # Serial 0 is MAVLink on tcp:5760; SITL waits there until a client (the companion) connects.
-ENTRYPOINT ["/sitl/ardurover", "--model", "rover", "--defaults", "/sitl/rover.parm,/sitl/sat-teleop.parm", "--speedup", "1", "-I0"]
+ENTRYPOINT ["/sitl/ardurover", "--model", "rover", "--defaults", "/sitl/rover.parm,/sitl/thinlink.parm", "--speedup", "1", "-I0"]
 CMD ["--home", "59.3293,18.0686,10,0"]

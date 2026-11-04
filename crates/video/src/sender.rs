@@ -25,7 +25,7 @@ use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_video_core::stamp::{self, CaptureMs, FrameId, Stamp};
+use thinlink_video_core::stamp::{self, CaptureMs, FrameId, Stamp};
 
 use crate::camera::{self, CameraFormat, CaptureClock, Encoder, EncoderWish};
 use crate::ingest::{self, IngestSnapshot, IngestStats};
@@ -69,7 +69,7 @@ pub struct Hooks {
     pub frame: Option<FrameHook>,
     pub taps: Vec<Arc<Tap>>,
     /// How much finer than elsewhere the encoder quantises inside the hook's regions, as a
-    /// negative quantiser offset; 0 is off. Only `satx264enc` reads it.
+    /// negative quantiser offset; 0 is off. Only `thinlinkx264enc` reads it.
     pub roi_qp_offset: f32,
 }
 
@@ -339,7 +339,7 @@ struct Change {
 
 impl Change {
     /// The new bitrate and VBV buffer take effect at the encoder's next frame. A new size or frame
-    /// rate goes into the rung filter's caps: x264 reopens itself for them (`sat-teleop-x264`),
+    /// rate goes into the rung filter's caps: x264 reopens itself for them (`thinlink-x264`),
     /// with a refresh period of the same duration at the new rate, starting with an IDR frame.
     fn apply(self) {
         let rung = self.to;
@@ -772,7 +772,7 @@ fn build(
     Ok((pipeline, handles))
 }
 
-/// The encoder element for `kind`, counted into `stats`. x264 (`sat-teleop-x264`) is configured for
+/// The encoder element for `kind`, counted into `stats`. x264 (`thinlink-x264`) is configured for
 /// the lowest latency and refreshes the picture with a moving column of intra blocks over the
 /// rung's keyframe interval; it gives a whole IDR frame only when asked for one.
 fn make_encoder(
@@ -783,8 +783,8 @@ fn make_encoder(
 ) -> Result<gst::Element, MediaError> {
     let encoder = match kind {
         Encoder::X264 => {
-            sat_teleop_x264::register()?;
-            gst::ElementFactory::make(sat_teleop_x264::ELEMENT)
+            thinlink_x264::register()?;
+            gst::ElementFactory::make(thinlink_x264::ELEMENT)
                 .name(ENCODER)
                 .property("bitrate", rung.encoder_kbit())
                 .property("vbv-buf-capacity", rung.vbv_ms())

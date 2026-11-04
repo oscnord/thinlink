@@ -1,4 +1,4 @@
-//! `sat-teleop-ground detail`: asks the relay for a retained snapshot or a crop of the frame
+//! `thinlink-ground detail`: asks the relay for a retained snapshot or a crop of the frame
 //! captured some time ago, and fetches it (docs/drone.md#retained-detail).
 
 use std::fs;
@@ -8,12 +8,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 
-use sat_teleop_detail::client::Client;
-use sat_teleop_detail::crop::Crop;
-use sat_teleop_detail::wire::{JobId, JobRequest, Kind, ListedSighting, MAX_LISTED};
-use sat_teleop_policy::position::Position;
-use sat_teleop_policy::sighting::utc_time;
-use sat_teleop_video_core::token::Token;
+use thinlink_detail::client::Client;
+use thinlink_detail::crop::Crop;
+use thinlink_detail::wire::{JobId, JobRequest, Kind, ListedSighting, MAX_LISTED};
+use thinlink_policy::position::Position;
+use thinlink_policy::sighting::utc_time;
+use thinlink_video_core::token::Token;
 
 /// The relay's job API for the ground, on `ground_net`.
 pub const RELAY: &str = "http://192.168.232.20:8080";

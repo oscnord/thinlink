@@ -1,5 +1,5 @@
 //! A machine's clock bound at runtime. `Chrony` runs `chronyc -c tracking` every few seconds and
-//! derives the bound from it (`sat_teleop_policy::clock::from_tracking`); `ChronyAt` asks the
+//! derives the bound from it (`thinlink_policy::clock::from_tracking`); `ChronyAt` asks the
 //! chronyd of another host, which a container needs for its host's; `Shared` is the testbed,
 //! whose containers read one kernel clock (bound 0); `Fixed` is a number the operator measured, and
 //! holds only until the wall clock steps against the monotonic clock by more than that number (a
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use sat_teleop_policy::clock::{self, Reading};
+use thinlink_policy::clock::{self, Reading};
 
 use crate::unix_ms;
 
@@ -186,7 +186,7 @@ impl Clock {
 
 impl Clock {
     /// Checks that the wall clock advanced like the monotonic clock since the last comparison
-    /// (`sat_teleop_policy::clock::fixed_holds`); a step beyond `bound_ms` ends the bound for good.
+    /// (`thinlink_policy::clock::fixed_holds`); a step beyond `bound_ms` ends the bound for good.
     fn compare(&self, bound_ms: u64, wall_ms: u64, now: Instant) {
         let Ok(mut last) = self.compared.lock() else {
             return;

@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use sat_teleop_lab::profile::{Profile, Provenance};
+use thinlink_lab::profile::{Profile, Provenance};
 
 const SHIPPED: [&str; 8] = [
     "lan",

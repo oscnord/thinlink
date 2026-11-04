@@ -1,5 +1,5 @@
 [package]
-name = "sat-teleop-x264"
+name = "thinlink-x264"
 version.workspace = true
 edition.workspace = true
 # libx264 is GPL: this is the workspace's only crate that links it.
